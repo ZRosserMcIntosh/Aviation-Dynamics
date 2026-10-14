@@ -46,6 +46,7 @@ struct Sim {
 
 Sim* g = nullptr;
 double g_state[kStateSize];
+double g_cockpit[96];
 char* g_text = nullptr;
 int g_textCap = 0;
 std::vector<std::string> g_errors;
@@ -122,6 +123,7 @@ AVD_EXPORT int avd_load(int length) {
     wp.groundElevation = g->airport.elevation;
     g->weather = std::make_unique<SimpleWeather>(wp);
     g->ac = std::make_unique<Aircraft>(g->def, g->frame);
+    g->ac->setNavEnvironment(&scenarios::saoPauloNavEnvironment());
     return 0;
 }
 
@@ -146,6 +148,7 @@ AVD_EXPORT void avd_set_weather(double windSpeed, double windFromDeg, double tur
 AVD_EXPORT void avd_reset(int mode) {
     if (!g) return;
     g->ac = std::make_unique<Aircraft>(g->def, g->frame);
+    g->ac->setNavEnvironment(&scenarios::saoPauloNavEnvironment());
     g->procedure = ProcedureRunner{};
     g->accumulator = 0;
     g->events.clear();
@@ -169,9 +172,22 @@ AVD_EXPORT void avd_reset(int mode) {
         s.attitude = Quat::fromEuler(0, final ? 0.0 : degToRad(2), rw.headingTrue);
         g->ac->setFlightState(s);
         g->ac->setCockpitControl("brakes.parking", 0);
+        // The air sample and ground planes must describe the new position
+        // before the downwash and the instruments are initialised from them.
+        g->ac->prepareContext(PilotInput{}, *g->ground, *g->weather);
         g->ac->settleDownwash();
     }
     g->ac->instruments().setAltimeterSetting(g->weather->atmosphere().conditions().seaLevelPressure);
+    if (mode >= 1) g->ac->resetInstrumentsToTruth();
+    // Radios: NAV 1 on the (synthetic) runway 12 localizer, the test VOR in standby.
+    InstrumentPanel& p = g->ac->instruments();
+    p.setNavStandby(0, 110300);
+    p.swapNav(0);
+    p.setNavStandby(0, 113700);
+    p.setObs(degToRad(122));
+    p.setHeadingBug(degToRad(122));
+    p.setComStandby(0, 132800);
+    p.setTransponderMode(TransponderMode::Altitude);
     g->ac->drainEvents();
 }
 
@@ -291,4 +307,95 @@ AVD_EXPORT double* avd_state() {
     s[49] = ac.parkingBrake(); s[50] = e.prop.thrust; s[51] = t.mach; s[52] = ac.fuel().totalQuantity() * 1000;
     s[53] = mToFt(t.altitudeMsl); s[54] = g->assist.report().active();
     return s;
+}
+
+// ---- Cockpit instruments (display units) -----------------------------------
+// See web/README.md for the layout. Displayed values come only from the
+// instrument models; [48..] is truth for the debug overlay.
+AVD_EXPORT double* avd_cockpit() {
+    std::fill(std::begin(g_cockpit), std::end(g_cockpit), 0.0);
+    if (!g) return g_cockpit;
+    const InstrumentPanel& ip = g->ac->instruments();
+    const CockpitState& c = ip.state();
+    const InstrumentTruth& t = ip.truth();
+    auto hdg = [](Real r) { return std::fmod(radToDeg(r) + 360.0, 360.0); };
+    auto f = [](Real k) { return k > 0 ? (k - 273.15) * 9.0 / 5.0 + 32.0 : 0.0; };
+    double* o = g_cockpit;
+    o[0] = msToKt(c.indicatedAirspeed); o[1] = mToFt(c.indicatedAltitude); o[2] = paToInHg(c.altimeterSetting);
+    o[3] = msToFpm(c.verticalSpeed); o[4] = radToDeg(c.attitudePitch); o[5] = radToDeg(c.attitudeRoll);
+    o[6] = c.attitudeTumbled; o[7] = hdg(c.headingIndicator); o[8] = hdg(c.headingBug);
+    o[9] = radToDeg(c.turnCoordinatorDeflection); o[10] = radToDeg(c.turnRate); o[11] = c.turnCoordinatorFlag;
+    o[12] = radToDeg(c.slipBall); o[13] = hdg(c.magneticHeading); o[14] = c.tachometerRpm;
+    o[15] = c.oilPressure / 6894.757; o[16] = f(c.oilTemperature); o[17] = f(c.egt);
+    o[18] = m3ToGal(c.fuelFlow / g->def.fuel.density) * 3600; o[19] = m3ToGal(c.fuelGauge[0]); o[20] = m3ToGal(c.fuelGauge[1]);
+    o[21] = c.ammeter; o[22] = c.voltmeter; o[23] = paToInHg(c.suction); o[24] = c.annunciators; o[25] = c.stallHorn;
+    o[26] = kToCelsius(c.outsideAirTemperature); o[27] = c.clock; o[28] = radToDeg(c.flapIndicator);
+    o[29] = c.trimIndicator; o[30] = c.panelLights; o[31] = c.panelLightDimmer;
+    o[32] = c.navActiveKhz[0] / 1000; o[33] = c.navStandbyKhz[0] / 1000; o[34] = c.comActiveKhz[0] / 1000;
+    o[35] = c.comStandbyKhz[0] / 1000; o[36] = hdg(c.obs); o[37] = c.nav1.valid; o[38] = c.nav1.cdi;
+    o[39] = c.nav1.toFrom; o[40] = c.nav1.glideslopeValid; o[41] = c.nav1.glideslope; o[42] = c.nav1.localizer;
+    o[43] = c.avionicsOn; o[44] = c.squawk; o[45] = static_cast<int>(c.transponderMode);
+    o[46] = c.reportedAltitudeFt; o[47] = c.altitudeReported;
+    o[48] = msToKt(t.trueAirspeed); o[49] = msToKt(t.calibratedAirspeed); o[50] = msToKt(t.groundSpeed);
+    o[51] = mToFt(t.altitudeMsl); o[52] = mToFt(t.pressureAltitude); o[53] = msToFpm(t.verticalSpeed);
+    o[54] = radToDeg(t.pitch); o[55] = radToDeg(t.roll); o[56] = hdg(t.trueHeading); o[57] = hdg(t.magneticHeading);
+    o[58] = radToDeg(t.omegaBody.x); o[59] = radToDeg(t.omegaBody.y); o[60] = radToDeg(t.omegaBody.z);
+    o[61] = radToDeg(t.slipAngle); o[62] = t.attitudeGyroSpin; o[63] = t.headingGyroSpin; o[64] = t.turnGyroSpin;
+    o[65] = msToKt(t.equivalentAirspeed); o[66] = mToFt(t.densityAltitude); o[67] = mToFt(t.heightAboveGround);
+    o[68] = radToDeg(g->ac->telemetry().alpha);
+    o[69] = ip.faults().pitotBlocked; o[70] = ip.faults().staticBlocked; o[71] = g->ac->vacuum().pumpFailed();
+    return o;
+}
+
+// Dial markings from the aircraft's panel data (display units).
+AVD_EXPORT double* avd_markings() {
+    std::fill(std::begin(g_cockpit), std::end(g_cockpit), 0.0);
+    if (!g) return g_cockpit;
+    const InstrumentPanelDef& p = g->def.panel;
+    auto f = [](Real k) { return k > 0 ? (k - 273.15) * 9.0 / 5.0 + 32.0 : 0.0; };
+    double* o = g_cockpit;
+    o[0] = msToKt(p.airspeed.whiteArc.low); o[1] = msToKt(p.airspeed.whiteArc.high);
+    o[2] = msToKt(p.airspeed.greenArc.low); o[3] = msToKt(p.airspeed.greenArc.high);
+    o[4] = msToKt(p.airspeed.yellowArc.low); o[5] = msToKt(p.airspeed.yellowArc.high);
+    o[6] = msToKt(p.airspeed.redLine); o[7] = msToKt(p.airspeed.dialMin); o[8] = msToKt(p.airspeed.dialMax);
+    o[9] = p.engine.tachometerGreen.low; o[10] = p.engine.tachometerGreen.high; o[11] = p.engine.tachometerRedLine;
+    o[12] = p.engine.tachometerMax;
+    o[13] = p.engine.oilPressureGreen.low / 6894.757; o[14] = p.engine.oilPressureGreen.high / 6894.757;
+    o[15] = p.engine.oilPressureRedLow / 6894.757; o[16] = p.engine.oilPressureRedHigh / 6894.757;
+    o[17] = f(p.engine.oilTemperatureGreen.low); o[18] = f(p.engine.oilTemperatureGreen.high);
+    o[19] = f(p.engine.oilTemperatureRedLine);
+    o[20] = paToInHg(p.engine.suctionGreen.low); o[21] = paToInHg(p.engine.suctionGreen.high);
+    o[22] = m3ToGal(g->def.fuel.tanks.empty() ? 0 : g->def.fuel.tanks[0].capacity - g->def.fuel.tanks[0].unusable);
+    o[23] = msToFpm(p.vsi.dialRange);
+    o[24] = p.avionics.navComRadios; o[25] = p.avionics.glideslope; o[26] = p.avionics.transponder;
+    o[27] = radToDeg(p.turnCoordinator.standardRateDeflection);
+    o[28] = p.engine.exhaustGasTemperature; o[29] = p.engine.fuelFlow; o[30] = p.engine.ammeter;
+    return o;
+}
+
+AVD_EXPORT void avd_altimeter_adjust(int hundredthsInHg) { if (g) g->ac->instruments().adjustAltimeterSetting(hundredthsInHg); }
+AVD_EXPORT void avd_dg_adjust(double deg) { if (g) g->ac->instruments().adjustHeadingIndicator(degToRad(deg)); }
+AVD_EXPORT void avd_dg_sync() { if (g) g->ac->instruments().syncHeadingIndicatorToCompass(); }
+AVD_EXPORT void avd_heading_bug(double deg) { if (g) g->ac->instruments().setHeadingBug(degToRad(deg)); }
+AVD_EXPORT void avd_obs_adjust(double deg) { if (g) g->ac->instruments().adjustObs(degToRad(deg)); }
+AVD_EXPORT void avd_nav_tune(int steps50khz) { if (g) g->ac->instruments().tuneNavStandby(0, steps50khz); }
+AVD_EXPORT void avd_nav_swap() { if (g) g->ac->instruments().swapNav(0); }
+AVD_EXPORT void avd_com_tune(int channels) { if (g) g->ac->instruments().tuneComStandby(0, channels); }
+AVD_EXPORT void avd_com_swap() { if (g) g->ac->instruments().swapCom(0); }
+AVD_EXPORT void avd_squawk(int code) { if (g) g->ac->instruments().setSquawk(code); }
+AVD_EXPORT void avd_xpdr_mode(int m) {
+    if (g && m >= 0 && m <= 3) g->ac->instruments().setTransponderMode(static_cast<TransponderMode>(m));
+}
+AVD_EXPORT void avd_dimmer(double v) { if (g) g->ac->instruments().setPanelLightDimmer(v); }
+// Failure injection: 0 pitot (drain open), 1 static port, 2 vacuum pump, 3 alternator.
+AVD_EXPORT void avd_failure(int which, int on) {
+    if (!g) return;
+    auto& f = g->ac->instruments().faults();
+    switch (which) {
+        case 0: f.pitotBlocked = on != 0; break;
+        case 1: f.staticBlocked = on != 0; break;
+        case 2: g->ac->vacuum().setPumpFailed(on != 0); break;
+        case 3: g->ac->electrical().setAlternatorFailed(on != 0); break;
+        default: break;
+    }
 }

@@ -30,4 +30,21 @@ check(A.state()[30] === 0, 'cold and dark reset');
 A.avd_quick_start();
 for (let i = 0; i < 20 * 60; ++i) A.avd_advance(1 / 60);
 check(A.state()[30] === 1 && A.avd_procedure_status() === 2, 'Quick Start through the cockpit');
+// Instruments through the ABI: on final for runway 12 the ILS needles are alive.
+A.avd_reset(2);
+for (let i = 0; i < 60; ++i) A.avd_advance(1 / 60);
+let c = A.cockpitState();
+check(c[37] === 1 && c[42] === 1, `localizer received (CDI ${c[38].toFixed(2)})`);
+check(c[40] === 1, `glideslope received (${c[41].toFixed(2)})`);
+check(Math.abs(c[0] - c[49]) < 6, `ASI ${c[0].toFixed(1)} KIAS vs CAS ${c[49].toFixed(1)}`);
+const before = c[1];
+A.avd_altimeter_adjust(100);
+for (let i = 0; i < 60; ++i) A.avd_advance(1 / 60);
+check(A.cockpitState()[1] - before > 800, 'Kollsman knob moves the altimeter');
+check(A.markings()[6] === 163, 'VNE red line 163 KIAS from the panel data');
+A.avd_reset(3);                      // airborne spawn: instruments seeded at the new position
+A.avd_set_input(0, 0, 0, 0.65, 1, 0, 0, 0, 0);
+A.avd_advance(1);
+c = A.cockpitState();
+check(Math.abs(c[3] - c[53]) < 400 && Math.abs(c[1] - c[51]) < 40, `cruise spawn: VSI ${c[3].toFixed(0)} vs ${c[53].toFixed(0)} fpm, altimeter ${c[1].toFixed(0)} vs ${c[51].toFixed(0)} ft`);
 process.exit(failures ? 1 : 0);

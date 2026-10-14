@@ -1,0 +1,247 @@
+<title>Tupi T-180 Cockpit</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Interactive six-pack cockpit driven by the Aviation Dynamics C++ flight and instrument models compiled to WebAssembly.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700&family=Barlow:wght@400;600&family=Share+Tech+Mono&display=swap">
+<style>
+  /* One deliberate look: a night-lit instrument panel. */
+  :root {
+    color-scheme: dark;
+    --bg: #101214;
+    --surface: #181b1e;
+    --surface-2: #202428;
+    --line: #2d3236;
+    --fg: #e6e3d9;
+    --fg-dim: #9a9c97;
+    --accent: #e8a33d;       /* instrument-lighting amber */
+    --accent-ink: #1a1000;
+    --ok: #63c27a;
+    --warn: #e6c040;
+    --bad: #e05545;
+    /* Canvas tokens (read by cockpit.js). */
+    --panel: #1d2023;
+    --bezel: #0b0c0d;
+    --face: #121314;
+    --mark: #f0eee6;
+    --mark-dim: #9fa19c;
+    --arc-green: #33b35a;
+    --arc-yellow: #e8c437;
+    --arc-red: #e0402f;
+    --arc-white: #f2f2ee;
+    --needle: #f4f2ea;
+    --sky: #4e7fb4;
+    --earth: #6d5435;
+    --amber: #f0a830;
+    --lcd: #9fe3a8;
+    --flag: #c8322b;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.45 "Barlow", system-ui, sans-serif;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 14px 28px;
+  }
+  h1, h2 { font-family: "Barlow Condensed", "Arial Narrow", sans-serif; margin: 0; text-wrap: balance; }
+  h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: 0.02em; }
+  h2 { font-size: 0.82rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-dim); }
+  button, select, input { font: inherit; color: inherit; }
+  .wrap { max-width: 1500px; margin: 0 auto; display: grid; gap: 14px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; }
+  header p { margin: 0; color: var(--fg-dim); max-width: 75ch; }
+  .badge { font: 600 0.75rem "Barlow Condensed", sans-serif; letter-spacing: 0.1em; text-transform: uppercase;
+           border: 1px solid var(--accent); color: var(--accent); padding: 1px 7px; border-radius: 3px; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; align-items: start; }
+  @media (max-width: 1050px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+  .cockpit { display: grid; gap: 0; min-width: 0; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--panel); }
+  #view { display: block; width: 100%; aspect-ratio: 16 / 5; max-width: 100%; }
+  .panelwrap { overflow-x: auto; }
+  #panel { display: block; width: 100%; min-width: 760px; aspect-ratio: 2 / 1; touch-action: manipulation; }
+  .bar { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 8px 12px; background: var(--surface); border-top: 1px solid var(--line); font-size: 0.9rem; }
+  #status { color: var(--fg); min-width: 0; flex: 1 1 260px; }
+  #interact { color: var(--accent); font-family: "Barlow Condensed", sans-serif; letter-spacing: 0.02em; flex: 1 1 260px; }
+  aside { display: grid; gap: 12px; min-width: 0; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: grid; gap: 10px; min-width: 0; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .btn { background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 5px 10px; cursor: pointer; }
+  .btn:hover, .switch:hover { border-color: var(--accent); }
+  .btn:focus-visible, .switch:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  .btn[aria-pressed="true"], .btn.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  select { background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; max-width: 100%; }
+  /* Radio stack */
+  #stack { display: grid; gap: 8px; }
+  .radio { display: grid; grid-template-columns: 3.4em 1fr 1fr; gap: 6px; align-items: center; }
+  .radio .name { font: 600 0.8rem "Barlow Condensed", sans-serif; letter-spacing: 0.1em; color: var(--fg-dim); }
+  .lcd { font: 1.15rem "Share Tech Mono", ui-monospace, monospace; background: #050806; color: var(--lcd); border-radius: 4px;
+         padding: 3px 8px; min-height: 1.6em; text-align: right; }
+  .lcd.sb { color: #6fae78; }
+  #stack.dark .lcd { color: transparent; }
+  .tune { display: flex; gap: 4px; flex-wrap: wrap; grid-column: 2 / 4; }
+  .tune .btn { padding: 2px 8px; font-size: 0.85rem; }
+  .keypad { display: flex; gap: 4px; flex-wrap: wrap; }
+  .keypad .btn { width: 2.1em; padding: 3px 0; font-family: "Share Tech Mono", monospace; }
+  /* Switches */
+  #switches { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
+  .switch { display: grid; gap: 1px; text-align: left; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px;
+            padding: 5px 7px; cursor: pointer; min-width: 0; }
+  .sw-label { font: 600 0.78rem/1.15 "Barlow Condensed", sans-serif; letter-spacing: 0.03em; color: var(--fg-dim); overflow-wrap: anywhere; }
+  .sw-pos { font: 0.85rem "Share Tech Mono", monospace; color: var(--fg-dim); }
+  .switch.on .sw-pos { color: var(--ok); }
+  #starter { font-weight: 600; touch-action: none; user-select: none; }
+  label.ctl { display: grid; grid-template-columns: 6.5em 1fr; gap: 8px; align-items: center; font-size: 0.9rem; }
+  label.ctl output { grid-column: 2; color: var(--fg-dim); font-size: 0.82rem; }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; font-size: 0.9rem; }
+  .checks label { display: flex; gap: 6px; align-items: center; }
+  input[type="checkbox"] { accent-color: var(--bad); }
+  /* Debug + log */
+  .below { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 14px; }
+  @media (max-width: 800px) { .below { grid-template-columns: minmax(0, 1fr); } }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+  th, td { padding: 3px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+  th { text-align: left; font-weight: 400; color: var(--fg-dim); }
+  thead th { font: 600 0.75rem "Barlow Condensed", sans-serif; letter-spacing: 0.1em; text-transform: uppercase; text-align: right; }
+  thead th:first-child { text-align: left; }
+  td { font-family: "Share Tech Mono", monospace; }
+  #log { list-style: none; margin: 0; padding: 0; max-height: 15em; overflow-y: auto; font-size: 0.88rem; display: grid; gap: 2px; }
+  #log time { font-family: "Share Tech Mono", monospace; color: var(--accent); margin-right: 6px; }
+  .keys { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 0.88rem; margin: 0; }
+  .keys dt { font-family: "Share Tech Mono", monospace; color: var(--accent); }
+  .keys dd { margin: 0; color: var(--fg-dim); }
+  .note { color: var(--fg-dim); font-size: 0.85rem; margin: 0; max-width: 75ch; }
+  kbd { font-family: "Share Tech Mono", monospace; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Tupi T-180 Cockpit</h1>
+    <span class="badge">C172S-reference analog panel · simulation</span>
+    <p>Every needle is driven by the C++ instrument models (pitot-static system, vacuum gyros, electric turn coordinator, pendulous compass, VOR/ILS receiver) running on the same flight model as the native engine, compiled to WebAssembly. Campo de Marte (SBMT), São Paulo. The radio aids are synthetic test facilities, not real navaids.</p>
+  </header>
+
+  <div class="layout">
+    <section class="cockpit" aria-label="Cockpit">
+      <canvas id="view" aria-label="Outside view"></canvas>
+      <div class="panelwrap"><canvas id="panel" aria-label="Instrument panel"></canvas></div>
+      <div class="bar">
+        <span id="status" role="status">Loading flight model…</span>
+        <span id="interact"></span>
+      </div>
+    </section>
+
+    <aside>
+      <div class="card">
+        <h2>Scenario</h2>
+        <div class="row">
+          <select id="scenario" aria-label="Scenario"></select>
+          <button class="btn primary" id="reset" type="button">Reset</button>
+        </div>
+        <div class="row">
+          <button class="btn" id="quickstart" type="button">Quick Start</button>
+          <button class="btn" id="starter" type="button" title="Hold to crank (or hold T)">Hold START</button>
+          <select id="assist" aria-label="Assistance">
+            <option value="0">Arcade assists</option>
+            <option value="1">Sport assists</option>
+            <option value="2">Simulation (no assists)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Radios</h2>
+        <div id="stack">
+          <div class="radio">
+            <span class="name">COM 1</span><span class="lcd" id="com-a"></span><span class="lcd sb" id="com-s"></span>
+            <span></span>
+            <div class="tune"><button class="btn" id="com-swap" type="button">⇄</button><button class="btn" id="com-dn-mhz" type="button">−MHz</button><button class="btn" id="com-up-mhz" type="button">+MHz</button><button class="btn" id="com-dn" type="button">−kHz</button><button class="btn" id="com-up" type="button">+kHz</button></div>
+          </div>
+          <div class="radio">
+            <span class="name">NAV 1</span><span class="lcd" id="nav-a"></span><span class="lcd sb" id="nav-s"></span>
+            <span></span>
+            <div class="tune"><button class="btn" id="nav-swap" type="button">⇄</button><button class="btn" id="nav-dn-mhz" type="button">−MHz</button><button class="btn" id="nav-up-mhz" type="button">+MHz</button><button class="btn" id="nav-dn" type="button">−kHz</button><button class="btn" id="nav-up" type="button">+kHz</button></div>
+          </div>
+          <div class="radio">
+            <span class="name">XPDR</span><span class="lcd" id="xpdr-code"></span><span class="lcd sb" id="xpdr-alt"></span>
+            <span></span>
+            <div class="tune">
+              <button class="btn" id="xpdr-mode" type="button">ALT</button>
+              <span class="keypad"><button class="btn" data-digit="0" type="button">0</button><button class="btn" data-digit="1" type="button">1</button><button class="btn" data-digit="2" type="button">2</button><button class="btn" data-digit="3" type="button">3</button><button class="btn" data-digit="4" type="button">4</button><button class="btn" data-digit="5" type="button">5</button><button class="btn" data-digit="6" type="button">6</button><button class="btn" data-digit="7" type="button">7</button></span>
+              <button class="btn" id="vfr" type="button">VFR</button>
+            </div>
+          </div>
+        </div>
+        <p class="note">NAV 1 starts on ITMT 110.30 (localizer, runway 12) with TSP 113.70 (VOR at MASP) in standby.</p>
+      </div>
+
+      <div class="card">
+        <h2>Switches and breakers</h2>
+        <div id="switches"></div>
+        <label class="ctl">Panel dimmer <input type="range" id="dimmer" min="0" max="1" step="0.05" value="0.7"></label>
+      </div>
+
+      <div class="card">
+        <h2>Weather</h2>
+        <label class="ctl">Wind speed <input type="range" id="wind" min="0" max="35" step="1" value="0"><output id="wind-v"></output></label>
+        <label class="ctl">Wind from <input type="range" id="winddir" min="0" max="350" step="10" value="120"></label>
+        <label class="ctl">Turbulence <input type="range" id="turb" min="0" max="4" step="0.1" value="0"><output id="turb-v"></output></label>
+        <label class="ctl">Temperature <input type="range" id="temp" min="-20" max="30" step="1" value="0"><output id="temp-v"></output></label>
+      </div>
+
+      <div class="card">
+        <h2>Failures</h2>
+        <div class="checks">
+          <label><input type="checkbox" id="fail-pitot"> Pitot blocked</label>
+          <label><input type="checkbox" id="fail-static"> Static blocked</label>
+          <label><input type="checkbox" id="fail-vac"> Vacuum pump</label>
+          <label><input type="checkbox" id="fail-alt"> Alternator</label>
+        </div>
+        <p class="note">Faults act on the physical model: a blocked pitot (drain open) bleeds to static, a blocked static port freezes the altimeter and VSI, a failed pump lets the gyros spin down.</p>
+      </div>
+    </aside>
+  </div>
+
+  <div class="below">
+    <div class="card">
+      <div class="row" style="justify-content: space-between">
+        <h2>Truth versus display</h2>
+        <button class="btn" id="debug-toggle" type="button" aria-pressed="false">Show (I)</button>
+      </div>
+      <div class="tablewrap" id="debug">
+        <table>
+          <thead><tr><th>Quantity</th><th>Truth</th><th>Shown</th><th>Unit</th></tr></thead>
+          <tbody id="debug-body"></tbody>
+        </table>
+      </div>
+      <p class="note">Truth comes from the flight model; “shown” is what the instrument model indicates after its sensor errors, lags and failures.</p>
+    </div>
+    <div class="card">
+      <div class="row" style="justify-content: space-between">
+        <h2>Events</h2>
+        <button class="btn" id="sound" type="button" aria-pressed="false">Sound off</button>
+      </div>
+      <ol id="log" aria-live="polite"></ol>
+      <h2>Controls</h2>
+      <dl class="keys">
+        <dt>W S / ↑ ↓</dt><dd>Pitch (S pulls back)</dd>
+        <dt>A D / ← →</dt><dd>Roll</dd>
+        <dt>Q E</dt><dd>Rudder</dd>
+        <dt>+ −</dt><dd>Throttle (PgUp / PgDn)</dd>
+        <dt>M N</dt><dd>Mixture rich / lean</dd>
+        <dt>[ ]</dt><dd>Elevator trim down / up</dd>
+        <dt>, .</dt><dd>Flaps up / down a notch</dd>
+        <dt>B · P</dt><dd>Toe brakes · parking brake</dd>
+        <dt>T</dt><dd>Hold to crank the starter</dd>
+        <dt>H</dt><dd>Sync heading indicator to compass</dd>
+        <dt>F</dt><dd>Operate the switch or knob under the pointer</dd>
+        <dt>Space · I</dt><dd>Pause · truth table</dd>
+      </dl>
+      <p class="note">Knobs: altimeter (Kollsman), heading SET and HDG bug, OBS. Scroll over them or click their left or right half. A standard gamepad also works.</p>
+    </div>
+  </div>
+</div>
+
+<!--AVD_SCRIPTS-->

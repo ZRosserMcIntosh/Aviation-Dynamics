@@ -12,7 +12,9 @@ mkdir -p "$OUT"
 EXPORTS=""
 for f in avd_text avd_load avd_error_text avd_set_weather avd_reset avd_set_input avd_set_assist \
          avd_quick_start avd_procedure_status avd_advance avd_events avd_cockpit_count avd_cockpit_text \
-         avd_cockpit_cycle avd_runway avd_state; do
+         avd_cockpit_cycle avd_runway avd_state avd_cockpit avd_markings avd_altimeter_adjust avd_dg_adjust \
+         avd_dg_sync avd_heading_bug avd_obs_adjust avd_nav_tune avd_nav_swap avd_com_tune avd_com_swap avd_squawk \
+         avd_xpdr_mode avd_dimmer avd_failure; do
   EXPORTS="$EXPORTS -Wl,--export=$f"
 done
 "$WASI_SDK/bin/clang++" --target=wasm32-wasip1 --sysroot="$WASI_SDK/share/wasi-sysroot" \

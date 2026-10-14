@@ -147,6 +147,9 @@ public:
     // shortcut; the procedural Quick Start lives in avd/procedures.hpp).
     void setEngineRunning(bool running, Real rpm = 1000);
     // Spawn helper: gyros erect and at speed, needles at the current truth.
+    // Reads the air from the current context: after setFlightState() call
+    // prepareContext() (or step) first, or the pitot-static instruments are
+    // seeded with the air at the previous position.
     void resetInstrumentsToTruth();
     void setColdAndDark();
     // Initial-condition setters (spawn/trim): flaps already at a detent, trim position.

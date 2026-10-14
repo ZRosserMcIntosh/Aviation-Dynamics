@@ -41,6 +41,7 @@ struct Flight {
         RigidBodyState s = ac.state().body;
         s.position.x += 15000;
         ac.setFlightState(s);
+        ac.prepareContext(PilotInput{}, ground, atm);
         ac.resetInstrumentsToTruth();
         ac.instruments().setAltimeterSetting(atm.atmosphere().conditions().seaLevelPressure);
         fly(2);  // let needles settle on the trimmed state
@@ -674,4 +675,31 @@ TEST_CASE("panel configuration: markings come from data and invalid panels are r
     d.panel.avionics.comSpacingKhz = 12;
     const auto e = d.validate();
     CHECK(e.size() >= 2);
+}
+
+// Regression: a spawn in the air from a freshly built aircraft (the browser
+// "cruise" reset) once seeded the VSI case and altimeter with the air at the
+// previous position; the VSI then sat pegged for ~11 s.
+TEST_CASE("spawn: airborne spawn seeds the pitot-static instruments at the new position") {
+    Aircraft ac{ref(), saoPauloWorldFrame()};
+    SimpleWeather atm;
+    FlatGround ground{0};
+    ac.setEngineRunning(true, 2300);
+    RigidBodyState s;
+    s.position = {0, 0, -1600};
+    s.velocity = {units::ktToMs(100), 0, 0};
+    s.attitude = Quat::fromEuler(0, units::degToRad(2), 0);
+    ac.setFlightState(s);
+    ac.prepareContext(PilotInput{}, ground, atm);
+    ac.settleDownwash();
+    ac.instruments().setAltimeterSetting(atm.atmosphere().conditions().seaLevelPressure);
+    ac.resetInstrumentsToTruth();
+    PilotInput in;
+    in.throttle = 0.65;
+    in.mixture = 1;
+    for (int i = 0; i < static_cast<int>(1.0 / kDt); ++i) ac.step(kDt, in, ground, atm);
+    const CockpitState& c = ac.instruments().state();
+    const InstrumentTruth& t = ac.instruments().truth();
+    CHECK_NEAR(units::mToFt(c.indicatedAltitude), units::mToFt(t.altitudeMsl), 40.0);
+    CHECK_NEAR(units::msToFpm(c.verticalSpeed), units::msToFpm(t.verticalSpeed), 400.0);
 }

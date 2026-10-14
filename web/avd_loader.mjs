@@ -43,6 +43,8 @@ export default async function createAvdModule(wasmBytes) {
     return errors;
   };
   A.state = () => new Float64Array(memory.buffer, ex.avd_state(), 64);
+  A.cockpitState = () => new Float64Array(memory.buffer, ex.avd_cockpit(), 96);
+  A.markings = () => Array.from(new Float64Array(memory.buffer, ex.avd_markings(), 96));
   A.runway = () => Array.from(new Float64Array(memory.buffer, ex.avd_runway(), 6));
   A.events = () => { const n = ex.avd_events(); return n ? A.text(n).split('\n').filter(Boolean) : []; };
   A.cockpit = () => {
@@ -53,6 +55,6 @@ export default async function createAvdModule(wasmBytes) {
     }
     return out;
   };
-  A.procedure = () => { const st = ex.avd_procedure_status(); return { status: st, message: A.text(new TextEncoder().encode('').length || 0) }; };
+  A.procedure = () => { const st = ex.avd_procedure_status(); const n = new Uint8Array(memory.buffer, ex.avd_text(0)).indexOf(0); return { status: st, message: A.text(n) }; };
   return A;
 }

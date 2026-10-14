@@ -198,6 +198,7 @@ public:
     void setTransponderMode(TransponderMode m) { s_.transponderMode = m; }
     void setPanelLightDimmer(Real v) { s_.panelLightDimmer = clamp(v, 0.0, 1.0); }
     PitotStaticFaults& faults() { return faults_; }
+    const PitotStaticFaults& faults() const { return faults_; }
     void setAttitudeGyroFailed(bool f) { aiFailed_ = f; }
     void setHeadingGyroFailed(bool f) { hiFailed_ = f; }
 
@@ -244,7 +245,6 @@ private:
     // Engine gauges.
     SecondOrder tachNeedle_, oilPressNeedle_;
     Real oatProbe_ = 288.15;
-    bool clockRunning_ = false;
 };
 
 }  // namespace avd
