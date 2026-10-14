@@ -63,6 +63,7 @@ struct SensorInputs {
     bool annunciatorsPowered = false;
     bool pitotHeatOn = false;
     bool panelLightsOn = false;
+    Real liquidWaterContent = 0;   // kg/m^3 cloud liquid water at the aircraft (icing)
     // Engine and fuel.
     Real engineRpm = 0;
     Real oilPressure = 0;          // Pa (engine model)
@@ -152,6 +153,9 @@ struct InstrumentTruth {
     Real slipAngle = 0;            // rad, apparent-vertical lateral angle (ball equilibrium)
     Real staticPressureMeasured = 0, totalPressureMeasured = 0;
     Real attitudeGyroSpin = 0, headingGyroSpin = 0, turnGyroSpin = 0;
+    Real pitotIce = 0;             // kg of ice on the pitot probe
+    Real pitotHeat = 0;            // 0..1 heater effectiveness (warm-up)
+    bool pitotIced = false;        // ice has closed the ram inlet
 };
 
 struct PitotStaticFaults {
@@ -231,6 +235,7 @@ private:
 
     // Pneumatics.
     Real trappedStatic_ = -1, trappedTotal_ = -1, bledTotal_ = -1;
+    Real pitotIce_ = 0, pitotHeat_ = 0;
     Real vsiCase_ = 0;
     SecondOrder asiNeedle_, altNeedle_, vsiNeedle_;
     // Attitude gyro: spin-axis direction in local NED (ideally straight down).

@@ -800,6 +800,7 @@ SensorInputs Aircraft::sensorInputs() const {
     in.avionicsPowered = loadPowered(p.avionics.avionicsLoad, electrical_.avionicsBusVoltage() >= 18);
     in.annunciatorsPowered = bus;
     in.pitotHeatOn = loadPowered(p.pitotHeatLoad, false);
+    in.liquidWaterContent = ctx_.air.liquidWaterContent * 1e-3;  // g/m^3 -> kg/m^3
     in.panelLightsOn = loadPowered(p.panelLightsLoad, false);
     if (engineCount() > 0) {
         const PistonEngineState& e = engineState_[0];

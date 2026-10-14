@@ -144,17 +144,44 @@ void InstrumentPanel::updatePitotStatic(Real dt, const SensorInputs& in) {
     const Real qInf = 0.5 * in.air.density * in.trueAirspeed * in.trueAirspeed;
     Real stat = p + (staticError_.empty() ? 0.0 : staticError_(in.staticPortAlpha) * qInf);
     Real total = p + qcProbe;
+
+    // Pitot icing: supercooled cloud water striking the tip freezes when the
+    // probe's recovery temperature is below 0 C (all of it below -10 C, part
+    // of it in the glaze range). The heater warms with a lag and melts ice at
+    // the latent heat of fusion. Enough ice closes the ram inlet (pressure
+    // bleeds through the drain), more seals the drain too.
+    {
+        const PitotProbeDef& pd = def_.pitotProbe;
+        constexpr Real kLatentFusion = 3.34e5;  // J/kg
+        constexpr Real kCpAir = 1005;
+        pitotHeat_ = firstOrder(pitotHeat_, in.pitotHeatOn ? 1.0 : 0.0, dt, pd.heaterTimeConstant);
+        const Real tRecovery = in.air.temperature + pd.recoveryFactor * vp * vp / (2 * kCpAir) - 273.15;
+        const Real freezing = clamp(-tRecovery / 10.0, 0.0, 1.0);
+        const Real accretion =
+            pd.collectionEfficiency * std::max(in.liquidWaterContent, 0.0) * vp * pd.frontalArea * freezing;
+        // Above 0 C the airflow itself melts the ice by forced convection
+        // (h ~ 200 W/m^2/K over ~3e-3 m^2 of tube: ~0.6 W/K).
+        constexpr Real kConvective = 0.6;  // W/K
+        const Real melt = (pitotHeat_ * pd.heaterEfficiency * pd.heaterPower + kConvective * std::max(tRecovery, 0.0)) /
+                          kLatentFusion;
+        pitotIce_ = std::max(0.0, pitotIce_ + (accretion - melt) * dt);
+        t_.pitotIce = pitotIce_;
+        t_.pitotHeat = pitotHeat_;
+        t_.pitotIced = pitotIce_ >= pd.iceToBlockInlet;
+    }
+    const bool pitotBlocked = faults_.pitotBlocked || pitotIce_ >= def_.pitotProbe.iceToBlockInlet;
+    const bool drainBlocked = faults_.pitotDrainBlocked || pitotIce_ >= def_.pitotProbe.iceToBlockDrain;
     if (faults_.staticBlocked) {
         if (trappedStatic_ < 0) trappedStatic_ = stat;
         stat = trappedStatic_;
     } else {
         trappedStatic_ = -1;
     }
-    if (faults_.pitotBlocked && faults_.pitotDrainBlocked) {
-        if (trappedTotal_ < 0) trappedTotal_ = total;
+    if (pitotBlocked && drainBlocked) {
+        if (trappedTotal_ < 0) trappedTotal_ = bledTotal_ >= 0 ? bledTotal_ : total;
         total = trappedTotal_;
         bledTotal_ = -1;
-    } else if (faults_.pitotBlocked) {
+    } else if (pitotBlocked) {
         // Ram inlet blocked, drain open: the tube bleeds down to static pressure.
         if (bledTotal_ < 0) bledTotal_ = total;
         bledTotal_ = firstOrder(bledTotal_, stat, dt, 8.0);
@@ -494,6 +521,8 @@ void InstrumentPanel::setSquawk(int code) {
 
 void InstrumentPanel::resetToTruth(const SensorInputs& in) {
     initialised_ = false;
+    pitotIce_ = 0;
+    pitotHeat_ = in.pitotHeatOn ? 1.0 : 0.0;
     aiSpin_ = dgSpin_ = tcSpin_ = 1;
     aiAxis_ = {0, 0, 1};
     s_.attitudeTumbled = false;
@@ -508,6 +537,7 @@ void InstrumentPanel::resetToTruth(const SensorInputs& in) {
 
 void InstrumentPanel::resetCold(const SensorInputs& in) {
     initialised_ = false;
+    pitotIce_ = pitotHeat_ = 0;
     aiSpin_ = dgSpin_ = tcSpin_ = 0;
     // A stopped attitude gyro rests against its stops: a tilted display.
     aiAxis_ = normalized(in.attitude.rotate(normalized(Vec3{-0.09, 0.26, 1})));

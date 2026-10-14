@@ -145,6 +145,11 @@ struct SimpleWeatherParams {
     Real groundElevation = 0;        // m MSL of the surface the profile refers to
     Real updraft = 0;                // m/s uniform vertical air velocity (+ up)
     TurbulenceField::Params turbulence;
+    // One stratiform cloud layer (m MSL) with its liquid water content
+    // (g/m^3; stratus ~0.1-0.5, cumulus up to ~1-2). Supercooled where the
+    // air is below 0 C: an icing layer. cloudTop <= cloudBase: no cloud.
+    Real cloudBase = 0, cloudTop = 0;
+    Real cloudLiquidWater = 0;
 };
 
 // Standard atmosphere + surface wind with a boundary-layer profile + optional

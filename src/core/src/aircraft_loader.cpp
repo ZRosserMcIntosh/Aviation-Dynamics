@@ -269,6 +269,17 @@ void readPanel(Obj& o, InstrumentPanelDef& p) {
         a.num("tube_limit_deg", p.inclinometer.tubeLimit, kDeg);
         readNeedle(a, "ball", p.inclinometer.ball);
     }
+    if (o.has("pitot_probe")) {
+        Obj a = o.child("pitot_probe");
+        a.num("frontal_area_m2", p.pitotProbe.frontalArea);
+        a.num("collection_efficiency", p.pitotProbe.collectionEfficiency);
+        a.num("ice_to_block_inlet_kg", p.pitotProbe.iceToBlockInlet);
+        a.num("ice_to_block_drain_kg", p.pitotProbe.iceToBlockDrain);
+        a.num("heater_power_w", p.pitotProbe.heaterPower);
+        a.num("heater_efficiency", p.pitotProbe.heaterEfficiency);
+        a.num("heater_time_constant_s", p.pitotProbe.heaterTimeConstant);
+        a.num("recovery_factor", p.pitotProbe.recoveryFactor);
+    }
     if (o.has("magnetic_compass")) {
         Obj a = o.child("magnetic_compass");
         a.boolean("installed", p.compass.installed);

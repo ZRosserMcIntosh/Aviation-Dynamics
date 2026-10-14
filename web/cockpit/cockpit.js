@@ -36,7 +36,7 @@
     avionics: 43, squawk: 44, xpdr: 45, repAlt: 46, altRep: 47,
     tTas: 48, tCas: 49, tGs: 50, tAlt: 51, tPalt: 52, tVs: 53, tPitch: 54, tRoll: 55, tHdg: 56, tMag: 57,
     tP: 58, tQ: 59, tR: 60, tSlip: 61, aiRotor: 62, dgRotor: 63, tcRotor: 64, tEas: 65, tDalt: 66, tAgl: 67, tAlpha: 68,
-    fPitot: 69, fStatic: 70, fVac: 71,
+    fPitot: 69, fStatic: 70, fVac: 71, pitotIce: 72, pitotHeat: 73, cloudWater: 74,
   };
 
   window.AVD_BOOT = async function (createAvdModule, wasmBytes, aircraftJson) {
@@ -207,6 +207,7 @@
       const mode = +scen.value;
       store.set('scenario', mode);
       applyWeather();
+      applyCloud();
       A.avd_reset(mode);
       A.avd_set_assist(+assist.value);
       // Airborne spawns are trimmed by the C++ trim solver: start the levers
@@ -229,6 +230,13 @@
       $('temp-v').textContent = 'ISA ' + (+$('temp').value >= 0 ? '+' : '') + $('temp').value + ' °C';
     }
     for (const id of ['wind', 'winddir', 'turb', 'temp']) $(id).addEventListener('input', applyWeather);
+    // Icing layer: stratus from 1,500 to 3,600 ft above the field, 0.4 g/m^3 of
+    // cloud water. Supercooled when the temperature slider makes it freezing.
+    function applyCloud() {
+      const on = $('cloud').checked, base = rw[2] + 450, top = rw[2] + 1100;
+      A.avd_set_cloud(base, on ? top : base, on ? 0.4 : 0);
+    }
+    $('cloud').addEventListener('change', () => { applyCloud(); log($('cloud').checked ? 'Cloud layer 1,500-3,600 ft AGL (0.4 g/m³ liquid water).' : 'Cloud layer removed.'); });
     [['fail-pitot', 0], ['fail-static', 1], ['fail-vac', 2], ['fail-alt', 3]].forEach(([id, n]) =>
       $(id).addEventListener('change', (e) => { A.avd_failure(n, e.target.checked ? 1 : 0); log(`${e.target.labels[0].textContent.trim()}: ${e.target.checked ? 'failed' : 'restored'}.`); }));
     $('dimmer').addEventListener('input', (e) => A.avd_dimmer(+e.target.value));
@@ -788,7 +796,9 @@
           row('Angle of attack', c[K.tAlpha], null, '°', 1) + row('Roll rate', c[K.tP], null, '°/s', 1) + row('Pitch rate', c[K.tQ], null, '°/s', 1) +
           row('Gyro rotor: attitude', c[K.aiRotor] * 100, null, '%') + row('Gyro rotor: heading', c[K.dgRotor] * 100, null, '%') +
           row('Gyro rotor: turn coordinator', c[K.tcRotor] * 100, null, '%') + row('Bus voltage', c[K.volts], null, 'V', 1) +
-          row('Ammeter', null, c[K.amps], 'A', 1) + row('Suction', null, c[K.suction], 'inHg', 1);
+          row('Ammeter', null, c[K.amps], 'A', 1) + row('Suction', null, c[K.suction], 'inHg', 1) +
+          row('Cloud liquid water', c[K.cloudWater], null, 'g/m³', 2) + row('Pitot ice (of inlet-closing amount)', c[K.pitotIce] * 100, null, '%') +
+          row('Pitot heater warm-up', c[K.pitotHeat] * 100, null, '%');
       }
     }
 

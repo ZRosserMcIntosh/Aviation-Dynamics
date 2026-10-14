@@ -143,8 +143,21 @@ AVD_EXPORT void avd_set_weather(double windSpeed, double windFromDeg, double tur
     wp.turbulence.intensity = turbulence;
     wp.conditions.temperatureDeviation = tempDev;
     wp.conditions.relativeHumidity = humidity;
+    wp.cloudBase = g->weatherParams.cloudBase;
+    wp.cloudTop = g->weatherParams.cloudTop;
+    wp.cloudLiquidWater = g->weatherParams.cloudLiquidWater;
     g->weatherParams = wp;
     g->weather = std::make_unique<SimpleWeather>(wp);
+}
+
+// One cloud layer (m MSL) with its liquid water content (g/m^3); top <= base
+// clears it. Supercooled (an icing layer) where the air is below 0 C.
+AVD_EXPORT void avd_set_cloud(double baseMsl, double topMsl, double liquidWater) {
+    if (!g) return;
+    g->weatherParams.cloudBase = baseMsl;
+    g->weatherParams.cloudTop = topMsl;
+    g->weatherParams.cloudLiquidWater = liquidWater;
+    g->weather = std::make_unique<SimpleWeather>(g->weatherParams);
 }
 
 // 0 cold and dark on runway 12, 1 engine running on runway 12, 2 on final
@@ -392,6 +405,9 @@ AVD_EXPORT double* avd_cockpit() {
     o[65] = msToKt(t.equivalentAirspeed); o[66] = mToFt(t.densityAltitude); o[67] = mToFt(t.heightAboveGround);
     o[68] = radToDeg(g->ac->telemetry().alpha);
     o[69] = ip.faults().pitotBlocked; o[70] = ip.faults().staticBlocked; o[71] = g->ac->vacuum().pumpFailed();
+    // Pitot icing (truth): ice as a fraction of what closes the inlet, heater warm-up, cloud water (g/m^3).
+    o[72] = ip.truth().pitotIce / g->def.panel.pitotProbe.iceToBlockInlet; o[73] = ip.truth().pitotHeat;
+    o[74] = g->weather ? g->weather->sample(g->ac->state().body.position, g->ac->altitudeMsl(), 0).liquidWaterContent : 0.0;
     return o;
 }
 

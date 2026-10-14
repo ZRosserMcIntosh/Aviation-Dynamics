@@ -621,6 +621,59 @@ TEST_CASE("compass: the airframe's own field gives a deviation card, and the com
         CHECK_NEAR(wrapPi(c2.instruments().compassSwing(env.field)[static_cast<std::size_t>(k)] - k * kPi / 6), 0, 1e-9);
 }
 
+TEST_CASE("icing: a supercooled cloud ices the pitot unless the heat is on") {
+    // 1500 m in a stratus layer (0.4 g/m^3) on an ISA-15 day: OAT about -10 C.
+    SimpleWeather::Params wp;
+    wp.conditions.temperatureDeviation = -15;
+    wp.cloudBase = 1000;
+    wp.cloudTop = 2500;
+    wp.cloudLiquidWater = 0.4;
+    auto run = [&](bool heat, Real seconds, Flight& f) {
+        f.ac.setCockpitControl("electrical.load.pitot_heat", heat ? 1 : 0);
+        f.fly(seconds);
+    };
+    {
+        Flight f(100, 1500, &wp);
+        run(false, 60, f);
+        CHECK(f.truth().pitotIce > 0);  // accreting
+        CHECK(!f.truth().pitotIced);
+        run(false, 240, f);
+        // Inlet closed, drain open: the ASI bleeds toward zero while the
+        // airplane is still flying at 100 KIAS.
+        CHECK(f.truth().pitotIced);
+        CHECK(f.cs().indicatedAirspeed < ktToMs(40));
+        CHECK(f.truth().calibratedAirspeed > ktToMs(90));
+        // Pitot heat clears it: the heater warms up, melts the ice, and the
+        // airspeed comes back.
+        run(true, 90, f);
+        CHECK(!f.truth().pitotIced);
+        CHECK_NEAR(f.cs().indicatedAirspeed, f.truth().calibratedAirspeed, ktToMs(3));
+    }
+    {
+        // With the heat on from the start, no ice forms.
+        Flight f(100, 1500, &wp);
+        run(true, 300, f);
+        CHECK(f.truth().pitotIce == 0);
+        CHECK_NEAR(f.cs().indicatedAirspeed, f.truth().calibratedAirspeed, ktToMs(3));
+    }
+    {
+        // Same cloud on a warm day (+5 C at 1500 m): wet, but no ice.
+        SimpleWeather::Params warm = wp;
+        warm.conditions.temperatureDeviation = 0;
+        Flight f(100, 1500, &warm);
+        run(false, 300, f);
+        CHECK(f.truth().pitotIce == 0);
+    }
+    {
+        // Clear air at -10 C: no water, no ice.
+        SimpleWeather::Params clear = wp;
+        clear.cloudLiquidWater = 0;
+        Flight f(100, 1500, &clear);
+        run(false, 300, f);
+        CHECK(f.truth().pitotIce == 0);
+    }
+}
+
 TEST_CASE("navigation: navaid JSON loader requires provenance and valid frequencies") {
     NavDatabase db;
     auto e = db.loadJson(R"({"navaids": [{"type": "vor", "ident": "X", "frequency_mhz": 113.1,

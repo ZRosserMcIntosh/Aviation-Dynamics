@@ -220,6 +220,8 @@ Vec3 SimpleWeather::meanWindAt(Real agl) const {
 AirSample SimpleWeather::sample(const Vec3& positionNed, Real altitudeMsl, Real time) const {
     AirSample s;
     s.state = atm_.at(altitudeMsl);
+    if (p_.cloudTop > p_.cloudBase && altitudeMsl >= p_.cloudBase && altitudeMsl <= p_.cloudTop)
+        s.liquidWaterContent = p_.cloudLiquidWater;
     const Real agl = altitudeMsl - p_.groundElevation;
     s.wind = meanWindAt(agl);
     // Vertical shear of the boundary layer: d(wind)/d(down) = -d(wind)/d(agl).

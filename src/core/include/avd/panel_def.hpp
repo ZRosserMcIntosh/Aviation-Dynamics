@@ -151,6 +151,18 @@ struct AvionicsDef {
     Real comSpacingKhz = 25;              // 25 kHz (8.33 optional)
 };
 
+// Heated pitot probe: icing from supercooled cloud water, and its heater.
+struct PitotProbeDef {
+    Real frontalArea = 1.1e-4;        // m^2, tip facing the flow (~12 mm tube)
+    Real collectionEfficiency = 0.8;  // droplets caught (small cylinder, 50 m/s)
+    Real iceToBlockInlet = 3e-4;      // kg of ice that closes the ram inlet (~3 mm over the tip)
+    Real iceToBlockDrain = 6e-4;      // kg that also seals the drain hole
+    Real heaterPower = 130;           // W
+    Real heaterEfficiency = 0.5;      // fraction of the heat reaching the ice (rest to the airflow)
+    Real heaterTimeConstant = 20;     // s, tube warm-up / cool-down
+    Real recoveryFactor = 0.85;       // probe surface temperature rise as a fraction of V^2/(2 cp)
+};
+
 struct InstrumentPanelDef {
     std::string profile = "analog";       // e.g. "c172s_analog"
     AirspeedIndicatorDef airspeed;
@@ -165,6 +177,7 @@ struct InstrumentPanelDef {
     AnnunciatorsDef annunciators;
     OutsideAirTemperatureDef oat;
     AvionicsDef avionics;
+    PitotProbeDef pitotProbe;
     bool clock = true;
     std::string pitotHeatLoad = "pitot_heat";
     std::string panelLightsLoad = "panel_lights";
