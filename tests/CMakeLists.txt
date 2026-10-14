@@ -7,6 +7,7 @@ set(AVD_TEST_SOURCES
   test_systems_scenarios.cpp
   test_validation.cpp
   test_instruments.cpp
+  test_world.cpp
 )
 add_executable(avd_tests ${AVD_TEST_SOURCES})
 target_link_libraries(avd_tests PRIVATE avd_scenarios)

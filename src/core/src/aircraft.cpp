@@ -330,8 +330,21 @@ void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, con
     };
     for (std::size_t i = 0; i < def_.gear.size(); ++i)
         c.gearGround[i] = plane(pos + q.rotate(def_.gear[i].attach - mass_.cg));
-    for (std::size_t i = 0; i < def_.contacts.size(); ++i)
-        c.contactGround[i] = plane(pos + q.rotate(def_.contacts[i].position - mass_.cg));
+    for (std::size_t i = 0; i < def_.contacts.size(); ++i) {
+        const Vec3 p = pos + q.rotate(def_.contacts[i].position - mass_.cg);
+        GroundHit solid;
+        if (ground.solidAt(p, solid)) {
+            // Inside a building: the nearest wall or roof pushes the point out.
+            GroundPlane gp;
+            gp.valid = true;
+            gp.point = solid.point;
+            gp.normal = solid.normal;
+            gp.surface = solid.surface;
+            c.contactGround[i] = gp;
+        } else {
+            c.contactGround[i] = plane(p);
+        }
+    }
     if (aeroModel_->surfaceCount() > 0) {
         const Vec3 w = pos + q.rotate(aeroModel_->surfaceCentroid(0) - mass_.cg);
         const GroundPlane gp = plane(w);
@@ -738,7 +751,9 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
         // Edge-triggered: one event per new contact.
         if (contactTouched_[i] && !contactWas_[i]) {
             const bool prop = def_.contacts[i].name.find("prop") != std::string::npos;
-            pushEvent(prop ? FlightEventType::PropStrike : FlightEventType::HardPointContact, 0, static_cast<int>(i));
+            // value: surface id struck (5 = building, see avd/world_ground.hpp).
+            pushEvent(prop ? FlightEventType::PropStrike : FlightEventType::HardPointContact,
+                      ctx_.contactGround[i].surface.id, static_cast<int>(i));
         }
         contactWas_[i] = contactTouched_[i];
     }

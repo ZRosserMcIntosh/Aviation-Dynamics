@@ -30,7 +30,7 @@ Legend: ✅ implemented and tested · 🟡 partial or simplified · ⛔ not star
 | Fire, bailout | ⛔ | — | — | — |
 | Assists | ✅ | Arcade, Sport, Simulation acting on controls | Assist tests | — |
 | Procedures | ✅ | Quick Start through cockpit controls | Procedure tests | Only one checklist |
-| World integration | 🟡 | ENU world frame at MASP; SBMT runway; landmarks in the web view | Runway geometry test | No terrain/buildings query from São Paulo World tiles yet |
+| World integration | 🟡 | ENU world frame at MASP; SBMT runway; `TiledWorldGround` (terrain, surfaces, buildings, wall strikes) with a documented tile format | Runway geometry; world-ground tests on a synthetic tile | Real São Paulo tile data not exported yet |
 | Browser runtime | ✅ | wasi-sdk WASM (about 636 KB), JS loader, 2D cockpit | Node smoke test, headless Chromium check | No 3D cockpit |
 | Multiplayer | ⛔ | — | — | ADR 0003: deterministic per platform only |
 | Audio | 🟡 | Stall horn in the web cockpit | — | No engine, wind or ground audio model |

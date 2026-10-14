@@ -32,9 +32,15 @@ The goal is to make the one aircraft trustworthy enough to build the rest on.
    add a pilot braking model (ramp, hold, anti-skid by feel), compare the
    landing roll at POH technique, and keep the
    tyre-limited result as a separate test.
-3. **São Paulo World ground query.** Implement `GroundQuery` over the tiled
-   terrain and building footprints. Report hard-point collisions with
-   buildings as contact events. Run the SBMT circuit over real terrain.
+3. **São Paulo World ground query.** 🟡 The integration layer is done:
+   `TiledWorldGround` (terrain heightfield, surface classes, extruded building
+   footprints, `solidAt` wall contact for the hard points) and the
+   `avd-world-tile/1` format, documented in
+   [architecture/world-ground.md](architecture/world-ground.md) and tested on
+   a synthetic tile. **Blocked on data:** the real terrain and building
+   geometry lives in the SaoPauloWorld project, which is not reachable from
+   this repository. Next: an exporter there, then the SBMT circuit over real
+   terrain.
 4. **Trimmed approach spawn in the browser.** Expose the trim solver to WASM
    so "final approach" starts trimmed rather than hands-off.
 5. **Cockpit follow-ups:**

@@ -80,7 +80,7 @@ enum class FlightEventType {
 struct FlightEvent {
     FlightEventType type;
     Real time = 0;
-    Real value = 0;        // event-specific (e.g. sink rate at touchdown, m/s)
+    Real value = 0;        // event-specific (sink rate at touchdown m/s; surface id for contacts)
     int index = -1;        // engine/gear/contact/control index
 };
 

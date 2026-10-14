@@ -45,6 +45,15 @@ public:
     virtual GroundHit raycast(const Vec3& origin, const Vec3& dir, Real maxDistance) const = 0;
     // Terrain height (m, NED down coordinate of the surface) below a point.
     virtual GroundHit below(const Vec3& point) const { return raycast(point - Vec3{0, 0, 1000}, {0, 0, 1}, 1e5); }
+    // Solid geometry the point is inside (e.g. a building): fills `contact`
+    // with the nearest exit point and outward normal and returns true. Used
+    // for the airframe hard points (wingtips, tail, propeller). Terrain-only
+    // grounds have none.
+    virtual bool solidAt(const Vec3& point, GroundHit& contact) const {
+        (void)point;
+        (void)contact;
+        return false;
+    }
 };
 
 // Infinite plane at NED down-coordinate `downOfSurface` (surface at altitude

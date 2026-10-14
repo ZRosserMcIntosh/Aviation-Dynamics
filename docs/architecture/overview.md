@@ -85,6 +85,11 @@ costs about 30 µs natively (`avdemo bench`).
   bristle model with rolling resistance. The model includes
   differential brakes, nose-wheel steering, and hard points for wingtips, tail
   and propeller that report contact events.
+- **World.** `TiledWorldGround` provides the open-world ground: 500 m tiles
+  with a terrain heightfield, surface classes and extruded buildings. Hard
+  points inside a building are pushed out through the nearest wall, and the
+  contact event reports the surface struck. See
+  [world-ground.md](world-ground.md).
 
 ## Systems
 
