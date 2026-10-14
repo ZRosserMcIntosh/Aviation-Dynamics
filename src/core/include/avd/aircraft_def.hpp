@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "avd/math.hpp"
+#include "avd/panel_def.hpp"
 #include "avd/table.hpp"
 
 namespace avd {
@@ -168,6 +169,11 @@ struct PistonEngineDef {
     Real pFactorGain = 0.12;          // asymmetric disk loading, Estimated
     Real slipstreamSwirlFactor = 1.0; // multiplier on momentum-theory swirl
     Real alternatorMinRpm = 900;
+    // Oil system (Estimated): positive-displacement pump pressure grows with
+    // rpm and oil viscosity until the relief valve opens.
+    Real oilPumpPressurePerRpm = 310;         // Pa per rpm at 190 degF oil
+    Real oilReliefPressure = 5.5e5;           // Pa (~80 psi)
+    Real oilViscosityTemperatureScale = 38.9; // K: pressure x e when oil is this much colder
     int fuelFeed = 0;                 // index of the fuel feed this engine draws from
     PropellerDef propeller;
 };
@@ -202,9 +208,11 @@ struct FuelSystemDef {
 
 struct ElectricalLoadDef {
     std::string name;
+    std::string label;                // cockpit switch/breaker label (default: name)
     Real current = 1;                 // A when on
     Real minimumVoltage = 18;
     bool onAvionicsBus = false;
+    bool initiallyOn = true;          // switch position on a fresh airframe
 };
 
 struct ElectricalDef {
@@ -354,6 +362,7 @@ struct AircraftDefinition {
     StallWarningDef stallWarning;
     VacuumDef vacuum;
     StructuralLimitsDef limits;
+    InstrumentPanelDef panel;
 
     // Returns human-readable errors (empty = valid). Every message starts with
     // the dotted field path, e.g. "engines[0].propeller.diameter: must be > 0".

@@ -164,6 +164,172 @@ Provenance provenanceFrom(const std::string& s, Obj& o) {
     return Provenance::Estimated;
 }
 
+constexpr Real kPsi = 6894.757;
+Real fToK(Real f) { return (f - 32) * 5.0 / 9.0 + 273.15; }
+
+void readRange(Obj& o, const std::string& key, Range& r, Real scale, Real offset = 0) {
+    std::vector<Real> v;
+    o.numbers(key, v);
+    if (v.empty()) return;
+    if (v.size() != 2) { o.err(o.path() + "." + key, "must be [low, high]"); return; }
+    r = {v[0] * scale + offset, v[1] * scale + offset};
+}
+
+void readRangeF(Obj& o, const std::string& key, Range& r) {
+    std::vector<Real> v;
+    o.numbers(key, v);
+    if (v.empty()) return;
+    if (v.size() != 2) { o.err(o.path() + "." + key, "must be [low, high]"); return; }
+    r = {fToK(v[0]), fToK(v[1])};
+}
+
+void readNeedle(Obj& o, const std::string& key, NeedleDynamics& n) {
+    if (!o.has(key)) return;
+    Obj c = o.child(key);
+    c.num("natural_frequency_rad_s", n.naturalFrequency);
+    c.num("damping_ratio", n.damping);
+}
+
+GyroPower gyroPowerFrom(const std::string& s, Obj& o) {
+    if (s == "vacuum") return GyroPower::Vacuum;
+    if (s == "electric") return GyroPower::Electric;
+    o.err(o.path() + ".power", "must be vacuum or electric");
+    return GyroPower::Vacuum;
+}
+
+void readPanel(Obj& o, InstrumentPanelDef& p) {
+    const Real kt = units::kKnot;
+    o.str("profile", p.profile);
+    o.str("pitot_heat_load", p.pitotHeatLoad);
+    o.str("panel_lights_load", p.panelLightsLoad);
+    o.boolean("clock", p.clock);
+    if (o.has("airspeed_indicator")) {
+        Obj a = o.child("airspeed_indicator");
+        readRange(a, "white_arc_kias", p.airspeed.whiteArc, kt);
+        readRange(a, "green_arc_kias", p.airspeed.greenArc, kt);
+        readRange(a, "yellow_arc_kias", p.airspeed.yellowArc, kt);
+        a.num("red_line_kias", p.airspeed.redLine, kt);
+        a.num("dial_min_kias", p.airspeed.dialMin, kt);
+        a.num("dial_max_kias", p.airspeed.dialMax, kt);
+        a.num("pitot_insensitive_angle_deg", p.airspeed.pitotInsensitiveAngle, kDeg);
+        readNeedle(a, "needle", p.airspeed.needle);
+    }
+    if (o.has("altimeter")) {
+        Obj a = o.child("altimeter");
+        a.num("setting_min_inhg", p.altimeter.settingMin, units::kInHg);
+        a.num("setting_max_inhg", p.altimeter.settingMax, units::kInHg);
+        readNeedle(a, "needle", p.altimeter.needle);
+    }
+    if (o.has("vertical_speed_indicator")) {
+        Obj a = o.child("vertical_speed_indicator");
+        a.num("capillary_time_constant_s", p.vsi.capillaryTimeConstant);
+        a.num("dial_range_fpm", p.vsi.dialRange, units::kFoot / 60);
+        readNeedle(a, "needle", p.vsi.needle);
+    }
+    if (o.has("attitude_indicator")) {
+        Obj a = o.child("attitude_indicator");
+        std::string power = "vacuum";
+        a.boolean("installed", p.attitude.installed);
+        a.str("power", power);
+        p.attitude.power = gyroPowerFrom(power, a);
+        a.str("electrical_load", p.attitude.electricalLoad);
+        a.num("erection_rate_deg_per_min", p.attitude.erectionRate, kDeg / 60);
+        a.num("pitch_limit_deg", p.attitude.pitchLimit, kDeg);
+        a.num("roll_limit_deg", p.attitude.rollLimit, kDeg);
+        a.num("spin_up_time_constant_s", p.attitude.spinUpTime);
+        a.num("spin_down_time_constant_s", p.attitude.spinDownTime);
+        a.num("minimum_useful_spin", p.attitude.minimumUsefulSpin);
+    }
+    if (o.has("heading_indicator")) {
+        Obj a = o.child("heading_indicator");
+        std::string power = "vacuum";
+        a.boolean("installed", p.heading.installed);
+        a.str("power", power);
+        p.heading.power = gyroPowerFrom(power, a);
+        a.str("electrical_load", p.heading.electricalLoad);
+        a.num("mechanical_drift_deg_per_hour", p.heading.mechanicalDrift, kDeg / 3600);
+        a.num("gimbal_limit_deg", p.heading.gimbalLimit, kDeg);
+        a.num("spin_up_time_constant_s", p.heading.spinUpTime);
+        a.num("spin_down_time_constant_s", p.heading.spinDownTime);
+    }
+    if (o.has("turn_coordinator")) {
+        Obj a = o.child("turn_coordinator");
+        a.boolean("installed", p.turnCoordinator.installed);
+        a.str("electrical_load", p.turnCoordinator.electricalLoad);
+        a.num("cant_deg", p.turnCoordinator.cant, kDeg);
+        a.num("standard_rate_deflection_deg", p.turnCoordinator.standardRateDeflection, kDeg);
+        a.num("calibration_bank_deg", p.turnCoordinator.calibrationBank, kDeg);
+        a.num("max_deflection_deg", p.turnCoordinator.maxDeflection, kDeg);
+        a.num("spin_up_time_constant_s", p.turnCoordinator.spinUpTime);
+        a.num("spin_down_time_constant_s", p.turnCoordinator.spinDownTime);
+        readNeedle(a, "gimbal", p.turnCoordinator.gimbal);
+    }
+    if (o.has("inclinometer")) {
+        Obj a = o.child("inclinometer");
+        a.num("tube_limit_deg", p.inclinometer.tubeLimit, kDeg);
+        readNeedle(a, "ball", p.inclinometer.ball);
+    }
+    if (o.has("magnetic_compass")) {
+        Obj a = o.child("magnetic_compass");
+        a.boolean("installed", p.compass.installed);
+        a.num("tilt_limit_deg", p.compass.tiltLimit, kDeg);
+        a.num("vertical_time_constant_s", p.compass.verticalTimeConstant);
+        readNeedle(a, "card", p.compass.card);
+        a.table("deviation", "heading_deg", "deviation_deg", p.compass.deviation, kDeg, kDeg);
+    }
+    if (o.has("engine_gauges")) {
+        Obj a = o.child("engine_gauges");
+        EngineGaugesDef& e = p.engine;
+        readRange(a, "tachometer_green_rpm", e.tachometerGreen, 1);
+        a.num("tachometer_red_line_rpm", e.tachometerRedLine);
+        a.num("tachometer_max_rpm", e.tachometerMax);
+        readRange(a, "oil_pressure_green_psi", e.oilPressureGreen, kPsi);
+        a.num("oil_pressure_red_low_psi", e.oilPressureRedLow, kPsi);
+        a.num("oil_pressure_red_high_psi", e.oilPressureRedHigh, kPsi);
+        readRangeF(a, "oil_temperature_green_f", e.oilTemperatureGreen);
+        Real redF = 0;
+        a.num("oil_temperature_red_line_f", redF);
+        if (redF > 0) e.oilTemperatureRedLine = fToK(redF);
+        readRange(a, "suction_green_inhg", e.suctionGreen, units::kInHg);
+        a.boolean("egt", e.exhaustGasTemperature);
+        a.boolean("cht", e.cylinderHeadTemperature);
+        a.boolean("fuel_flow", e.fuelFlow);
+        a.boolean("ammeter", e.ammeter);
+        a.boolean("voltmeter", e.voltmeter);
+        a.str("electrical_load", e.gaugeLoad);
+        a.num("fuel_sender_time_constant_s", e.fuelSenderTimeConstant);
+        readNeedle(a, "needle", e.needle);
+    }
+    if (o.has("annunciators")) {
+        Obj a = o.child("annunciators");
+        a.boolean("installed", p.annunciators.installed);
+        a.num("oil_pressure_below_psi", p.annunciators.oilPressureBelow, kPsi);
+        a.num("vacuum_below_inhg", p.annunciators.vacuumBelow, units::kInHg);
+        a.num("volts_below", p.annunciators.voltsBelow);
+        a.num("low_fuel_below_gal", p.annunciators.lowFuelBelow, units::kUsGallon);
+    }
+    if (o.has("outside_air_temperature")) {
+        Obj a = o.child("outside_air_temperature");
+        a.boolean("installed", p.oat.installed);
+        a.num("recovery_factor", p.oat.recoveryFactor);
+        a.num("time_constant_s", p.oat.timeConstant);
+    }
+    if (o.has("avionics")) {
+        Obj a = o.child("avionics");
+        AvionicsDef& v = p.avionics;
+        a.integer("nav_com_radios", v.navComRadios);
+        a.boolean("glideslope", v.glideslope);
+        a.boolean("transponder", v.transponder);
+        a.boolean("altitude_encoder", v.altitudeEncoder);
+        a.boolean("gps", v.gps);
+        a.boolean("adf", v.adf);
+        a.boolean("dme", v.dme);
+        a.boolean("autopilot", v.autopilot);
+        a.str("electrical_load", v.avionicsLoad);
+        a.num("com_spacing_khz", v.comSpacingKhz);
+    }
+}
+
 void readDefinition(Obj& r, AircraftDefinition& d) {
     r.integer("schema_version", d.schemaVersion, true);
     r.str("id", d.id, true);
@@ -318,6 +484,9 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("p_factor_gain", e.pFactorGain);
         o.num("slipstream_swirl_factor", e.slipstreamSwirlFactor);
         o.num("alternator_min_rpm", e.alternatorMinRpm);
+        o.num("oil_pump_psi_per_rpm", e.oilPumpPressurePerRpm, 6894.757);
+        o.num("oil_relief_psi", e.oilReliefPressure, 6894.757);
+        o.num("oil_viscosity_temperature_scale_k", e.oilViscosityTemperatureScale);
         {
             Obj pr = o.child("propeller", true);
             std::string ptype = "fixed_pitch";
@@ -375,6 +544,8 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         e.each("loads", [&](Obj& o, std::size_t) {
             ElectricalLoadDef l;
             o.str("name", l.name, true);
+            o.str("label", l.label);
+            o.boolean("initially_on", l.initiallyOn);
             o.num("current_a", l.current, 1, true);
             o.num("minimum_voltage_v", l.minimumVoltage);
             o.boolean("avionics_bus", l.onAvionicsBus);
@@ -451,6 +622,10 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         v.num("gyro_spin_down_s", d.vacuum.gyroSpinDownTime);
     } else {
         d.vacuum.present = false;
+    }
+    if (r.has("panel")) {
+        Obj pn = r.child("panel");
+        readPanel(pn, d.panel);
     }
     if (r.has("limits")) {
         Obj l = r.child("limits");

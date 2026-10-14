@@ -222,6 +222,7 @@ void startTrimmedFlight(Aircraft& ac, const FlightSetup& fs, const AtmosphereFie
             for (const auto& c : p.controls)
                 if (c.channel == ControlChannel::Elevator) elevUp = c.maxNegative;
     ac.setElevatorTrim(tr.elevator * elevUp / ac.definition().controls.elevatorTrimRange);
+    ac.resetInstrumentsToTruth();
 }
 
 // ---------------------------------------------------------------- stall ----
@@ -264,7 +265,7 @@ StallResult stallTest(const AircraftDefinition& def, int flap, Real dt) {
         }
         ac.step(dt, in, ground, atm);
         const AircraftTelemetry& tel = ac.telemetry();
-        const InstrumentReadings& r = ac.instruments().readings();
+        const CockpitState& r = ac.instruments().readings();
         if (stallTime < 0) {
             minCas = std::min(minCas, r.calibratedAirspeed);
             minIas = std::min(minIas, r.indicatedAirspeed);

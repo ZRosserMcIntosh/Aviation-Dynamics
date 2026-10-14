@@ -10,6 +10,7 @@
 
 #include "avd/geodesy.hpp"
 #include "avd/ground.hpp"
+#include "avd/navigation.hpp"
 
 namespace avd::scenarios {
 
@@ -36,6 +37,14 @@ Airport campoDeMarte(const LocalFrame& frame);
 
 // Flat airfield ground (grass) at the airport elevation with its runways.
 std::unique_ptr<AirfieldGround> makeAirfieldGround(const Airport& a, const LocalFrame& frame);
+
+// Navigation environment for the São Paulo World map: local magnetic field
+// (declination ~21.5 deg W, inclination ~38 deg up -- ESTIMATED, to be
+// replaced by a World Magnetic Model evaluation) and SYNTHETIC test radio
+// facilities: a test VOR at MASP and a test ILS for Campo de Marte runway 12.
+// These facilities do not exist in reality (SBMT has no ILS); they exercise the
+// receivers until authoritative facility data is loaded (NavDatabase::loadJson).
+const NavEnvironment& saoPauloNavEnvironment();
 
 // Point at `along` metres down runway `r` and `across` metres right of the centreline (NED).
 Vec3 runwayPoint(const RunwayDef& r, Real along, Real across = 0);

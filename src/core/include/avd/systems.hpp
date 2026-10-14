@@ -110,14 +110,15 @@ class VacuumSystem {
 public:
     explicit VacuumSystem(const VacuumDef& def) : def_(def) {}
     void step(Real dt, Real engineRpm);
-    Real suction() const { return suction_; }       // Pa
-    Real gyroSpin() const { return gyro_; }          // 0..1 of rated gyro speed
-    void setGyroSpin(Real s) { gyro_ = clamp(s, 0.0, 1.0); }
+    // Suction at the instrument manifold (Pa). Gyro rotors belong to the
+    // instruments (avd/instruments.hpp), which spin from this suction.
+    Real suction() const { return suction_; }
     void setPumpFailed(bool f) { failed_ = f; }
+    bool pumpFailed() const { return failed_; }
 
 private:
     VacuumDef def_;
-    Real suction_ = 0, gyro_ = 0;
+    Real suction_ = 0;
     bool failed_ = false;
 };
 

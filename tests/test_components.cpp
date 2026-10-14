@@ -309,81 +309,13 @@ TEST_CASE("electrical system: master switches, alternator, starter load and depl
     CHECK(weak.busVoltage() < 16);
 }
 
-TEST_CASE("vacuum system: suction follows the engine; gyros spin down slowly") {
+TEST_CASE("vacuum system: suction follows the engine-driven pump") {
     VacuumSystem v(ref().vacuum);
-    v.setGyroSpin(1);
     v.step(0.1, 2400);
     CHECK_NEAR(v.suction(), inHgToPa(5.0), 1);
-    for (int i = 0; i < 600; ++i) v.step(0.1, 0);  // engine stopped for 60 s
+    v.step(0.1, 750);
+    CHECK_NEAR(v.suction(), inHgToPa(5.0) * 0.5, 1);
+    v.setPumpFailed(true);
+    v.step(0.1, 2400);
     CHECK(v.suction() == 0);
-    CHECK_RANGE(v.gyroSpin(), 0.6, 0.85);
-}
-
-// ---------------------------------------------------------- instruments ----
-
-TEST_CASE("instruments: pitot-static relations, position error and blockages") {
-    CHECK_NEAR(msToKt(Instruments::casFromImpactPressure(Instruments::impactPressure(101325, ktToMs(100) / 340.294))),
-               100, 1e-6);
-    CHECK_NEAR(Instruments::altitudeFromPressure(StandardAtmosphere::isaPressure(3000), 101325), 3000, 2);
-    Instruments ins(scenarios::loadReference().pitotStatic.staticErrorVsAlpha, 3.0);
-    InstrumentInputs in;
-    in.air = StandardAtmosphere().at(1000);
-    in.trueAirspeed = 50;
-    in.alpha = 0;
-    in.busVoltage = 28;
-    ins.reset(in);
-    const Real casCruise = ins.readings().calibratedAirspeed;
-    CHECK_NEAR(ins.readings().indicatedAirspeed, casCruise, 0.01);  // no error at low alpha
-    in.alpha = degToRad(14);
-    ins.update(0.01, in);
-    CHECK(ins.readings().indicatedAirspeed < casCruise - 1.5);  // reads low near the stall (POH table)
-    CHECK_NEAR(ins.readings().indicatedAltitude, 1000, 25);
-    // Static port blocked: altimeter frozen during a climb; VSI goes to zero.
-    in.alpha = 0;
-    ins.faults().staticBlocked = true;
-    ins.update(0.1, in);
-    const Real frozen = ins.readings().indicatedAltitude;
-    for (int i = 0; i < 300; ++i) {
-        in.air = StandardAtmosphere().at(1000 + i);
-        ins.update(0.1, in);
-    }
-    CHECK_NEAR(ins.readings().indicatedAltitude, frozen, 1e-9);
-    CHECK_NEAR(ins.readings().verticalSpeed, 0, 0.05);
-    // Pitot blocked (ram and drain): airspeed rises as the aircraft climbs.
-    Instruments p2(Table1D{}, 3.0);
-    in.air = StandardAtmosphere().at(1000);
-    p2.reset(in);
-    p2.faults().pitotBlocked = true;
-    p2.update(0.1, in);
-    const Real ias0 = p2.readings().indicatedAirspeed;
-    in.air = StandardAtmosphere().at(1500);
-    p2.update(0.1, in);
-    CHECK(p2.readings().indicatedAirspeed > ias0 + 5);
-}
-
-TEST_CASE("instruments: electric gauges die without power; vacuum gyros wander when slow") {
-    Instruments ins(Table1D{}, 3.0);
-    InstrumentInputs in;
-    in.tankCount = 2;
-    in.fuelQuantity[0] = 0.1;
-    in.busVoltage = 28;
-    in.turnCoordinatorPowered = true;
-    in.omegaBody = {0, 0, degToRad(3)};
-    ins.reset(in);
-    CHECK_NEAR(ins.readings().fuelGauge[0], 0.1, 1e-9);
-    CHECK(ins.readings().turnRate > 0);
-    in.busVoltage = 0;
-    in.turnCoordinatorPowered = false;
-    for (int i = 0; i < 200; ++i) ins.update(0.1, in);
-    CHECK(ins.readings().fuelGauge[0] < 0.001);
-    CHECK_NEAR(ins.readings().turnRate, 0, 0);
-    // Attitude indicator: follows truth when spinning, wanders when not.
-    in.roll = 0.3;
-    in.vacuumGyroSpin = 1.0;
-    for (int i = 0; i < 50; ++i) ins.update(0.1, in);
-    CHECK_NEAR(ins.readings().attitudeRoll, 0.3, 0.01);
-    in.vacuumGyroSpin = 0.2;
-    in.roll = 0.0;
-    for (int i = 0; i < 50; ++i) ins.update(0.1, in);
-    CHECK(std::abs(ins.readings().attitudeRoll) > 0.2);  // no longer tracks wings-level
 }

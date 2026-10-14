@@ -86,7 +86,9 @@ void FuelSystem::appendMassItems(std::vector<MassItem>& items) const {
 // ----------------------------------------------------------- electrical ----
 
 ElectricalSystem::ElectricalSystem(const ElectricalDef& def, Real alternatorMinRpm)
-    : def_(def), altMinRpm_(alternatorMinRpm), loadOn_(def.loads.size(), true), charge_(def.batteryCapacity) {}
+    : def_(def), altMinRpm_(alternatorMinRpm), loadOn_(def.loads.size(), true), charge_(def.batteryCapacity) {
+    for (std::size_t i = 0; i < def.loads.size(); ++i) loadOn_[i] = def.loads[i].initiallyOn;
+}
 
 int ElectricalSystem::loadIndex(const std::string& name) const {
     for (std::size_t i = 0; i < def_.loads.size(); ++i)
@@ -160,13 +162,10 @@ void ElectricalSystem::step(Real dt, const ElectricalInputs& in) {
 
 // --------------------------------------------------------------- vacuum ----
 
-void VacuumSystem::step(Real dt, Real rpm) {
+void VacuumSystem::step(Real, Real rpm) {
     if (!def_.present) return;
+    // Engine-driven dry pump: suction rises with rpm to the regulator setting.
     suction_ = failed_ ? 0.0 : def_.regulatedSuction * clamp(rpm / def_.rpmForRegulated, 0.0, 1.0);
-    // Gyro rotor speed relaxes toward the speed the suction can sustain.
-    const Real target = clamp(suction_ / (0.8 * def_.regulatedSuction), 0.0, 1.0);
-    const Real tau = target > gyro_ ? def_.gyroSpinUpTime : def_.gyroSpinDownTime;
-    gyro_ += (target - gyro_) * std::min(dt / tau, 1.0);
 }
 
 }  // namespace avd

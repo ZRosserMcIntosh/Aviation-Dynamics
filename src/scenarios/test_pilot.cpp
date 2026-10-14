@@ -15,7 +15,7 @@ void TestPilot::resetIntegrators() {
 PilotInput TestPilot::update(const Aircraft& ac, Real dt) {
     PilotInput in = controls;
     const AircraftTelemetry& t = ac.telemetry();
-    const InstrumentReadings& r = ac.instruments().readings();
+    const CockpitState& r = ac.instruments().readings();
 
     // ---- Vertical: outer loops produce a pitch-attitude target ----
     Real pitchTarget = targetPitch;

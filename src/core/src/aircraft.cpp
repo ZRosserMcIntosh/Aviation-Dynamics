@@ -52,7 +52,7 @@ Aircraft::Aircraft(const AircraftDefinition& def, const LocalFrame& frame)
       fuel_(def.fuel),
       electrical_(def.electrical, def.engines.empty() ? 900 : def.engines[0].alternatorMinRpm),
       vacuum_(def.vacuum),
-      instruments_(def.pitotStatic.staticErrorVsAlpha, def.pitotStatic.vsiTimeConstant) {
+      instruments_(def.panel, def.pitotStatic.staticErrorVsAlpha, def.vacuum.regulatedSuction) {
     const auto errors = def.validate();
     if (!errors.empty()) AVD_FAIL(std::invalid_argument, joinErrors(errors));
     aeroModel_ = std::make_unique<AeroModel>(def_);
@@ -129,7 +129,8 @@ void Aircraft::rebuildCockpit() {
     }
     cockpit_.push_back({"brakes.parking", "Parking Brake", {"OFF", "SET"}, 0});
     for (const ElectricalLoadDef& l : def_.electrical.loads)
-        cockpit_.push_back({"electrical.load." + l.name, "Circuit: " + l.name, {"OFF", "ON"}, 1});
+        cockpit_.push_back({"electrical.load." + l.name, l.label.empty() ? "Circuit Breaker: " + l.name : l.label,
+                            {"OFF", "ON"}, l.initiallyOn ? 1 : 0});
 }
 
 void Aircraft::syncCockpitPositions() {
@@ -213,8 +214,10 @@ void Aircraft::setColdAndDark() {
         engineState_[i] = {};
         runningWas_[i] = false;
     }
-    vacuum_.setGyroSpin(0);
     parkingBrake_ = true;
+    for (std::size_t i = 0; i < def_.electrical.loads.size(); ++i)
+        electrical_.setLoadSwitch(static_cast<int>(i), def_.electrical.loads[i].initiallyOn);
+    instruments_.resetCold(sensorInputs());
     syncCockpitPositions();
 }
 
@@ -240,7 +243,16 @@ void Aircraft::setEngineRunning(bool running, Real rpm) {
         engineState_[i].egt = 900; engineState_[i].cht = 420; engineState_[i].oilTemperature = 360;
         runningWas_[i] = true;
     }
-    vacuum_.setGyroSpin(1);
+    vacuum_.step(0, rpm);
+    // Establish bus voltage (battery, then the alternator's field) for the spawn.
+    ElectricalInputs ei;
+    ei.alternatorRpm = rpm;
+    electrical_.step(0, ei);
+    electrical_.step(0, ei);
+    for (int i = 0; i < engineCount(); ++i) {
+        engineState_[i].oilPressure = def_.engines[i].oilReliefPressure;
+    }
+    instruments_.resetToTruth(sensorInputs());
     syncCockpitPositions();
 }
 
@@ -271,6 +283,13 @@ void Aircraft::placeOnGround(Real north, Real east, Real heading, const GroundQu
     groundStateTimer_ = 0;
     syncCockpitPositions();
     updateTelemetry();
+}
+
+void Aircraft::resetInstrumentsToTruth() {
+    // Refresh the specific force for the current state (pendulous sensors).
+    const Derivatives d = derive(s_, ctx_, false);
+    if (mass_.mass > 0) tel_.specificForceBody = d.forceBody / mass_.mass;
+    instruments_.resetToTruth(sensorInputs());
 }
 
 void Aircraft::rebase(const LocalFrame& nf) {
@@ -405,6 +424,7 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
             n.egt = engineState_[i].egt;
             n.cht = engineState_[i].cht;
             n.oilTemperature = engineState_[i].oilTemperature;
+            n.oilPressure = engineState_[i].oilPressure;
             engineState_[i] = n;
             propState_[i] = pf;
         }
@@ -654,30 +674,7 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
     tel_.specificForceBody = fin.forceBody / mass_.mass;
     updateTelemetry();
 
-    // Instruments.
-    InstrumentInputs ii;
-    ii.air = c.air.state;
-    ii.trueAirspeed = aeroOut_.airspeed;
-    ii.alpha = aeroOut_.alpha;
-    ii.roll = tel_.roll;
-    ii.pitch = tel_.pitch;
-    ii.heading = tel_.heading;
-    ii.omegaBody = s_.body.omega;
-    ii.specificForceBody = tel_.specificForceBody;
-    ii.engineRpm = engineCount() > 0 ? s_.shaftOmega[0] * 60 / kTwoPi : 0;
-    ii.busVoltage = electrical_.busVoltage();
-    ii.vacuumGyroSpin = def_.vacuum.present ? vacuum_.gyroSpin() : 1.0;
-    const int tcLoad = electrical_.loadIndex("turn_coordinator");
-    ii.turnCoordinatorPowered = tcLoad >= 0 ? electrical_.loadPowered(tcLoad) : electrical_.powered();
-    ii.tankCount = std::min(static_cast<int>(def_.fuel.tanks.size()), 4);
-    for (int i = 0; i < ii.tankCount; ++i) ii.fuelQuantity[i] = fuel_.tankQuantity(i);
-    if (engineCount() > 0) {
-        ii.oilPressure = engineState_[0].oilPressure;
-        ii.oilTemperature = engineState_[0].oilTemperature;
-        ii.egt = engineState_[0].egt;
-        ii.cht = engineState_[0].cht;
-        ii.fuelFlow = engineState_[0].fuelFlow;
-    }
+    // Instruments: pneumatic stall-warning vane, then the panel's sensors.
     bool vane = false;
     if (def_.stallWarning.present && aeroModel_->surfaceCount() > def_.stallWarning.surface) {
         const int first = aeroModel_->firstStrip(def_.stallWarning.surface);
@@ -688,8 +685,8 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
             vane = st.q > 30 && st.alpha > st.stallAlpha - def_.stallWarning.alphaMargin;
         }
     }
-    ii.stallVaneTriggered = vane;
-    instruments_.update(dt, ii);
+    stallVane_ = vane;
+    instruments_.update(dt, sensorInputs());
     tel_.stallWarning = vane;
 
     // ---- Events ----
@@ -745,6 +742,71 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
         }
         contactWas_[i] = contactTouched_[i];
     }
+}
+
+bool Aircraft::loadPowered(const std::string& name, bool fallback) const {
+    const int i = electrical_.loadIndex(name);
+    return i >= 0 ? electrical_.loadPowered(i) : fallback;
+}
+
+SensorInputs Aircraft::sensorInputs() const {
+    SensorInputs in;
+    const Quat& q = s_.body.attitude;
+    const Vec3 vBody = q.inverseRotate(s_.body.velocity);
+    const Vec3 windBody = q.inverseRotate(ctx_.air.wind);
+    const Vec3 rPitot = def_.pitotStatic.pitotPosition - mass_.cg;
+    in.time = time_;
+    in.air = ctx_.air.state;
+    in.pitotAirVelocityBody = vBody - windBody + cross(s_.body.omega, rPitot);
+    in.staticPortAlpha = aeroOut_.alpha;
+    in.trueAirspeed = aeroOut_.airspeed;
+    in.groundVelocityNed = s_.body.velocity;
+    in.attitude = q;
+    in.omegaBody = s_.body.omega;
+    // Specific force at the CG (the panel is ~1 m away; rotational terms at
+    // that lever arm are below 0.01 g in normal manoeuvres).
+    in.specificForceBody = tel_.specificForceBody;
+    // Flat-frame altitude (consistent with the projected game world) and a
+    // latitude adequate for gyro earth-rate drift.
+    in.position = frame_.origin();
+    in.position.latitude += s_.body.position.x / wgs84::kSemiMajor;
+    in.position.longitude += s_.body.position.y / (wgs84::kSemiMajor * std::max(std::cos(frame_.origin().latitude), 1e-3));
+    in.position.height = altitudeMsl();
+    in.heightAboveGround = ctx_.wingHeightAgl;
+    in.suction = def_.vacuum.present ? vacuum_.suction() : 0.0;
+    in.busVoltage = electrical_.busVoltage();
+    in.batteryCurrent = electrical_.batteryCurrent();
+    in.alternatorOnline = electrical_.alternatorOnline();
+    const InstrumentPanelDef& p = def_.panel;
+    const bool bus = electrical_.powered(18);
+    in.turnCoordinatorPowered = loadPowered(p.turnCoordinator.electricalLoad, bus);
+    in.attitudeElectricPowered = loadPowered(p.attitude.electricalLoad, bus);
+    in.headingElectricPowered = loadPowered(p.heading.electricalLoad, bus);
+    in.gaugesPowered = loadPowered(p.engine.gaugeLoad, bus);
+    in.avionicsPowered = loadPowered(p.avionics.avionicsLoad, electrical_.avionicsBusVoltage() >= 18);
+    in.annunciatorsPowered = bus;
+    in.pitotHeatOn = loadPowered(p.pitotHeatLoad, false);
+    in.panelLightsOn = loadPowered(p.panelLightsLoad, false);
+    if (engineCount() > 0) {
+        const PistonEngineState& e = engineState_[0];
+        in.engineRpm = s_.shaftOmega[0] * 60 / kTwoPi;
+        in.oilPressure = e.oilPressure;
+        in.oilTemperature = e.oilTemperature;
+        in.egt = e.egt;
+        in.cht = e.cht;
+        in.fuelFlow = e.fuelFlow;
+    }
+    in.fuelDensity = def_.fuel.density;
+    in.tankCount = std::min(static_cast<int>(def_.fuel.tanks.size()), 4);
+    for (int i = 0; i < in.tankCount; ++i) {
+        in.fuelQuantity[i] = fuel_.tankQuantity(i);
+        in.fuelUnusable[i] = def_.fuel.tanks[i].unusable;
+    }
+    in.flapAngle = flapAngle_;
+    in.elevatorTrim = trim_;
+    in.stallVaneTriggered = stallVane_;
+    in.nav = nav_;
+    return in;
 }
 
 void Aircraft::pushEvent(FlightEventType t, Real value, int index) {

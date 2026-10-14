@@ -49,6 +49,64 @@ std::unique_ptr<AirfieldGround> makeAirfieldGround(const Airport& a, const Local
     return g;
 }
 
+const NavEnvironment& saoPauloNavEnvironment() {
+    static NavDatabase db = [] {
+        NavDatabase d;
+        const LocalFrame f = saoPauloWorldFrame();
+        const Airport a = campoDeMarte(f);
+        const RunwayDef& r = a.runways[0];
+        const Real var = units::degToRad(-21.5);
+        const std::string src = "synthetic test facility (Aviation Dynamics); not a real-world navaid";
+        Navaid vor;
+        vor.type = Navaid::Type::Vor;
+        vor.ident = "TSP";
+        vor.name = "Test VOR Paulista (synthetic)";
+        vor.frequencyKhz = 113700;
+        vor.position = f.origin();
+        vor.position.height = 830;
+        vor.magneticVariation = var;
+        vor.rangeNm = 40;
+        vor.synthetic = true;
+        vor.source = src;
+        d.add(vor);
+        // Localizer antenna 300 m beyond the far end of runway 12.
+        auto geo = [&](const Vec3& ned, Real h) {
+            Geodetic g = f.geodeticFromNed(ned);
+            g.height = h;
+            return g;
+        };
+        Navaid loc;
+        loc.type = Navaid::Type::Localizer;
+        loc.ident = "ITMT";
+        loc.name = "Test ILS Campo de Marte RWY 12 (synthetic)";
+        loc.frequencyKhz = 110300;
+        loc.position = geo(runwayPoint(r, r.length + 300), a.elevation + 2);
+        loc.course = r.headingTrue;
+        // Width giving 700 ft (213 m) full-scale span at the threshold.
+        loc.courseWidth = 2 * std::atan2(106.7, r.length + 300);
+        loc.rangeNm = 18;
+        loc.synthetic = true;
+        loc.source = src;
+        d.add(loc);
+        Navaid gs = loc;
+        gs.type = Navaid::Type::Glideslope;
+        gs.ident = "ITMT GS";
+        gs.position = geo(runwayPoint(r, 300, 120), a.elevation + 2);
+        gs.glidepathAngle = units::degToRad(3.0);
+        gs.rangeNm = 10;
+        d.add(gs);
+        return d;
+    }();
+    static NavEnvironment env = [] {
+        NavEnvironment e;
+        e.field.declination = units::degToRad(-21.5);
+        e.field.inclination = units::degToRad(-38.0);
+        e.database = &db;
+        return e;
+    }();
+    return env;
+}
+
 Vec3 runwayPoint(const RunwayDef& r, Real along, Real across) {
     const Real c = std::cos(r.headingTrue), s = std::sin(r.headingTrue);
     return {r.threshold.x + along * c - across * s, r.threshold.y + along * s + across * c,

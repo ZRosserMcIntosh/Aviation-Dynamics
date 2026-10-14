@@ -204,8 +204,6 @@ PistonEngineState PistonEngine::evaluate(const PistonEngineInputs& in, Real omeg
         const Real freeOmega = 450 * kTwoPi / 60;  // starter free-run speed at the crank
         s.starterTorque = def_.starterTorque * std::max(0.0, 1 - omega / freeOmega);
     }
-    // Oil pressure: rises with rpm to the relief-valve setting (~60-90 psi).
-    s.oilPressure = 4.5e5 * clamp(omega / (1000 * kTwoPi / 60), 0.0, 1.0);
     return s;
 }
 
@@ -221,6 +219,15 @@ void PistonEngine::updateThermal(PistonEngineState& s, Real dt, Real coolingAirs
     s.cht += (chtTarget - s.cht) * std::min(dt / 120.0, 1.0);
     const Real oilTarget = 300 + (s.firing ? 90 * (0.4 + 0.6 * powerFrac) : 0);
     s.oilTemperature += (oilTarget - s.oilTemperature) * std::min(dt / 300.0, 1.0);
+    // Oil pressure: pump delivery ~ rpm, pressure ~ delivery x viscosity
+    // (exponential in temperature) until the relief valve opens; the relief
+    // valve then regulates with a small droop. Pump priming lag ~1 s.
+    const Real rpm = s.omega * 60 / kTwoPi;
+    const Real visc = std::exp((360.9 - s.oilTemperature) / def_.oilViscosityTemperatureScale);
+    const Real unrestricted = def_.oilPumpPressurePerRpm * rpm * visc;
+    const Real relief = def_.oilReliefPressure;
+    const Real target = unrestricted < relief ? unrestricted : std::min(relief + 0.25 * (unrestricted - relief), 1.5 * relief);
+    s.oilPressure += (target - s.oilPressure) * std::min(dt / 0.8, 1.0);
 }
 
 }  // namespace avd

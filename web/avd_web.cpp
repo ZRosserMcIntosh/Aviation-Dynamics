@@ -267,7 +267,7 @@ AVD_EXPORT double* avd_state() {
     if (!g) return g_state;
     const Aircraft& ac = *g->ac;
     const AircraftTelemetry& t = ac.telemetry();
-    const InstrumentReadings& r = ac.instruments().readings();
+    const CockpitState& r = ac.instruments().readings();
     const EngineTelemetry& e = t.engines[0];
     const Vec3 enu = world::enuFromNed(ac.datumPosition());
     const Quat q = world::enuFluFromNedFrd(ac.state().body.attitude);

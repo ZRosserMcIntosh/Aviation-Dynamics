@@ -72,7 +72,7 @@ void drain(Aircraft& ac) {
 
 std::string status(const Aircraft& ac, Real fieldElevation) {
     const AircraftTelemetry& t = ac.telemetry();
-    const InstrumentReadings& r = ac.instruments().readings();
+    const CockpitState& r = ac.instruments().readings();
     std::ostringstream os;
     os << std::fixed << std::setprecision(0) << msToKt(r.indicatedAirspeed) << " KIAS, " << mToFt(t.altitudeMsl)
        << " ft MSL (" << mToFt(t.altitudeMsl - fieldElevation) << " AGL), VS " << msToFpm(t.verticalSpeed) << " fpm, hdg "
@@ -357,8 +357,8 @@ int starvationDemo(const char* csv) {
               << " min; mass fell by " << std::setprecision(2) << m0 - ac.massProperties().mass << " kg. Unusable fuel left: "
               << ac.fuel().tankQuantity(0) * 1000 << " + " << ac.fuel().tankQuantity(1) * 1000 << " L.\n";
     std::cout << "Glide: " << std::setprecision(0) << (ac.time() - quit) << " s to " << (t.onGround ? "touchdown" : "the end of the run")
-              << ", windmilling at " << t.engines[0].rpm << " rpm; vacuum gyro " << std::setprecision(0)
-              << ac.vacuum().gyroSpin() * 100 << "% speed.\n";
+              << ", windmilling at " << t.engines[0].rpm << " rpm; attitude gyro " << std::setprecision(0)
+              << ac.instruments().truth().attitudeGyroSpin * 100 << "% rotor speed.\n";
     return quit > 0 ? 0 : 1;
 }
 
@@ -374,7 +374,7 @@ int shutdownDemo() {
     std::cout << "# Scenario C (single-engine analogue): the player looks at a knob and presses F.\n";
     auto line = [&](const std::string& what) {
         const AircraftTelemetry& t = ac.telemetry();
-        const InstrumentReadings& r = ac.instruments().readings();
+        const CockpitState& r = ac.instruments().readings();
         std::ostringstream os;
         os << what << std::fixed << std::setprecision(0) << " | rpm " << r.tachometerRpm << ", fuel flow "
            << std::setprecision(1) << m3ToGal(t.engines[0].engine.fuelFlow / def.fuel.density) * 3600 << " gph, thrust "

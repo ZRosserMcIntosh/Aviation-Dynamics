@@ -37,6 +37,13 @@
     {"field": "gear", "kind": "estimated", "source": "EST", "note": "Track 8 ft 4 in and wheelbase ~65 in (POH); stiffness/damping estimated for ~6 cm static deflection; nose steering +-10 deg (POH)."},
     {"field": "pitot_static.static_error", "kind": "calibrated", "source": "POH", "note": "Shape fitted to the POH airspeed calibration table (flaps up: 50 KIAS = 56 KCAS ... 140 KIAS = 138 KCAS)."},
     {"field": "controls.rigging_rudder", "kind": "calibrated", "source": "EST", "note": "Ground-adjustable rudder tab (exists on the C172): set for zero yaw moment at 105 KIAS cruise, 1500 m; aileron rigging likewise for zero roll moment."},
+    {"field": "panel.airspeed_indicator", "kind": "published", "source": "POH", "note": "Section 2 airspeed indicator markings: white 40-85, green 48-129, yellow 129-163, red line 163 KIAS. Verify against the POH revision of the target airplane."},
+    {"field": "panel.engine_gauges", "kind": "published", "source": "POH", "note": "Section 2 powerplant instrument markings (tach 2100-2700 green, 2700 red; oil pressure 50-90 green, 20/115 red; oil temperature 100-245 F; suction 4.5-5.5 inHg). Verify against the target POH revision."},
+    {"field": "panel.annunciators", "kind": "published", "source": "POH", "note": "Section 7 annunciator panel: OIL PRESS < 20 psi, LOW VAC < 3.0 inHg, VOLTS < 24.5 V, L/R LOW FUEL < ~5 gal per tank. Verify against the target POH revision."},
+    {"field": "panel.attitude_indicator", "kind": "estimated", "source": "EST", "note": "Typical vacuum attitude gyro: ~6 deg/min erection, 70 deg pitch / 110 deg bank tumble limits, minutes to spin up/down (FAA-H-8083-15B ch. 5). Instrument-model specific; configurable."},
+    {"field": "panel.heading_indicator", "kind": "estimated", "source": "EST", "note": "Typical DG: mechanical drift a few deg/h, 55 deg gimbal limit (older units), re-sync every 15 min practice (FAA-H-8083-25B ch. 8)."},
+    {"field": "panel.avionics", "kind": "estimated", "source": "EST", "note": "Baseline single NAV/COM with VOR/LOC/GS indicator and transponder with encoder; GPS, ADF, DME and autopilot were options and are not installed in this profile."},
+    {"field": "electrical.loads", "kind": "estimated", "source": "EST", "note": "Load currents are estimates for a 28 V system; switch set and breakers follow the POH electrical system description."},
     {"field": "limits", "kind": "published", "source": "POH", "note": "VNE 163, VNO 129, VA 105 (2550 lb), VFE 110 (flaps 10), 85 (flaps > 10); +3.8/-1.52 g flaps up, +3.0 g flaps down."}
   ],
 
@@ -235,12 +242,18 @@
     "alternator_voltage_v": 28.0,
     "alternator_max_current_a": 60,
     "loads": [
-      {"name": "avionics", "current_a": 8.0, "minimum_voltage_v": 20, "avionics_bus": true},
-      {"name": "turn_coordinator", "current_a": 0.5, "minimum_voltage_v": 18},
-      {"name": "engine_gauges", "current_a": 0.5, "minimum_voltage_v": 18},
-      {"name": "beacon", "current_a": 1.5, "minimum_voltage_v": 18},
-      {"name": "flaps", "current_a": 0.0, "minimum_voltage_v": 18},
-      {"name": "fuel_pump", "current_a": 0.0, "minimum_voltage_v": 18}
+      {"name": "avionics", "label": "Circuit Breaker: Avionics (NAV/COM, transponder)", "current_a": 6.0, "minimum_voltage_v": 20, "avionics_bus": true},
+      {"name": "turn_coordinator", "label": "Circuit Breaker: Turn Coordinator", "current_a": 0.5, "minimum_voltage_v": 18},
+      {"name": "engine_gauges", "label": "Circuit Breaker: Instruments (engine and fuel gauges)", "current_a": 0.5, "minimum_voltage_v": 18},
+      {"name": "flaps", "label": "Circuit Breaker: Flap Motor", "current_a": 0.0, "minimum_voltage_v": 18},
+      {"name": "fuel_pump", "label": "Circuit Breaker: Fuel Pump", "current_a": 0.0, "minimum_voltage_v": 18},
+      {"name": "beacon", "label": "Beacon Switch", "current_a": 1.5, "minimum_voltage_v": 18, "initially_on": false},
+      {"name": "nav_lights", "label": "NAV Lights Switch", "current_a": 2.5, "minimum_voltage_v": 18, "initially_on": false},
+      {"name": "strobes", "label": "Strobe Lights Switch", "current_a": 2.0, "minimum_voltage_v": 18, "initially_on": false},
+      {"name": "taxi_light", "label": "Taxi Light Switch", "current_a": 3.6, "minimum_voltage_v": 18, "initially_on": false},
+      {"name": "landing_light", "label": "Landing Light Switch", "current_a": 3.6, "minimum_voltage_v": 18, "initially_on": false},
+      {"name": "pitot_heat", "label": "Pitot Heat Switch", "current_a": 5.0, "minimum_voltage_v": 18, "initially_on": false},
+      {"name": "panel_lights", "label": "Panel Lights", "current_a": 1.0, "minimum_voltage_v": 18, "initially_on": false}
     ]
   },
 
@@ -293,6 +306,37 @@
 
   "stall_warning": {"present": true, "surface": 0, "strip": 11, "alpha_margin_deg": 3.5},
   "vacuum": {"present": true, "regulated_suction_inhg": 5.0, "rpm_for_regulated": 1500, "gyro_spin_up_s": 20, "gyro_spin_down_s": 180},
+  "panel": {
+    "profile": "c172s_analog",
+    "airspeed_indicator": {
+      "white_arc_kias": [40, 85], "green_arc_kias": [48, 129], "yellow_arc_kias": [129, 163],
+      "red_line_kias": 163, "dial_min_kias": 40, "dial_max_kias": 200,
+      "pitot_insensitive_angle_deg": 17, "needle": {"natural_frequency_rad_s": 6, "damping_ratio": 1.0}
+    },
+    "altimeter": {"setting_min_inhg": 28.10, "setting_max_inhg": 31.00},
+    "vertical_speed_indicator": {"capillary_time_constant_s": 3.0, "dial_range_fpm": 2000},
+    "attitude_indicator": {"power": "vacuum", "erection_rate_deg_per_min": 6, "pitch_limit_deg": 70, "roll_limit_deg": 110,
+                           "spin_up_time_constant_s": 60, "spin_down_time_constant_s": 200, "minimum_useful_spin": 0.7},
+    "heading_indicator": {"power": "vacuum", "mechanical_drift_deg_per_hour": 6, "gimbal_limit_deg": 55,
+                          "spin_up_time_constant_s": 60, "spin_down_time_constant_s": 200},
+    "turn_coordinator": {"electrical_load": "turn_coordinator", "cant_deg": 30, "standard_rate_deflection_deg": 20,
+                         "calibration_bank_deg": 16, "max_deflection_deg": 40},
+    "inclinometer": {"tube_limit_deg": 16},
+    "magnetic_compass": {"tilt_limit_deg": 18},
+    "engine_gauges": {
+      "tachometer_green_rpm": [2100, 2700], "tachometer_red_line_rpm": 2700, "tachometer_max_rpm": 3500,
+      "oil_pressure_green_psi": [50, 90], "oil_pressure_red_low_psi": 20, "oil_pressure_red_high_psi": 115,
+      "oil_temperature_green_f": [100, 245], "oil_temperature_red_line_f": 245,
+      "suction_green_inhg": [4.5, 5.5],
+      "egt": true, "fuel_flow": true, "cht": false, "ammeter": true, "voltmeter": false,
+      "electrical_load": "engine_gauges"
+    },
+    "annunciators": {"oil_pressure_below_psi": 20, "vacuum_below_inhg": 3.0, "volts_below": 24.5, "low_fuel_below_gal": 5},
+    "outside_air_temperature": {"recovery_factor": 0.8, "time_constant_s": 10},
+    "avionics": {"nav_com_radios": 1, "glideslope": true, "transponder": true, "altitude_encoder": true,
+                 "gps": false, "adf": false, "dme": false, "autopilot": false, "electrical_load": "avionics", "com_spacing_khz": 25}
+  },
+
   "limits": {"vne_kias": 163, "vno_kias": 129, "va_kias": 105, "vfe_kias": 85,
              "vfe_vs_flap": {"flap_deg": [10, 10.5, 30], "kias": [110, 85, 85]},
              "load_positive_g": 3.8, "load_negative_g": -1.52, "load_flaps_g": 3.0}

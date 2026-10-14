@@ -286,6 +286,47 @@ std::vector<std::string> AircraftDefinition::validate() const {
     c.positive("vacuum.rpmForRegulated", vacuum.rpmForRegulated);
     c.positive("vacuum.gyroSpinUpTime", vacuum.gyroSpinUpTime);
     c.positive("vacuum.gyroSpinDownTime", vacuum.gyroSpinDownTime);
+    {
+        const InstrumentPanelDef& p = panel;
+        auto needle = [&](const std::string& path, const NeedleDynamics& n) {
+            c.range(path + ".naturalFrequency", n.naturalFrequency, 0.1, 50);
+            c.range(path + ".damping", n.damping, 0.05, 3);
+        };
+        needle("panel.airspeed.needle", p.airspeed.needle);
+        needle("panel.altimeter.needle", p.altimeter.needle);
+        needle("panel.vsi.needle", p.vsi.needle);
+        needle("panel.turnCoordinator.gimbal", p.turnCoordinator.gimbal);
+        needle("panel.inclinometer.ball", p.inclinometer.ball);
+        needle("panel.compass.card", p.compass.card);
+        needle("panel.engine.needle", p.engine.needle);
+        c.range("panel.airspeed.pitotInsensitiveAngle", p.airspeed.pitotInsensitiveAngle, 0, 0.8);
+        if (!(p.altimeter.settingMax > p.altimeter.settingMin)) c.add("panel.altimeter.settingMax", "must exceed settingMin");
+        c.range("panel.vsi.capillaryTimeConstant", p.vsi.capillaryTimeConstant, 0.2, 30);
+        c.positive("panel.vsi.dialRange", p.vsi.dialRange);
+        c.range("panel.attitude.erectionRate", p.attitude.erectionRate, 0, 0.05);
+        c.range("panel.attitude.pitchLimit", p.attitude.pitchLimit, 0.2, kPi / 2);
+        c.range("panel.attitude.rollLimit", p.attitude.rollLimit, 0, kPi);
+        c.positive("panel.attitude.spinUpTime", p.attitude.spinUpTime);
+        c.positive("panel.attitude.spinDownTime", p.attitude.spinDownTime);
+        c.range("panel.attitude.minimumUsefulSpin", p.attitude.minimumUsefulSpin, 0.05, 1);
+        c.range("panel.heading.mechanicalDrift", p.heading.mechanicalDrift, -0.01, 0.01);
+        c.range("panel.heading.gimbalLimit", p.heading.gimbalLimit, 0.2, kPi / 2);
+        c.positive("panel.heading.spinUpTime", p.heading.spinUpTime);
+        c.positive("panel.heading.spinDownTime", p.heading.spinDownTime);
+        c.range("panel.turnCoordinator.cant", p.turnCoordinator.cant, 0, 1.2);
+        c.range("panel.turnCoordinator.standardRateDeflection", p.turnCoordinator.standardRateDeflection, 0.05, 1.2);
+        c.range("panel.turnCoordinator.maxDeflection", p.turnCoordinator.maxDeflection, 0.05, 1.5);
+        c.positive("panel.turnCoordinator.spinUpTime", p.turnCoordinator.spinUpTime);
+        c.positive("panel.turnCoordinator.spinDownTime", p.turnCoordinator.spinDownTime);
+        c.range("panel.inclinometer.tubeLimit", p.inclinometer.tubeLimit, 0.05, 1.0);
+        c.range("panel.compass.tiltLimit", p.compass.tiltLimit, 0.05, 0.8);
+        c.table("panel.compass.deviation", p.compass.deviation);
+        c.positive("panel.engine.fuelSenderTimeConstant", p.engine.fuelSenderTimeConstant);
+        c.range("panel.oat.recoveryFactor", p.oat.recoveryFactor, 0, 1);
+        c.range("panel.avionics.navComRadios", p.avionics.navComRadios, 0, 2);
+        if (p.avionics.comSpacingKhz != 25 && p.avionics.comSpacingKhz != 8.33)
+            c.add("panel.avionics.comSpacingKhz", "must be 25 or 8.33");
+    }
     c.nonNegative("limits.neverExceedIas", limits.neverExceedIas);
     c.table("limits.vfeVsFlap", limits.flapExtendedIasVsFlap);
     c.range("limits.limitLoadPositive", limits.limitLoadPositive, 1, 15);

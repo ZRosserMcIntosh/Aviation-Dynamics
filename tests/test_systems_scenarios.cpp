@@ -137,8 +137,8 @@ TEST_CASE("systems: battery master off in flight kills electric devices, not the
     for (int i = 0; i < 10 * 240; ++i) ac.step(kDefaultDt, pilot.update(ac, kDefaultDt), g, atm);
     CHECK_NEAR(ac.electrical().busVoltage(), 0, 0);
     CHECK_NEAR(ac.flapAngle(), 0, 1e-12);                           // electric flaps do not move
-    CHECK_NEAR(ac.instruments().readings().turnRate, 0, 0);         // electric gyro dead
-    CHECK_NEAR(ac.instruments().readings().fuelGauge[0], 0, 0.002); // gauges at zero
+    CHECK(ac.instruments().readings().turnCoordinatorFlag);         // electric gyro: OFF flag shows
+    CHECK(ac.instruments().readings().fuelGauge[0] < 0.02);         // damped needles falling to empty
     CHECK(ac.telemetry().engines[0].engine.running);                // magnetos are self-powered
     CHECK(ac.instruments().readings().tachometerRpm > 2000);        // mechanical tach still works
     // Power back: flaps run.

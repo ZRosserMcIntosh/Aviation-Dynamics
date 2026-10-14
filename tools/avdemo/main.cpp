@@ -8,6 +8,7 @@
 //   avdemo shutdown            Scenario C (piston analogue): fuel shutoff valve closed in cruise
 //   avdemo cockpit             list interactive cockpit controls
 //   avdemo bench               per-step CPU cost
+//   avdemo instruments [csv]   truth vs instrument display (debug view, optional CSV)
 #include <chrono>
 #include <cstring>
 #include <fstream>
@@ -18,6 +19,7 @@
 #include "airports.hpp"
 #include "avd/assists.hpp"
 #include "avd/procedures.hpp"
+#include "avd/instruments.hpp"
 #include "avd/telemetry.hpp"
 #include "avd/units.hpp"
 #include "scenarios.hpp"
@@ -94,8 +96,9 @@ int validate() {
         trimNote(t);
         row("Rate of climb, sea level, 74 KIAS", "730 fpm", msToFpm(t.tas * std::sin(t.flightPath)), "fpm", 730, 15);
     }
-    const TakeoffResult to = takeoffTest(def, 0, 0);
+    const TakeoffResult to = takeoffTest(def, 0, 0, 0, 0, 51);
     row("Take-off ground roll (short field)", "960 ft", mToFt(to.groundRoll), "ft", 960, 20);
+    std::cout << "|  ↳ known discrepancy | suspected optimistic static thrust (BEM without swirl losses) | | | |\n";
     row("Take-off over 50 ft obstacle", "1630 ft", mToFt(to.distanceTo50ft), "ft", 1630, 20);
     const Real lr = landingRollTest(def);
     std::cout << "| Landing ground roll, maximum braking | 575 ft (POH: demonstrated braking) | " << std::setprecision(0)
@@ -157,6 +160,51 @@ int bench() {
     return 0;
 }
 
+// Debug view: what the aircraft is doing vs what the panel shows, during a
+// scripted climbing turn with a vacuum failure partway through.
+int instrumentDebug(const char* csvPath) {
+    const AircraftDefinition def = loadReference();
+    SimpleWeather atm;
+    FlatGround ground(0);
+    Aircraft ac(def, saoPauloWorldFrame());
+    ac.setNavEnvironment(&saoPauloNavEnvironment());
+    TestPilot pilot;
+    startTrimmedFlight(ac, {95, 1200, 0}, atm, ground, &pilot);
+    std::unique_ptr<std::ofstream> file;
+    std::unique_ptr<InstrumentRecorder> rec;
+    if (csvPath) {
+        file = std::make_unique<std::ofstream>(csvPath);
+        rec = std::make_unique<InstrumentRecorder>(*file, 0.1);
+        rec->writeHeader();
+    }
+    pilot.lateral = TestPilot::Lateral::Bank;
+    pilot.targetBank = degToRad(20);
+    pilot.controls.throttle = 1;
+    pilot.vertical = TestPilot::Vertical::Airspeed;
+    pilot.targetIas = ktToMs(80);
+    std::cout << "## Truth vs display (climbing 20 deg turn; vacuum pump fails at t=60 s)\n\n"
+              << "| t s | KTAS | KCAS | KIAS | alt ft | ind ft | VS fpm | VSI fpm | roll | AI roll | MH | DG | compass | TC dps | ball | AI rotor | OIL psi | ann |\n"
+              << "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n";
+    for (int i = 0; i <= 240 * 240; ++i) {
+        if (i == 60 * 240) ac.vacuum().setPumpFailed(true);
+        ac.step(kDefaultDt, pilot.update(ac, kDefaultDt), ground, atm);
+        if (rec) rec->record(ac);
+        if (i % (20 * 240) != 0) continue;
+        const InstrumentTruth& t = ac.instruments().truth();
+        const CockpitState& c = ac.instruments().state();
+        auto hd = [](Real r) { return std::lround(std::fmod(radToDeg(r) + 360, 360.0)); };
+        std::cout << std::fixed << std::setprecision(0) << "| " << ac.time() << " | " << msToKt(t.trueAirspeed) << " | "
+                  << msToKt(t.calibratedAirspeed) << " | " << msToKt(c.indicatedAirspeed) << " | " << mToFt(t.altitudeMsl)
+                  << " | " << mToFt(c.indicatedAltitude) << " | " << msToFpm(t.verticalSpeed) << " | "
+                  << msToFpm(c.verticalSpeed) << " | " << std::setprecision(1) << radToDeg(t.roll) << " | "
+                  << radToDeg(c.attitudeRoll) << " | " << hd(t.magneticHeading) << " | " << hd(c.headingIndicator) << " | "
+                  << hd(c.magneticHeading) << " | " << radToDeg(c.turnRate) << " | " << radToDeg(c.slipBall) << " | "
+                  << std::setprecision(2) << t.attitudeGyroSpin << " | " << std::setprecision(0) << c.oilPressure / 6894.757
+                  << " | " << (c.annunciators & kAnnLowVacuum ? "LOW VAC" : "-") << " |\n";
+    }
+    return 0;
+}
+
 void listCockpit() {
     Aircraft ac(loadReference());
     std::cout << "Interactive cockpit controls (" << ac.definition().displayName << "):\n";
@@ -184,11 +232,12 @@ int main(int argc, char** argv) {
         if (!std::strcmp(cmd, "shutdown")) return shutdownDemo();
         if (!std::strcmp(cmd, "cockpit")) { listCockpit(); return 0; }
         if (!std::strcmp(cmd, "bench")) return bench();
+        if (!std::strcmp(cmd, "instruments")) return instrumentDebug(csv);
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
     }
-    std::cerr << "usage: avdemo [validate|flight [csv]|starvation [csv]|shutdown|cockpit|bench]\n";
+    std::cerr << "usage: avdemo [validate|flight [csv]|starvation [csv]|shutdown|cockpit|bench|instruments [csv]]\n";
     return 2;
 }
 

@@ -146,6 +146,8 @@ public:
     // Convenience: systems configured as for a running engine (spawn
     // shortcut; the procedural Quick Start lives in avd/procedures.hpp).
     void setEngineRunning(bool running, Real rpm = 1000);
+    // Spawn helper: gyros erect and at speed, needles at the current truth.
+    void resetInstrumentsToTruth();
     void setColdAndDark();
     // Initial-condition setters (spawn/trim): flaps already at a detent, trim position.
     void setFlapsImmediately(int detent);
@@ -168,8 +170,12 @@ public:
     const AeroOutputs& aero() const { return aeroOut_; }
     const AeroModel& aeroModel() const { return *aeroModel_; }
     AeroModel& aeroModel() { return *aeroModel_; }
-    const Instruments& instruments() const { return instruments_; }
-    Instruments& instruments() { return instruments_; }
+    const InstrumentPanel& instruments() const { return instruments_; }
+    InstrumentPanel& instruments() { return instruments_; }
+    // World navigation environment (magnetic field, radio facilities); shared,
+    // owned by the host, may be null (then: no NAV signals, zero variation).
+    void setNavEnvironment(const NavEnvironment* env) { nav_ = env; }
+    const NavEnvironment* navEnvironment() const { return nav_; }
     Real time() const { return time_; }
     bool faulted() const { return faulted_; }
     Real altitudeMsl() const { return frame_.origin().height - s_.body.position.z; }
@@ -250,6 +256,8 @@ private:
     Derivatives derive(const DynamicState& s, const Context& c, bool record) const;
     void postStep(Real dt, const Context& c, const DynamicState& prev);
     void pushEvent(FlightEventType t, Real value = 0, int index = -1);
+    SensorInputs sensorInputs() const;
+    bool loadPowered(const std::string& name, bool fallback) const;
     void updateTelemetry();
 
     AircraftDefinition def_;
@@ -260,7 +268,8 @@ private:
     FuelSystem fuel_;
     ElectricalSystem electrical_;
     VacuumSystem vacuum_;
-    Instruments instruments_;
+    InstrumentPanel instruments_;
+    const NavEnvironment* nav_ = nullptr;
 
     DynamicState s_;
     MassProperties mass_;
@@ -293,7 +302,7 @@ private:
     bool wasOnGround_ = false, stallWarningWas_ = false, overspeedWas_ = false, overGWas_ = false;
     bool flapOverspeedWas_ = false;
     std::array<bool, kMaxEngines> runningWas_{};
-    bool altOnlineWas_ = false, starvingWas_ = false;
+    bool altOnlineWas_ = false, starvingWas_ = false, stallVane_ = false;
     Real lastSinkRate_ = 0;
 
     std::vector<CockpitControl> cockpit_;
