@@ -49,7 +49,7 @@
     {"field": "panel.vertical_speed_indicator", "kind": "estimated", "source": "EST", "note": "Capillary time constant ~3 s gives the 6-9 s lag described in FAA-H-8083-25B ch. 8; 2000 fpm dial typical of C172 VSIs."},
     {"field": "panel.turn_coordinator", "kind": "estimated", "source": "EST", "note": "Electric rate gyro canted ~30 deg (FAA-H-8083-25B ch. 8). The standard-rate mark position and the bank used for calibration are instrument design estimates; the indicator responds to yaw and roll rate as the real one does."},
     {"field": "panel.inclinometer", "kind": "estimated", "source": "EST", "note": "Tube arc limit estimated from typical instrument geometry."},
-    {"field": "panel.magnetic_compass", "kind": "estimated", "source": "EST", "note": "Card tilt limit ~18 deg typical of panel wet compasses (FAA-H-8083-25B ch. 8). Field declination/inclination come from the world (scenarios/airports.cpp), not the aircraft."},
+    {"field": "panel.magnetic_compass", "kind": "estimated", "source": "EST", "note": "Card tilt limit ~18 deg typical of panel wet compasses (FAA-H-8083-25B ch. 8). Residual airframe field after compensation (hard_iron_body, fraction of the local field) chosen for a typical few-degree deviation card; each real airplane has its own, found by a compass swing. Field declination/inclination come from the world (scenarios/airports.cpp), not the aircraft."},
     {"field": "panel.outside_air_temperature", "kind": "estimated", "source": "EST", "note": "Recovery factor ~0.8 and ~10 s time constant typical of an unshielded probe through the windshield."},
     {"field": "panel.avionics", "kind": "estimated", "source": "EST", "note": "Baseline single NAV/COM with VOR/LOC/GS indicator and transponder with encoder; GPS, ADF, DME and autopilot were options and are not installed in this profile."},
     {"field": "electrical.loads", "kind": "estimated", "source": "EST", "note": "Load currents are estimates for a 28 V system; switch set and breakers follow the POH electrical system description."},
@@ -334,7 +334,7 @@
     "turn_coordinator": {"electrical_load": "turn_coordinator", "cant_deg": 30, "standard_rate_deflection_deg": 20,
                          "calibration_bank_deg": 16, "max_deflection_deg": 40},
     "inclinometer": {"tube_limit_deg": 16},
-    "magnetic_compass": {"tilt_limit_deg": 18},
+    "magnetic_compass": {"tilt_limit_deg": 18, "hard_iron_body": [0.02, -0.035, 0.0]},
     "engine_gauges": {
       "tachometer_green_rpm": [2100, 2700], "tachometer_red_line_rpm": 2700, "tachometer_max_rpm": 3500,
       "oil_pressure_green_psi": [50, 90], "oil_pressure_red_low_psi": 20, "oil_pressure_red_high_psi": 115,

@@ -56,6 +56,18 @@ struct Flight {
 
 Real stdRateBank(Real tas) { return std::atan(tas * kStdRate / kStandardGravity); }
 
+// Deviation (rad) on the aircraft's compass correction card at a magnetic
+// heading, interpolated between the 30 deg swing points.
+Real cardDeviation(const Aircraft& ac, Real magnetic) {
+    const std::array<Real, 12> swing = ac.instruments().compassSwing(saoPauloNavEnvironment().field);
+    const Real mag = std::fmod(magnetic + 2 * kTwoPi, kTwoPi) / (kPi / 6);
+    const int k = static_cast<int>(mag) % 12;
+    const Real u = mag - static_cast<int>(mag);
+    const Real d0 = wrapPi(swing[static_cast<std::size_t>(k)] - k * kPi / 6);
+    const Real d1 = wrapPi(swing[static_cast<std::size_t>((k + 1) % 12)] - (k + 1) * kPi / 6);
+    return d0 + (d1 - d0) * u;
+}
+
 struct Ground {
     Aircraft ac{ref(), saoPauloWorldFrame()};
     SimpleWeather atm;
@@ -215,7 +227,8 @@ TEST_CASE("flight: straight and level -- every primary instrument agrees with tr
     // IAS vs CAS: static-source position error at cruise alpha is ~1 kt (POH table).
     CHECK_NEAR(c.indicatedAirspeed, t.calibratedAirspeed, ktToMs(2));
     CHECK_NEAR(wrapPi(c.headingIndicator - t.magneticHeading), 0, degToRad(0.5));  // synced at spawn
-    CHECK_NEAR(wrapPi(c.magneticHeading - t.magneticHeading), 0, degToRad(1.5));
+    // The compass reads magnetic heading plus its card deviation.
+    CHECK_NEAR(wrapPi(c.magneticHeading - t.magneticHeading - cardDeviation(f.ac, t.magneticHeading)), 0, degToRad(1));
     CHECK(std::abs(c.slipBall) < degToRad(1.5));
     CHECK(!c.turnCoordinatorFlag);
     CHECK(std::abs(c.turnRate) < degToRad(0.3));
@@ -313,8 +326,12 @@ TEST_CASE("flight: compass shows turning error in turns but agrees with the DG w
     CHECK(maxErr > degToRad(5));  // dip makes the card lead/lag in a turn
     f.pilot.lateral = TestPilot::Lateral::WingsLevel;
     f.fly(30);
-    CHECK_NEAR(wrapPi(f.cs().magneticHeading - f.truth().magneticHeading), 0, degToRad(2));
-    CHECK_NEAR(wrapPi(f.cs().headingIndicator - f.cs().magneticHeading), 0, degToRad(3));
+    // Straight and level, the compass reads magnetic heading plus the
+    // deviation on its correction card (interpolated between the 30 deg
+    // swing points), and the DG agrees with the heading.
+    CHECK_NEAR(wrapPi(f.cs().magneticHeading - f.truth().magneticHeading - cardDeviation(f.ac, f.truth().magneticHeading)), 0,
+               degToRad(1));
+    CHECK_NEAR(wrapPi(f.cs().headingIndicator - f.truth().magneticHeading), 0, degToRad(3));
 }
 
 TEST_CASE("flight: high altitude -- IAS, CAS, EAS, TAS and ground speed diverge correctly") {
@@ -570,6 +587,38 @@ TEST_CASE("navigation: an aircraft on the extended centreline reads a centred lo
     CHECK(n.valid && n.localizer);
     CHECK_NEAR(n.cdi, 0, 0.02);
     CHECK_NEAR(n.glideslope, 0, 0.1);
+}
+
+TEST_CASE("compass: the airframe's own field gives a deviation card, and the compass follows it") {
+    const NavEnvironment& env = saoPauloNavEnvironment();
+    Aircraft ac(ref(), saoPauloWorldFrame());
+    ac.setNavEnvironment(&env);
+    const std::array<Real, 12> swing = ac.instruments().compassSwing(env.field);
+    Real maxDev = 0, sum = 0;
+    for (int k = 0; k < 12; ++k) {
+        const Real dev = wrapPi(swing[static_cast<std::size_t>(k)] - k * kPi / 6);
+        maxDev = std::max(maxDev, std::abs(dev));
+        sum += dev;
+    }
+    // A hard-iron field gives a one-cycle (B sin + C cos) card of a few degrees.
+    CHECK_RANGE(radToDeg(maxDev), 1.0, 6.0);
+    CHECK_NEAR(radToDeg(sum / 12), 0, 0.3);
+    // In level, unaccelerated flight on a magnetic heading the compass settles
+    // on the card value for that heading.
+    Flight f(100, 1500);
+    f.pilot.lateral = TestPilot::Lateral::Heading;
+    const Real targetMag = degToRad(90);
+    f.pilot.targetHeading = targetMag + env.field.declination;
+    f.fly(60);
+    const Real magNow = f.truth().magneticHeading;
+    const Real expected = magNow + wrapPi(f.ac.instruments().compassSwing(env.field)[3] - kPi / 2);
+    CHECK_NEAR(radToDeg(wrapPi(f.cs().magneticHeading - expected)), 0, 0.5);
+    // Without the airframe field the card is perfect.
+    AircraftDefinition clean = ref();
+    clean.panel.compass.hardIronBody = {0, 0, 0};
+    Aircraft c2(clean, saoPauloWorldFrame());
+    for (int k = 0; k < 12; ++k)
+        CHECK_NEAR(wrapPi(c2.instruments().compassSwing(env.field)[static_cast<std::size_t>(k)] - k * kPi / 6), 0, 1e-9);
 }
 
 TEST_CASE("navigation: navaid JSON loader requires provenance and valid frequencies") {

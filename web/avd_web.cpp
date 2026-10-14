@@ -224,6 +224,16 @@ AVD_EXPORT void avd_reset(int mode) {
     g->ac->drainEvents();
 }
 
+// Compass correction card from a compass swing: what the compass reads (deg)
+// on magnetic headings 0, 30, ... 330 ("FOR" -> "STEER").
+AVD_EXPORT double* avd_compass_card() {
+    std::fill(std::begin(g_state), std::end(g_state), 0.0);
+    if (!g) return g_state;
+    const std::array<Real, 12> sw = g->ac->instruments().compassSwing(scenarios::saoPauloNavEnvironment().field);
+    for (int k = 0; k < 12; ++k) g_state[k] = std::fmod(radToDeg(sw[static_cast<std::size_t>(k)]) + 360.0, 360.0);
+    return g_state;
+}
+
 // Throttle and mixture of the last trimmed spawn (modes 2 and 3), so the
 // host's levers start where the trim put them.
 AVD_EXPORT double avd_trim_throttle() { return g ? g->trimThrottle : 0.0; }

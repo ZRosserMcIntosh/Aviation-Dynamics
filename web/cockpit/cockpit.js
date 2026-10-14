@@ -215,6 +215,7 @@
       input.mixture = mode >= 2 ? A.avd_trim_mixture() : 1;
       for (const f of ['fail-pitot', 'fail-static', 'fail-vac', 'fail-alt']) $(f).checked = false;
       buildSwitches();
+      compassCard = A.compassCard();
       log(`Reset: ${scenarioNames[mode]}.`);
     }
     $('reset').addEventListener('click', reset);
@@ -668,8 +669,20 @@
       ctx.restore();
       ctx.strokeStyle = C.red; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y - h / 2 - 4); ctx.lineTo(x, y + h / 2 + 4); ctx.stroke();
       ctx.fillStyle = C.dim; ctx.font = `600 11px ${FONT}`; ctx.textAlign = 'center'; ctx.fillText('MAGNETIC COMPASS', x, y + h / 2 + 18);
+      // Correction card from the compass swing (C++), placarded beside it.
+      const cy = y + h / 2 + 30, cw = 13.5;
+      ctx.fillStyle = '#e9e4d6'; ctx.fillRect(x - 6.5 * cw - 22, cy, 13 * cw + 30, 30);
+      ctx.fillStyle = '#111'; ctx.font = `600 8px ${FONT}`; ctx.textAlign = 'left';
+      ctx.fillText('FOR', x - 6.5 * cw - 19, cy + 10); ctx.fillText('STEER', x - 6.5 * cw - 19, cy + 23);
+      ctx.textAlign = 'center';
+      compassCard.forEach((steer, k) => {
+        const xx = x - 6.5 * cw + 14 + k * cw;
+        ctx.fillText(['N', '30', '60', 'E', '120', '150', 'S', '210', '240', 'W', '300', '330'][k], xx, cy + 10);
+        ctx.fillText(String(Math.round(steer) % 360).padStart(3, '0'), xx, cy + 23);
+      });
     }
 
+    let compassCard = A.compassCard();
     const annNames = [['OIL PRESS', 1], ['LOW VAC', 2], ['VOLTS', 4], ['L LOW FUEL', 8], ['R LOW FUEL', 16]];
     function drawPanel(c) {
       const ctx = pctx, w = panel.width, h = panel.height;

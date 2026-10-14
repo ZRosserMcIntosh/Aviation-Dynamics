@@ -276,6 +276,7 @@ void readPanel(Obj& o, InstrumentPanelDef& p) {
         a.num("vertical_time_constant_s", p.compass.verticalTimeConstant);
         readNeedle(a, "card", p.compass.card);
         a.table("deviation", "heading_deg", "deviation_deg", p.compass.deviation, kDeg, kDeg);
+        a.vec3("hard_iron_body", p.compass.hardIronBody);
     }
     if (o.has("engine_gauges")) {
         Obj a = o.child("engine_gauges");

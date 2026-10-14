@@ -184,6 +184,10 @@ public:
     Real altimeterSetting() const { return s_.altimeterSetting; }
     void syncHeadingIndicator(Real headingRad);   // the DG set knob
     void syncHeadingIndicatorToCompass() { syncHeadingIndicator(s_.magneticHeading); }
+    // Compass swing: what the compass reads (rad) when the airplane is level
+    // and unaccelerated on magnetic headings 0, 30, ... 330 deg. The panel's
+    // correction card ("FOR ... STEER ...") is printed from this.
+    std::array<Real, 12> compassSwing(const MagneticField& field) const;
     void adjustHeadingIndicator(Real deltaRad);
     void setHeadingBug(Real rad) { s_.headingBug = wrapPi(rad); }
     void setObs(Real rad) { s_.obs = wrapPi(rad); }

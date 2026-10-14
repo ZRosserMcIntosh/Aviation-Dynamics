@@ -101,6 +101,11 @@ struct MagneticCompassDef {
     Real verticalTimeConstant = 0.5;      // s, pendulous card following apparent vertical
     NeedleDynamics card{2.0, 0.5};        // liquid-damped card (does swing)
     Table1D deviation;                    // deviation (rad) vs compass heading (rad); empty = none
+    // The airframe's own residual magnetic field after compensation ("hard
+    // iron": steel parts, magnetised fittings), body FRD, as a fraction of the
+    // local total field strength. It adds to the earth's field at the card,
+    // so deviation emerges and varies with heading (~atan(|h| / cos(dip))).
+    Vec3 hardIronBody{0, 0, 0};
 };
 
 struct EngineGaugesDef {

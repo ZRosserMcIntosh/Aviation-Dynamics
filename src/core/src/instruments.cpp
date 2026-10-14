@@ -325,6 +325,30 @@ void InstrumentPanel::updateTurnAndSlip(Real dt, const SensorInputs& in) {
 
 // ------------------------------------------------------- magnetic compass ----
 
+namespace {
+// Heading the card shows with its plane normal to `n` (NED, down), including
+// the airframe's hard-iron field and any deviation table.
+Real compassReading(const MagneticCompassDef& d, const MagneticField& field, const Quat& q, const Vec3& n) {
+    const Vec3 b = field.directionNed() + q.rotate(d.hardIronBody);
+    const Vec3 bp = b - n * dot(n, b);
+    const Vec3 nose = q.rotate({1, 0, 0});
+    const Vec3 lp = nose - n * dot(n, nose);
+    Real heading = std::atan2(dot(cross(bp, lp), n), dot(bp, lp));
+    if (!d.deviation.empty()) heading = wrapPi(heading + d.deviation(heading));
+    return heading;
+}
+}  // namespace
+
+std::array<Real, 12> InstrumentPanel::compassSwing(const MagneticField& field) const {
+    std::array<Real, 12> out{};
+    for (int k = 0; k < 12; ++k) {
+        const Real magnetic = k * kPi / 6;
+        const Quat q = Quat::fromEuler(0, 0, magnetic + field.declination);
+        out[static_cast<std::size_t>(k)] = wrapPi(compassReading(def_.compass, field, q, {0, 0, 1}));
+    }
+    return out;
+}
+
 void InstrumentPanel::updateCompass(Real dt, const SensorInputs& in) {
     const MagneticCompassDef& d = def_.compass;
     if (!d.installed) return;
@@ -342,13 +366,7 @@ void InstrumentPanel::updateCompass(Real dt, const SensorInputs& in) {
         const Vec3 axis = cross(compassVertical_, caseDown);
         if (length(axis) > 1e-9) compassVertical_ = normalized(rotateAbout(compassVertical_, normalized(axis), tilt - d.tiltLimit));
     }
-    const Vec3& n = compassVertical_;
-    const Vec3 b = field.directionNed();
-    const Vec3 bp = b - n * dot(n, b);
-    const Vec3 nose = q.rotate({1, 0, 0});
-    const Vec3 lp = nose - n * dot(n, nose);
-    Real heading = std::atan2(dot(cross(bp, lp), n), dot(bp, lp));
-    if (!d.deviation.empty()) heading = wrapPi(heading + d.deviation(heading));
+    const Real heading = compassReading(d, field, q, compassVertical_);
     if (!initialised_) compassCard_.reset(heading);
     compassCard_.updateAngle(heading, dt, d.card);
     s_.magneticHeading = compassCard_.x;
