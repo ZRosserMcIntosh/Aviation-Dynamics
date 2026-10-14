@@ -41,8 +41,8 @@ The goal is to make the one aircraft trustworthy enough to build the rest on.
    - pitot heat clearing a modelled ice accretion;
    - a recorded-flight replay in the web cockpit from `InstrumentRecorder`
      CSV.
-6. **CI.** Keep the Linux, macOS, Windows, sanitizer and WASM jobs green.
-   Add the headless-browser cockpit check.
+6. **CI.** Keep every job green: Linux, macOS, Windows, sanitizers, WASM
+   and the headless-browser cockpit test.
 
 Exit criteria:
 

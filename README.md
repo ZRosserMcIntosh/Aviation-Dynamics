@@ -53,6 +53,7 @@ version 25 is tested.
 WASI_SDK=/path/to/wasi-sdk web/build_wasi.sh   # web/dist/avd.wasm, avd.mjs, tupi_t180.json
 node web/smoke_test.mjs
 node web/cockpit/build_page.mjs                # web/dist/cockpit.html (self-contained)
+node web/cockpit/browser_test.mjs              # headless Chromium check (needs playwright)
 ```
 
 ## Repository layout

@@ -53,11 +53,8 @@ jobs:
         run: ./build/avdemo validate
 
   windows:
-    # Not yet exercised on MSVC during development; kept visible but
-    # non-blocking until the first green run.
     name: windows-msvc
     runs-on: windows-2022
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Configure
@@ -86,6 +83,11 @@ jobs:
         run: node web/smoke_test.mjs
       - name: Bundle cockpit page
         run: node web/cockpit/build_page.mjs
+      - name: Browser test (headless Chromium)
+        run: |
+          npm install --no-save --no-package-lock playwright@1.56.1
+          npx playwright install --with-deps chromium
+          node web/cockpit/browser_test.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: avd-web

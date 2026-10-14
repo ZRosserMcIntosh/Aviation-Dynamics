@@ -8,6 +8,7 @@ I/O. The C ABI is in `avd_web.cpp`.
 WASI_SDK=/path/to/wasi-sdk web/build_wasi.sh   # → web/dist/avd.wasm, avd.mjs, tupi_t180.json
 node web/smoke_test.mjs                        # take-off, Quick Start, ILS reception, instruments
 node web/cockpit/build_page.mjs                # → web/dist/cockpit.html (one self-contained file)
+node web/cockpit/browser_test.mjs              # headless Chromium check of the bundled page (needs playwright)
 ```
 
 `avd.mjs` exports `createAvdModule(bytes?)`, which returns the raw `avd_*`
