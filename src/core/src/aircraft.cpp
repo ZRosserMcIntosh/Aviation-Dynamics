@@ -781,11 +781,10 @@ SensorInputs Aircraft::sensorInputs() const {
     // Specific force at the CG (the panel is ~1 m away; rotational terms at
     // that lever arm are below 0.01 g in normal manoeuvres).
     in.specificForceBody = tel_.specificForceBody;
-    // Flat-frame altitude (consistent with the projected game world) and a
-    // latitude adequate for gyro earth-rate drift.
-    in.position = frame_.origin();
-    in.position.latitude += s_.body.position.x / wgs84::kSemiMajor;
-    in.position.longitude += s_.body.position.y / (wgs84::kSemiMajor * std::max(std::cos(frame_.origin().latitude), 1e-3));
+    // Exact geodetic position (the NAV receiver needs metre-level bearings;
+    // a single-radius approximation is ~0.7% off at 23.5 S) with the
+    // flat-frame altitude consistent with the projected game world.
+    in.position = frame_.geodeticFromNed(s_.body.position);
     in.position.height = altitudeMsl();
     in.heightAboveGround = ctx_.wingHeightAgl;
     in.suction = def_.vacuum.present ? vacuum_.suction() : 0.0;

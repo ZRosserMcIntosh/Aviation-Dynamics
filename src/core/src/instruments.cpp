@@ -185,13 +185,19 @@ void InstrumentPanel::updatePitotStatic(Real dt, const SensorInputs& in) {
     // diaphragm reads the difference, scaled by the standard-atmosphere density
     // at that pressure (the instrument's calibration).
     const VerticalSpeedIndicatorDef& vd = def_.vsi;
-    if (!initialised_) vsiCase_ = stat;
-    vsiCase_ = firstOrder(vsiCase_, stat, dt, vd.capillaryTimeConstant);
     const Real hp = altitudeFromPressure(stat, isa::kSeaLevelPressure);
     const Real rhoStd = stat / (isa::kGasConstantDryAir * std::max(288.15 - 0.0065 * hp, 150.0));
+    if (!initialised_) {
+        // Start in the steady state of the current climb or descent: the case
+        // leads static by tau * rho * g * w (a spawn in a steady descent reads
+        // the descent at once, as the real instrument would).
+        const Real wUp = finiteOr(-in.groundVelocityNed.z, 0.0);
+        vsiCase_ = faults_.staticBlocked ? stat : stat + vd.capillaryTimeConstant * rhoStd * kStandardGravity * wUp;
+    }
+    vsiCase_ = firstOrder(vsiCase_, stat, dt, vd.capillaryTimeConstant);
     const Real rate = (vsiCase_ - stat) / (vd.capillaryTimeConstant * rhoStd * kStandardGravity);
     const Real vsTarget = clamp(finiteOr(rate, 0.0), -1.1 * vd.dialRange, 1.1 * vd.dialRange);
-    if (!initialised_) vsiNeedle_.reset(0);
+    if (!initialised_) vsiNeedle_.reset(vsTarget);
     vsiNeedle_.update(vsTarget, dt, vd.needle);
     s_.verticalSpeed = vsiNeedle_.x;
 

@@ -209,8 +209,10 @@
       applyWeather();
       A.avd_reset(mode);
       A.avd_set_assist(+assist.value);
-      input.throttle = mode === 0 || mode === 1 ? 0.12 : mode === 2 ? 0.35 : 0.65;
-      input.mixture = 1;
+      // Airborne spawns are trimmed by the C++ trim solver: start the levers
+      // where it left them, so the airplane flies hands-off.
+      input.throttle = mode >= 2 ? A.avd_trim_throttle() : 0.12;
+      input.mixture = mode >= 2 ? A.avd_trim_mixture() : 1;
       for (const f of ['fail-pitot', 'fail-static', 'fail-vac', 'fail-alt']) $(f).checked = false;
       buildSwitches();
       log(`Reset: ${scenarioNames[mode]}.`);

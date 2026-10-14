@@ -43,8 +43,19 @@ for (let i = 0; i < 60; ++i) A.avd_advance(1 / 60);
 check(A.cockpitState()[1] - before > 800, 'Kollsman knob moves the altimeter');
 check(A.markings()[6] === 163, 'VNE red line 163 KIAS from the panel data');
 A.avd_reset(3);                      // airborne spawn: instruments seeded at the new position
-A.avd_set_input(0, 0, 0, 0.65, 1, 0, 0, 0, 0);
+A.avd_set_input(0, 0, 0, A.avd_trim_throttle(), A.avd_trim_mixture(), 0, 0, 0, 0);
 A.avd_advance(1);
 c = A.cockpitState();
 check(Math.abs(c[3] - c[53]) < 400 && Math.abs(c[1] - c[51]) < 40, `cruise spawn: VSI ${c[3].toFixed(0)} vs ${c[53].toFixed(0)} fpm, altimeter ${c[1].toFixed(0)} vs ${c[51].toFixed(0)} ft`);
+// Trimmed final approach: hands-off it holds the 3 deg path on the ILS.
+A.avd_reset(2);
+A.avd_set_assist(2);
+A.avd_set_input(0, 0, 0, A.avd_trim_throttle(), A.avd_trim_mixture(), 0, 0, 0, 0);
+A.avd_advance(0.25);
+const vs0 = A.cockpitState()[3];
+for (let i = 0; i < 10; ++i) A.avd_advance(1);
+c = A.cockpitState();
+check(Math.abs(vs0 - c[53]) < 60, `final spawn: VSI reads the descent at once (${vs0.toFixed(0)} fpm)`);
+check(Math.abs(c[0] - 65) < 2 && Math.abs(c[53] + 345) < 60, `final spawn trimmed: ${c[0].toFixed(1)} KIAS, ${c[53].toFixed(0)} fpm after 10 s hands-off`);
+check(Math.abs(c[38]) < 0.1 && Math.abs(c[41]) < 0.2, `on the ILS: CDI ${c[38].toFixed(2)}, GS ${c[41].toFixed(2)}`);
 process.exit(failures ? 1 : 0);

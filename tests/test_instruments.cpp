@@ -542,6 +542,36 @@ TEST_CASE("navigation: localizer and glideslope geometry on approach") {
     CHECK_NEAR(evaluateNav(*env.database, 110300, 0, at(0, 106.7, 15)).cdi, -1.0, 0.03);
 }
 
+TEST_CASE("navigation: an aircraft on the extended centreline reads a centred localizer") {
+    // Regression: the aircraft once fed the receiver a single-radius latitude/
+    // longitude (~0.7% off at 23.5 S), which read 0.12 of full scale (~33 m)
+    // off the centreline 5 km out.
+    const LocalFrame f = saoPauloWorldFrame();
+    const Airport a = campoDeMarte(f);
+    const RunwayDef& r = a.runways[0];
+    Aircraft ac(ref(), f);
+    ac.setNavEnvironment(&saoPauloNavEnvironment());
+    ac.setEngineRunning(true, 2000);
+    RigidBodyState s;
+    s.position = runwayPoint(r, -3000);
+    s.position.z = -(a.elevation + 3300 * std::tan(degToRad(3)));
+    s.velocity = {ktToMs(65) * std::cos(r.headingTrue), ktToMs(65) * std::sin(r.headingTrue), 0};
+    s.attitude = Quat::fromEuler(0, 0, r.headingTrue);
+    ac.setFlightState(s);
+    FlatGround ground(-a.elevation);
+    SimpleWeather atm;
+    ac.prepareContext(PilotInput{}, ground, atm);
+    ac.resetInstrumentsToTruth();
+    ac.instruments().setNavStandby(0, 110300);
+    ac.instruments().swapNav(0);
+    ac.prepareContext(PilotInput{}, ground, atm);
+    ac.resetInstrumentsToTruth();
+    const NavIndication& n = ac.instruments().state().nav1;
+    CHECK(n.valid && n.localizer);
+    CHECK_NEAR(n.cdi, 0, 0.02);
+    CHECK_NEAR(n.glideslope, 0, 0.1);
+}
+
 TEST_CASE("navigation: navaid JSON loader requires provenance and valid frequencies") {
     NavDatabase db;
     auto e = db.loadJson(R"({"navaids": [{"type": "vor", "ident": "X", "frequency_mhz": 113.1,

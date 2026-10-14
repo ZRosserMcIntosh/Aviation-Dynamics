@@ -9,6 +9,7 @@
 #include <string>
 
 #include "airports.hpp"
+#include "scenarios.hpp"
 #include "avd/aircraft_loader.hpp"
 #include "avd/assists.hpp"
 #include "avd/procedures.hpp"
@@ -36,7 +37,9 @@ struct Sim {
     scenarios::Airport airport;
     std::unique_ptr<AirfieldGround> ground;
     std::unique_ptr<SimpleWeather> weather;
+    SimpleWeatherParams weatherParams;
     std::unique_ptr<Aircraft> ac;
+    Real trimThrottle = 0, trimMixture = 1;  // controls of the last trimmed spawn
     FlightAssist assist{makePreset(AssistPreset::Sport)};
     ProcedureRunner procedure;
     PilotInput raw;
@@ -140,6 +143,7 @@ AVD_EXPORT void avd_set_weather(double windSpeed, double windFromDeg, double tur
     wp.turbulence.intensity = turbulence;
     wp.conditions.temperatureDeviation = tempDev;
     wp.conditions.relativeHumidity = humidity;
+    g->weatherParams = wp;
     g->weather = std::make_unique<SimpleWeather>(wp);
 }
 
@@ -159,23 +163,52 @@ AVD_EXPORT void avd_reset(int mode) {
         g->ac->placeOnGround(p.x, p.y, rw.headingTrue, *g->ground, *g->weather);
         if (mode == 0) g->ac->setColdAndDark();
     } else {
+        // Trimmed spawns: solve the free-air trim (calm air at the spawn
+        // altitude), then place the trimmed state on the 3 deg final for
+        // runway 12 (65 KIAS, flaps 20, throttle solved) or in level cruise
+        // over the city (100 KIAS, throttle solved). Hands-off on arrival.
         const bool final = mode == 2;
         g->ac->setEngineRunning(true, 2000);
-        if (final) g->ac->setFlapsImmediately(2);
         const Real dist = final ? -3000.0 : -8000.0;
+        const Real path = final ? degToRad(-3.0) : 0.0;
         Vec3 p = scenarios::runwayPoint(rw, dist);
-        p.z = -(g->airport.elevation + (final ? 3000 * std::tan(degToRad(3.5)) : 850.0));
-        const Real v = ktToMs(final ? 70.0 : 100.0);
-        RigidBodyState s;
-        s.position = p;
-        s.velocity = {v * std::cos(rw.headingTrue), v * std::sin(rw.headingTrue), final ? v * std::tan(degToRad(3.5)) : 0.0};
-        s.attitude = Quat::fromEuler(0, final ? 0.0 : degToRad(2), rw.headingTrue);
-        g->ac->setFlightState(s);
+        // On final: exactly on the glide path, which starts at the glideslope
+        // antenna 300 m beyond the paved end (scenarios/airports.cpp).
+        const Real alt = g->airport.elevation + (final ? (-dist + 300.0) * std::tan(-path) : 850.0);
+        SimpleWeatherParams calm = g->weatherParams;
+        calm.windSpeed = 0;
+        calm.turbulence.intensity = 0;
+        const SimpleWeather trimAir(calm);
+        scenarios::TrimRequest req;
+        req.altitude = alt;
+        req.flapDetent = final ? 2 : 0;
+        req.tas = scenarios::tasFromCas(ktToMs(final ? 65.0 : 100.0), trimAir.atmosphere().at(alt).density);
+        req.flightPath = path;
+        const scenarios::TrimResult tr = scenarios::trim(*g->ac, req, trimAir);
+        // Rotate the trimmed (north-heading) state onto the runway heading and
+        // move it to the spawn point; the air-relative velocity gets the wind.
+        DynamicState s = tr.state;
+        const Quat toHeading = Quat::fromEuler(0, 0, rw.headingTrue);
+        s.body.attitude = toHeading * s.body.attitude;
+        s.body.attitude.normalize();
+        p.z = -alt;
+        s.body.position = p;
+        s.body.velocity = toHeading.rotate(s.body.velocity) + g->weather->sample(p, alt, 0).wind;
+        g->ac->setState(s);
         g->ac->setCockpitControl("brakes.parking", 0);
         // The air sample and ground planes must describe the new position
         // before the downwash and the instruments are initialised from them.
-        g->ac->prepareContext(PilotInput{}, *g->ground, *g->weather);
+        g->ac->prepareContext(tr.input, *g->ground, *g->weather);
         g->ac->settleDownwash();
+        // The trimmed elevator goes into the trim wheel: neutral stick holds it.
+        Real elevUp = 0.4;
+        for (const auto& sd : g->def.surfaces)
+            for (const auto& pd : sd.panels)
+                for (const auto& c : pd.controls)
+                    if (c.channel == ControlChannel::Elevator) elevUp = c.maxNegative;
+        g->ac->setElevatorTrim(tr.elevator * elevUp / g->def.controls.elevatorTrimRange);
+        g->trimThrottle = tr.input.throttle;
+        g->trimMixture = tr.input.mixture;
     }
     g->ac->instruments().setAltimeterSetting(g->weather->atmosphere().conditions().seaLevelPressure);
     if (mode >= 1) g->ac->resetInstrumentsToTruth();
@@ -190,6 +223,11 @@ AVD_EXPORT void avd_reset(int mode) {
     p.setTransponderMode(TransponderMode::Altitude);
     g->ac->drainEvents();
 }
+
+// Throttle and mixture of the last trimmed spawn (modes 2 and 3), so the
+// host's levers start where the trim put them.
+AVD_EXPORT double avd_trim_throttle() { return g ? g->trimThrottle : 0.0; }
+AVD_EXPORT double avd_trim_mixture() { return g ? g->trimMixture : 1.0; }
 
 AVD_EXPORT void avd_set_input(double pitch, double roll, double yaw, double throttle, double mixture, double brakeLeft,
                               double brakeRight, double trimRate, int starter) {
