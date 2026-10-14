@@ -62,9 +62,9 @@ inclination −38°. Real navaid data can be loaded through
 
 ## Not implemented (honest list)
 
-- Pitot and static icing physics. Blockage can be injected, and pitot heat is
-  an electrical load, but heat does not yet clear ice.
-- Compass deviation card (zero deviation).
+- Static-port icing (the pitot probe ices and is heated; see the
+  `pitot_probe` data). Airframe icing (wings, propeller, induction) is not
+  modelled.
 - Instrument lighting photometry. The panel lights are an electrical load and
   tint the 2D panel; there is no light model.
 - Altimeter mechanical hysteresis and scale error. CHT gauge and voltmeter are

@@ -103,7 +103,7 @@ test checks that softer braking lengthens the roll.
   - Quick Start from cold and dark, and its real failure modes (flat battery,
     valve shut).
   - Hot, high and humid take-offs.
-- **Instruments:** 34 cases in `tests/test_instruments.cpp`. Examples:
+- **Instruments:** 37 cases in `tests/test_instruments.cpp`. Examples:
   - IAS/CAS/TAS at altitude;
   - Kollsman setting;
   - hot-day altimeter error;

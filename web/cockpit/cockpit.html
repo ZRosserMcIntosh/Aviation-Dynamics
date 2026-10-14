@@ -94,6 +94,9 @@
   label.ctl { display: grid; grid-template-columns: 6.5em 1fr; gap: 8px; align-items: center; font-size: 0.9rem; }
   label.ctl output { grid-column: 2; color: var(--fg-dim); font-size: 0.82rem; }
   input[type="range"] { width: 100%; accent-color: var(--accent); }
+  label.ctl > * { min-width: 0; }
+  input[type="file"] { max-width: 100%; font-size: 0.82rem; }
+  #replay-bar { width: 100%; }
   .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; font-size: 0.9rem; }
   .checks label { display: flex; gap: 6px; align-items: center; }
   input[type="checkbox"] { accent-color: var(--bad); }
@@ -191,6 +194,20 @@
         <label class="ctl">Temperature <input type="range" id="temp" min="-30" max="30" step="1" value="0"><output id="temp-v"></output></label>
         <div class="checks"><label><input type="checkbox" id="cloud"> Cloud layer 1,500–3,600 ft AGL</label></div>
         <p class="note">Below about ISA−5 the cloud is supercooled: ice builds on the pitot tube unless Pitot Heat is on. Watch the airspeed, and the truth table.</p>
+      </div>
+
+      <div class="card">
+        <h2>Replay</h2>
+        <p class="note" id="replay-info">Live. The last 5 minutes are recorded.</p>
+        <div class="row">
+          <button class="btn" id="replay-last" type="button">Replay this flight</button>
+          <button class="btn" id="replay-play" type="button" disabled>Pause</button>
+          <select id="replay-speed" aria-label="Replay speed"><option value="1">1×</option><option value="4">4×</option><option value="0.25">¼×</option></select>
+          <button class="btn" id="replay-live" type="button" disabled>Back to live</button>
+        </div>
+        <input type="range" id="replay-bar" min="0" max="0" value="0" disabled aria-label="Replay position">
+        <label class="ctl">Load CSV <input type="file" id="replay-csv" accept=".csv,text/csv"></label>
+        <p class="note">CSV from <kbd>avdemo instruments csv</kbd> (native instrument recorder) replays a headless test flight on this panel.</p>
       </div>
 
       <div class="card">

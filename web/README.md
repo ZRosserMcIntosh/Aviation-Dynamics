@@ -43,6 +43,9 @@ call is clamped to 0.25 s. It returns the number of steps run.
 | `avd_squawk(code)` / `avd_xpdr_mode(0–3)` | Transponder: OFF, SBY, ON, ALT |
 | `avd_dimmer(0–1)` | Panel light dimmer |
 | `avd_failure(which, on)` | 0 pitot blocked (drain open), 1 static blocked, 2 vacuum pump, 3 alternator |
+| `avd_set_cloud(baseMsl, topMsl, lwc)` | One cloud layer (m MSL, liquid water g/m³); supercooled below 0 °C, so the pitot ices without pitot heat. top ≤ base clears it |
+| `avd_trim_throttle()` / `avd_trim_mixture()` | Lever positions of the last trimmed spawn (modes 2 and 3), so the host starts hands-off |
+| `avd_compass_card()` | 12 doubles: compass reading (deg) on magnetic headings 0, 30, … 330 from a compass swing (the FOR/STEER card) |
 | `avd_events()` | Event lines since the last call (text buffer) |
 
 ## `avd_state()`: 64 doubles
@@ -132,6 +135,8 @@ from these:
 | 58 | p (deg/s) | | |
 
 Faults (indices 69–71): pitot fault, static fault, vacuum failed.
+Icing (truth, indices 72–74): pitot ice as a fraction of the amount that closes the inlet,
+pitot heater warm-up (0–1), cloud liquid water at the aircraft (g/m³).
 
 ## `avd_markings()`
 
@@ -163,3 +168,9 @@ the markings; the page computes no flight state. The outside view is a
 deliberately simple 2D projection: a horizon, the 500 m world grid, runway
 12/30 and labelled landmark posts. It is there for orientation only and is not
 a renderer.
+
+The page records the last 5 minutes of the flight (one frame per 0.1 s of
+simulated time). **Replay** plays it back through the same panel at ¼×, 1×
+or 4×, with scrubbing. **Load CSV** replays a native flight written by
+`avdemo instruments csv` (the `InstrumentRecorder` channels, including
+`east_m` and `north_m` for the outside view).

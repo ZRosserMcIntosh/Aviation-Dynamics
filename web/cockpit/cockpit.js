@@ -678,16 +678,21 @@
       ctx.strokeStyle = C.red; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y - h / 2 - 4); ctx.lineTo(x, y + h / 2 + 4); ctx.stroke();
       ctx.fillStyle = C.dim; ctx.font = `600 11px ${FONT}`; ctx.textAlign = 'center'; ctx.fillText('MAGNETIC COMPASS', x, y + h / 2 + 18);
       // Correction card from the compass swing (C++), placarded beside it.
-      const cy = y + h / 2 + 30, cw = 13.5;
-      ctx.fillStyle = '#e9e4d6'; ctx.fillRect(x - 6.5 * cw - 22, cy, 13 * cw + 30, 30);
-      ctx.fillStyle = '#111'; ctx.font = `600 8px ${FONT}`; ctx.textAlign = 'left';
-      ctx.fillText('FOR', x - 6.5 * cw - 19, cy + 10); ctx.fillText('STEER', x - 6.5 * cw - 19, cy + 23);
-      ctx.textAlign = 'center';
-      compassCard.forEach((steer, k) => {
-        const xx = x - 6.5 * cw + 14 + k * cw;
-        ctx.fillText(['N', '30', '60', 'E', '120', '150', 'S', '210', '240', 'W', '300', '330'][k], xx, cy + 10);
-        ctx.fillText(String(Math.round(steer) % 360).padStart(3, '0'), xx, cy + 23);
-      });
+      const cy = y + h / 2 + 28, cw = 20, x0 = x - 3 * cw - 8;
+      ctx.fillStyle = '#e9e4d6'; ctx.fillRect(x0 - 26, cy, 6 * cw + 34, 52);
+      ctx.fillStyle = '#111'; ctx.font = `600 9px ${FONT}`;
+      const names = ['N', '30', '60', 'E', '120', '150', 'S', '210', '240', 'W', '300', '330'];
+      for (let r = 0; r < 2; ++r) {
+        const ry = cy + 11 + r * 25;
+        ctx.textAlign = 'left';
+        ctx.fillText('FOR', x0 - 23, ry); ctx.fillText('STEER', x0 - 23, ry + 11);
+        ctx.textAlign = 'center';
+        for (let k = 0; k < 6; ++k) {
+          const i = r * 6 + k, xx = x0 + 10 + k * cw;
+          ctx.fillText(names[i], xx, ry);
+          ctx.fillText(String(Math.round(compassCard[i]) % 360).padStart(3, '0'), xx, ry + 11);
+        }
+      }
     }
 
     let compassCard = A.compassCard();
@@ -745,8 +750,8 @@
       ctx.fillStyle = '#0c0d0e'; ctx.fillRect(310, 494, 18, 60);
       ctx.fillStyle = C.mark; ctx.fillRect(306, 524 - clamp(c[K.trim], -1, 1) * 28 - 2, 26, 4);
       ctx.fillStyle = C.dim; ctx.fillText('UP', 334, 500); ctx.fillText('DN', 334, 552);
-      lever(ctx, 400, 'THROTTLE', input.throttle, '#111');
-      lever(ctx, 470, 'MIXTURE', input.mixture, C.red);
+      lever(ctx, 400, 'THROTTLE', levers.throttle, '#111');
+      lever(ctx, 470, 'MIXTURE', levers.mixture, C.red);
       // Clock / OAT.
       ctx.fillStyle = '#0c0d0e'; ctx.fillRect(560, 470, 210, 74);
       ctx.fillStyle = C.lcd; ctx.font = `22px ${MONO}`; ctx.textAlign = 'left';
@@ -779,7 +784,7 @@
       $('xpdr-alt').textContent = c[K.altRep] ? `ALT ${c[K.repAlt]} ft` : '';
       $('stack').classList.toggle('dark', !c[K.avionics]);
       const proc = A.procedure();
-      $('status').textContent = paused ? 'Paused — Space resumes.' : proc.status === 1 ? `Quick Start: ${proc.message}` :
+      $('status').textContent = replay ? 'Replay (read-only): “Back to live” returns to the simulation.' : paused ? 'Paused — Space resumes.' : proc.status === 1 ? `Quick Start: ${proc.message}` :
         `Throttle ${(input.throttle * 100).toFixed(0)} % · mixture ${(input.mixture * 100).toFixed(0)} % · ${gamepadOn ? 'gamepad connected' : 'keyboard'}${s[49] ? ' · parking brake SET' : ''}`;
       if (showDebug) {
         const f = (v, d) => (v === null ? '—' : v.toFixed(d));
@@ -802,6 +807,92 @@
       }
     }
 
+    // ----------------------------------------------------------- replay ----
+    // Every 0.1 s of simulated time the live flight is recorded (last 5 min).
+    // Replay draws recorded frames through the same panel; a CSV written by
+    // `avdemo instruments csv` (InstrumentRecorder) replays a native flight.
+    const REC_MAX = 3000;
+    const recording = [];
+    let lastRecT = -1, replay = null;  // replay: {frames, i, playing, speed, source}
+    const levers = { throttle: 0, mixture: 1 };
+    function record(s, c) {
+      const t = s[42];
+      if (t < lastRecT) { recording.length = 0; lastRecT = -1; }  // a reset restarted the clock
+      if (t - lastRecT < 0.1 - 1e-9) return;
+      lastRecT = t;
+      recording.push({ t, s: Float64Array.from(s), c: Float64Array.from(c) });
+      if (recording.length > REC_MAX) recording.shift();
+    }
+    const qmul = (a, b) => [a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3], a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+      a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1], a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0]];
+    function enuFluFromEuler(roll, pitch, yaw) {  // as world::enuFluFromNedFrd(Quat::fromEuler)
+      const cr = Math.cos(roll / 2), sr = Math.sin(roll / 2), cp = Math.cos(pitch / 2), sp = Math.sin(pitch / 2);
+      const cy = Math.cos(yaw / 2), sy = Math.sin(yaw / 2);
+      const q = [cr * cp * cy + sr * sp * sy, sr * cp * cy - cr * sp * sy, cr * sp * cy + sr * cp * sy, cr * cp * sy - sr * sp * cy];
+      const r = Math.SQRT1_2;
+      return qmul(qmul([0, r, r, 0], q), [0, 1, 0, 0]);
+    }
+    function framesFromCsv(text) {
+      const lines = text.trim().split(/\r?\n/);
+      const head = lines[0].split(',');
+      const col = Object.fromEntries(head.map((h, i) => [h.trim(), i]));
+      const need = ['time_s', 'ias_kt', 'alt_indicated_ft', 'pitch_ai_deg', 'roll_ai_deg', 'hdg_dg_deg'];
+      const missing = need.filter((n) => !(n in col));
+      if (missing.length) throw new Error('not an instrument CSV (missing ' + missing.join(', ') + ')');
+      const map = { ias_kt: 0, alt_indicated_ft: 1, kollsman_inhg: 2, vsi_fpm: 3, pitch_ai_deg: 4, roll_ai_deg: 5, ai_tumbled: 6,
+        hdg_dg_deg: 7, turn_rate_tc_dps: 10, tc_flag: 11, ball_deg: 12, hdg_compass_deg: 13, rpm_tach: 14, oil_psi: 15, oil_f: 16,
+        egt_f: 17, fuel_gph: 18, fuel_l_gal: 19, fuel_r_gal: 20, ammeter_a: 21, bus_v: 22, suction_inhg: 23, annunciators: 24,
+        stall_horn: 25, oat_c: 26, time_s: 27, nav_valid: 37, nav_cdi: 38, nav_tofrom: 39, gs_valid: 40, gs_dev: 41, squawk: 44,
+        tas_kt: 48, cas_kt: 49, gs_kt: 50, alt_true_ft: 51, alt_pressure_ft: 52, vs_true_fpm: 53, pitch_true_deg: 54, roll_true_deg: 55,
+        hdg_true_deg: 56, hdg_mag_deg: 57, p_dps: 58, q_dps: 59, r_dps: 60, slip_true_deg: 61, ai_rotor: 62, dg_rotor: 63, tc_rotor: 64, eas_kt: 65 };
+      const frames = [];
+      for (const line of lines.slice(1)) {
+        const v = line.split(',').map(Number);
+        const get = (n, d = 0) => (n in col && Number.isFinite(v[col[n]]) ? v[col[n]] : d);
+        const c = new Float64Array(96), s = new Float64Array(64);
+        for (const [name, idx] of Object.entries(map)) c[idx] = get(name);
+        c[K.tcDefl] = get('turn_rate_tc_dps') / 3 * marks.stdRateDefl;
+        const rep = get('reported_alt_ft', -99999);
+        c[K.repAlt] = rep; c[K.altRep] = rep > -99999 ? 1 : 0;
+        c[K.avionics] = 'nav_valid' in col ? 1 : 0; c[K.loc] = get('gs_valid'); c[K.xpdr] = 'squawk' in col ? 3 : 0;
+        c[K.obs] = get('hdg_mag_deg'); c[K.bug] = get('hdg_dg_deg');
+        // Outside view: world position and true attitude.
+        s[0] = get('east_m'); s[1] = get('north_m'); s[2] = get('alt_true_ft') * 0.3048;
+        const q = enuFluFromEuler(get('roll_true_deg') * DEG, get('pitch_true_deg') * DEG, get('hdg_true_deg') * DEG);
+        s[3] = q[0]; s[4] = q[1]; s[5] = q[2]; s[6] = q[3];
+        s[24] = NaN; s[25] = NaN; s[42] = get('time_s');
+        frames.push({ t: s[42], s, c });
+      }
+      return frames;
+    }
+    const rp = { bar: $('replay-bar'), info: $('replay-info'), play: $('replay-play') };
+    function enterReplay(frames, source) {
+      if (!frames.length) { log('Nothing recorded yet.'); return; }
+      replay = { frames, i: 0, playing: true, speed: 1, acc: 0, source };
+      rp.bar.max = String(frames.length - 1);
+      rp.bar.disabled = false;
+      $('replay-live').disabled = false;
+      rp.play.disabled = false;
+      log(`Replay: ${source}, ${frames.length} frames (${((frames.at(-1).t - frames[0].t) / 60).toFixed(1)} min).`);
+    }
+    function leaveReplay() {
+      replay = null;
+      rp.bar.disabled = true; $('replay-live').disabled = true; rp.play.disabled = true;
+      rp.info.textContent = 'Live. The last 5 minutes are recorded.';
+      log('Back to live flight.');
+    }
+    $('replay-last').addEventListener('click', () => enterReplay(recording.slice(), 'this flight'));
+    $('replay-live').addEventListener('click', leaveReplay);
+    rp.play.addEventListener('click', () => { if (replay) replay.playing = !replay.playing; });
+    $('replay-speed').addEventListener('change', (e) => { if (replay) replay.speed = +e.target.value; });
+    rp.bar.addEventListener('input', () => { if (replay) { replay.i = +rp.bar.value; replay.playing = false; } });
+    $('replay-csv').addEventListener('change', async (e) => {
+      const f = e.target.files?.[0];
+      if (!f) return;
+      try { enterReplay(framesFromCsv(await f.text()), f.name); } catch (err) { log('CSV not loaded: ' + err.message); }
+      e.target.value = '';
+    });
+
     // ------------------------------------------------------------- loop ----
     reset();
     applyWeather();
@@ -809,14 +900,31 @@
     function frame(now) {
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
-      readInputs(dt);
-      A.avd_set_input(input.pitch, input.roll, input.yaw, input.throttle, input.mixture, input.brake, input.brake, input.trimRate, input.starter ? 1 : 0);
-      if (!paused) A.avd_advance(dt);
-      const s = Float64Array.from(A.state());
-      const c = Float64Array.from(A.cockpitState());
+      let s, c;
+      if (replay) {
+        const fr = replay.frames;
+        if (replay.playing) {
+          replay.acc += dt * replay.speed;
+          while (replay.i < fr.length - 1 && fr[replay.i + 1].t - fr[replay.i].t <= replay.acc) { replay.acc -= fr[replay.i + 1].t - fr[replay.i].t; ++replay.i; }
+          if (replay.i >= fr.length - 1) replay.playing = false;
+        }
+        ({ s, c } = fr[replay.i]);
+        rp.bar.value = String(replay.i);
+        rp.play.textContent = replay.playing ? 'Pause' : 'Play';
+        rp.info.textContent = `Replaying ${replay.source}: ${fmtTime(fr[replay.i].t - fr[0].t)} / ${fmtTime(fr.at(-1).t - fr[0].t)}`;
+        levers.throttle = Number.isFinite(s[24]) ? s[24] : 0; levers.mixture = Number.isFinite(s[25]) ? s[25] : 1;
+      } else {
+        readInputs(dt);
+        A.avd_set_input(input.pitch, input.roll, input.yaw, input.throttle, input.mixture, input.brake, input.brake, input.trimRate, input.starter ? 1 : 0);
+        if (!paused) A.avd_advance(dt);
+        s = Float64Array.from(A.state());
+        c = Float64Array.from(A.cockpitState());
+        record(s, c);
+        levers.throttle = input.throttle; levers.mixture = input.mixture;
+      }
       drawView(s);
       drawPanel(c);
-      for (const e of A.events()) log(e);
+      if (!replay) for (const e of A.events()) log(e);
       htmlAcc += dt;
       if (htmlAcc > 0.1) { htmlAcc = 0; updateHtml(c, s); refreshSwitches(); }
       if (audio && hornGain) {

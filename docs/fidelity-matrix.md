@@ -8,7 +8,7 @@ Legend: ✅ implemented and tested · 🟡 partial or simplified · ⛔ not star
 | Area | Status | Model today | Validation | Main gap |
 |---|---|---|---|---|
 | Rigid-body 6-DoF | ✅ | RK4, 240 Hz, quaternion, WGS-84 local frame, rebase | Determinism, convergence, rebase tests | Rotating-earth terms (Coriolis) ignored: fine below Mach 1 at this scale |
-| Atmosphere | ✅ | ISA-1976, ΔT, QNH, humidity, boundary-layer wind, von Kármán turbulence | Table checks against ISA | No thermals, fronts, precipitation, icing |
+| Atmosphere | ✅ | ISA-1976, ΔT, QNH, humidity, boundary-layer wind, von Kármán turbulence, one cloud layer with liquid water | Table checks against ISA; icing tests | No thermals, fronts, precipitation; airframe icing (wing, prop, induction) not modelled |
 | Weather field | 🟡 | `SimpleWeather`: uniform plus boundary layer and turbulence | — | No spatial weather or time evolution |
 | Wake turbulence | ⛔ | — | — | — |
 | Wing aerodynamics | ✅ | Strip theory, ±180° polar, flaps, ground effect, downwash lag | Stall speeds +1.6%/+2.6%; adverse yaw; stability signs | No vortex-lattice interference; no spin validation |
@@ -22,7 +22,7 @@ Legend: ✅ implemented and tested · 🟡 partial or simplified · ⛔ not star
 | Electrical | ✅ | Battery OCV/resistance, alternator, named loads and breakers | Depletion, VOLTS annunciator | No bus split, no avionics bus relay |
 | Vacuum | ✅ | Pump suction against rpm | Unit test | No regulator failure modes beyond pump failure |
 | Landing gear and ground | 🟡 | Struts, bristle tyres, brakes, steering, hard points | Static equilibrium, tip-over, brakes | Landing roll −19% with a modelled pilot technique; no surface wetness |
-| Instruments (analog) | ✅ | Full six-pack, compass, engine and system gauges, annunciators | 34 tests | No icing physics, no compass deviation |
+| Instruments (analog) | ✅ | Full six-pack, compass (with airframe deviation and a generated correction card), engine and system gauges, annunciators, pitot icing and heat | 37 tests | Static-port icing; instrument lighting photometry |
 | Navigation radios | 🟡 | VOR, LOC, GS, radio horizon, synthetic facilities | Geometry tests | No real navaid data; no DME, ADF or marker |
 | Glass cockpit (G1000) | ⛔ | — | — | Separate profile on the same `CockpitState` pattern |
 | Autopilot | ⛔ | (assist wing leveller only, a gameplay aid) | — | — |

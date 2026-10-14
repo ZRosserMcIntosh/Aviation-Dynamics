@@ -38,7 +38,8 @@ void InstrumentRecorder::writeHeader() {
             "hdg_true_deg,hdg_mag_deg,hdg_dg_deg,hdg_compass_deg,p_dps,q_dps,r_dps,turn_rate_tc_dps,tc_flag,"
             "slip_true_deg,ball_deg,static_meas_pa,total_meas_pa,ai_rotor,dg_rotor,tc_rotor,"
             "rpm_tach,oil_psi,oil_f,egt_f,fuel_gph,fuel_l_gal,fuel_r_gal,ammeter_a,bus_v,suction_inhg,"
-            "annunciators,stall_horn,oat_c,nav_valid,nav_cdi,nav_tofrom,gs_valid,gs_dev,squawk,reported_alt_ft\n";
+            "annunciators,stall_horn,oat_c,nav_valid,nav_cdi,nav_tofrom,gs_valid,gs_dev,squawk,reported_alt_ft,"
+            "east_m,north_m\n";
 }
 
 void InstrumentRecorder::record(const Aircraft& ac) {
@@ -66,7 +67,8 @@ void InstrumentRecorder::record(const Aircraft& ac) {
          << paToInHg(c.suction) << ',' << c.annunciators << ',' << c.stallHorn << ','
          << kToCelsius(c.outsideAirTemperature) << ',' << c.nav1.valid << ',' << c.nav1.cdi << ',' << c.nav1.toFrom
          << ',' << c.nav1.glideslopeValid << ',' << c.nav1.glideslope << ',' << c.squawk << ','
-         << (c.altitudeReported ? c.reportedAltitudeFt : -99999) << '\n';
+         << (c.altitudeReported ? c.reportedAltitudeFt : -99999) << ',' << ac.telemetry().positionNed.y << ','
+         << ac.telemetry().positionNed.x << '\n';
 }
 
 }  // namespace avd

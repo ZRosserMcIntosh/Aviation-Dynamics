@@ -40,3 +40,4 @@ default). Use `avdemo flight csv` and `avdemo instruments csv`.
 | `stall_horn`, `oat_c` | Stall warning; OAT gauge |
 | `nav_valid`, `nav_cdi`, `nav_tofrom`, `gs_valid`, `gs_dev` | NAV 1. CDI and GS deflection are normalised to ±1 full scale |
 | `squawk`, `reported_alt_ft` | Transponder. The value is −99999 when no altitude is reported |
+| `east_m`, `north_m` | Position in the world frame (from the local NED origin), for replay in the browser cockpit |

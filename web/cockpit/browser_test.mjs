@@ -79,6 +79,23 @@ try {
   const nav = await page.evaluate(() => document.getElementById('nav-a').textContent);
   check(nav === '110.30', `NAV 1 active ${nav}`);
 
+  // Replay: the live flight was recorded; replay it, scrub, return to live.
+  await page.click('#replay-last');
+  await page.waitForTimeout(400);
+  check(/^Replaying this flight/.test(await page.textContent('#replay-info')), 'replay of the recorded flight starts');
+  await page.$eval('#replay-bar', (el) => { el.value = '0'; el.dispatchEvent(new Event('input')); });
+  await page.waitForTimeout(200);
+  check(/^Replaying this flight: 00:00/.test(await page.textContent('#replay-info')), 'scrubbing moves to the start');
+  await page.click('#replay-live');
+  // A native instrument CSV (InstrumentRecorder header) replays on the panel.
+  const header = 'time_s,tas_kt,cas_kt,eas_kt,gs_kt,ias_kt,alt_true_ft,alt_pressure_ft,alt_indicated_ft,kollsman_inhg,vs_true_fpm,vsi_fpm,pitch_true_deg,pitch_ai_deg,roll_true_deg,roll_ai_deg,ai_tumbled,hdg_true_deg,hdg_mag_deg,hdg_dg_deg,hdg_compass_deg,p_dps,q_dps,r_dps,turn_rate_tc_dps,tc_flag,slip_true_deg,ball_deg,static_meas_pa,total_meas_pa,ai_rotor,dg_rotor,tc_rotor,rpm_tach,oil_psi,oil_f,egt_f,fuel_gph,fuel_l_gal,fuel_r_gal,ammeter_a,bus_v,suction_inhg,annunciators,stall_horn,oat_c,nav_valid,nav_cdi,nav_tofrom,gs_valid,gs_dev,squawk,reported_alt_ft,east_m,north_m';
+  const row = (t) => `${t},100,95,94,100,95,3900,3900,3900,29.92,0,0,2,2,0,0,0,90,111.5,111.5,111,0,0,0,0,0,0,0,90000,95000,1,1,1,2400,80,180,1350,9,20,20,5,28,5,0,0,10,0,0,0,0,0,1200,3900,${t * 51},15000`;
+  await page.setInputFiles('#replay-csv', { name: 'flight.csv', mimeType: 'text/csv',
+    buffer: Buffer.from([header, row(0), row(0.1), row(0.2), row(0.3)].join('\n')) });
+  await page.waitForTimeout(400);
+  check(/^Replaying flight\.csv/.test(await page.textContent('#replay-info')), 'native instrument CSV replays on the panel');
+  await page.click('#replay-live');
+
   // Phone width: no horizontal page scroll.
   await page.setViewportSize({ width: 400, height: 900 });
   await page.waitForTimeout(500);
