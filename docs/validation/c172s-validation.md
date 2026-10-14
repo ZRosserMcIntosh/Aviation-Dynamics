@@ -17,7 +17,8 @@ POH technique.
 | Rate of climb, sea level, 74 KIAS | 730 fpm | 695 fpm | −4.7% | ±15% |
 | Take-off ground roll (short field) | 960 ft | 840 ft | **−12.5%** | ±20% (known discrepancy) |
 | Take-off over 50 ft | 1630 ft | 1724 ft | +5.8% | ±20% |
-| Landing ground roll, maximum braking | 575 ft | 254 ft | **−56%** | reported only (known discrepancy) |
+| Landing ground roll, pilot braking technique | 575 ft | 468 ft | −18.7% | ±20% |
+| ↳ tyre-limited bound (full pedal at touchdown) | — | 254 ft | | physics check |
 | Static rpm, full throttle | 2300–2420 rpm | 2337 rpm | | in range |
 | Stall warning | 5–10 kt above the stall | 8.4 kt (flaps up), 7.6 kt (flaps 30) | | in range |
 
@@ -62,12 +63,17 @@ ground at the right speed but climbs away slowly. Candidates are the
 scripted pilot's rotation and climb technique, flaps-10 drag in ground
 effect, and the POH's data reduction. This is open, not tuned.
 
-**Landing roll with maximum braking is about 54% short.** The POH figure
-reflects demonstrated, technique-limited braking: the airplane is not on the
-edge of tyre friction for the whole roll. The simulation brakes at the tyre
-limit (μ about 0.65 on dry asphalt) from touchdown. A faithful comparison
-needs either a pilot braking model or the POH's own technique; both are
-planned with the landing-performance work.
+**Landing roll: closed to −19% by modelling the pilot, not the airplane.**
+The POH figure (575 ft) is a demonstrated landing. The old test braked at
+the tyre limit with all wheels down from the instant of touchdown, and
+stopped in 254 ft (−56%). The airplane physics was not changed. The scenario
+now models the technique: touchdown just above the flaps-30 stall (50 KCAS;
+POH stall 48 KCAS), 1 s to lower the nose and reach the pedals, 1 s to build
+pressure, and 70% sustained pedal (no anti-skid, so a pilot keeps margin
+against a locked, flat-spotted tyre). These are human-factors estimates,
+chosen before running the comparison and not solved for the POH number. The
+result is 468 ft. The tyre-limited 254 ft stays as a physics bound, and a
+test checks that softer braking lengthens the roll.
 
 ## Behavioural checks (tests)
 

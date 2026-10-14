@@ -375,7 +375,7 @@ TakeoffResult takeoffTest(const AircraftDefinition& def, Real elevation, Real dT
     return out;
 }
 
-Real landingRollTest(const AircraftDefinition& def, Real touchdownKias, Real dt) {
+Real landingRollTest(const AircraftDefinition& def, Real touchdownKias, Real dt, BrakingTechnique technique) {
     Aircraft ac(def, LocalFrame{});
     loadToMaxGross(ac);
     SimpleWeather atm;
@@ -391,10 +391,12 @@ Real landingRollTest(const AircraftDefinition& def, Real touchdownKias, Real dt)
     PilotInput in;
     in.throttle = 0;
     in.pitch = 1.0;
-    in.brakeLeft = in.brakeRight = 1.0;
     for (int i = 0; i < static_cast<int>(60 / dt); ++i) {
         const AircraftTelemetry& t = ac.telemetry();
         in.yaw = clamp(-3.0 * t.heading - 0.8 * t.omega.z, -1.0, 1.0);
+        const Real since = i * dt - technique.delay;
+        const Real ramp = technique.rampTime > 0 ? clamp(since / technique.rampTime, 0.0, 1.0) : (since >= 0 ? 1.0 : 0.0);
+        in.brakeLeft = in.brakeRight = technique.effort * ramp;
         ac.step(dt, in, ground, atm);
         if (ac.telemetry().groundSpeed < 0.2) break;
     }

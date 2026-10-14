@@ -27,8 +27,10 @@ The goal is to make the one aircraft trustworthy enough to build the rest on.
    transition (the air segment is about 30% long). Next, review the scripted
    pilot's rotation and climb technique and the flaps-10 drag in ground
    effect against flight-test data.
-2. **Landing braking technique.** Add a pilot braking model (ramp, hold,
-   anti-skid by feel). Compare the landing roll at POH technique; keep the
+2. **Landing braking technique.** ✅ A pilot braking model (delay, ramp,
+   sustained effort) gives −18.7%, within tolerance. Originally planned as:
+   add a pilot braking model (ramp, hold, anti-skid by feel), compare the
+   landing roll at POH technique, and keep the
    tyre-limited result as a separate test.
 3. **São Paulo World ground query.** Implement `GroundQuery` over the tiled
    terrain and building footprints. Report hard-point collisions with

@@ -21,7 +21,7 @@ Legend: ✅ implemented and tested · 🟡 partial or simplified · ⛔ not star
 | Fuel system | ✅ | Tanks, selector, shutoff, line volume, starvation, leaks | Scenario A/C tests | No unporting in uncoordinated flight |
 | Electrical | ✅ | Battery OCV/resistance, alternator, named loads and breakers | Depletion, VOLTS annunciator | No bus split, no avionics bus relay |
 | Vacuum | ✅ | Pump suction against rpm | Unit test | No regulator failure modes beyond pump failure |
-| Landing gear and ground | 🟡 | Struts, bristle tyres, brakes, steering, hard points | Static equilibrium, tip-over, brakes | **Landing roll −54% (braking technique)**; no surface wetness |
+| Landing gear and ground | 🟡 | Struts, bristle tyres, brakes, steering, hard points | Static equilibrium, tip-over, brakes | Landing roll −19% with a modelled pilot technique; no surface wetness |
 | Instruments (analog) | ✅ | Full six-pack, compass, engine and system gauges, annunciators | 34 tests | No icing physics, no compass deviation |
 | Navigation radios | 🟡 | VOR, LOC, GS, radio horizon, synthetic facilities | Geometry tests | No real navaid data; no DME, ADF or marker |
 | Glass cockpit (G1000) | ⛔ | — | — | Separate profile on the same `CockpitState` pattern |

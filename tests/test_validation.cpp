@@ -106,9 +106,17 @@ TEST_CASE("validation: static rpm within the published full-throttle static rang
     CHECK_RANGE(ac.telemetry().engines[0].rpm, 2300, 2420);
 }
 
-TEST_CASE("validation: maximum-braking landing roll is physically plausible (known POH gap)") {
-    // The POH figure (575 ft) reflects demonstrated braking; maximum braking
-    // on dry asphalt stops sooner. Bound: 40-100% of the POH distance.
-    const Real roll = mToFt(landingRollTest(ref()));
-    CHECK_RANGE(roll, 0.4 * 575, 575);
+TEST_CASE("validation: landing roll with a pilot's braking technique (POH 575 ft)") {
+    // Touchdown just above the flaps-30 stall (POH 48 KCAS), then a pilot
+    // without anti-skid: 1 s to lower the nose and reach the pedals, 1 s to
+    // build pressure, 70% sustained pedal. Same tolerance as the take-off.
+    const Real roll = mToFt(landingRollTest(ref(), 50, kDefaultDt, scenarios::BrakingTechnique::pilot()));
+    CHECK_RANGE(roll, 0.8 * 575, 1.2 * 575);
+    // The tyre-limited bound (full pedal from touchdown) stops much sooner,
+    // and harder braking never lengthens the roll.
+    const Real limit = mToFt(landingRollTest(ref(), 50));
+    CHECK(limit < roll);
+    scenarios::BrakingTechnique soft = scenarios::BrakingTechnique::pilot();
+    soft.effort = 0.4;
+    CHECK(mToFt(landingRollTest(ref(), 50, kDefaultDt, soft)) > roll);
 }

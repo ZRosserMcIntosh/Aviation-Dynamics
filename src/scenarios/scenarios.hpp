@@ -73,9 +73,21 @@ struct TakeoffResult {
 TakeoffResult takeoffTest(const AircraftDefinition& def, Real elevation, Real temperatureDeviation,
                           Real relativeHumidity = 0, Real headwind = 0, Real rotateKias = 49, Real dt = kDefaultDt);
 
+// How the pilot brakes after touchdown. The default is the tyre-limited
+// physics check (full pedal from the instant of touchdown); `pilot()` is a
+// human technique without anti-skid (estimated values, see
+// docs/validation/c172s-validation.md).
+struct BrakingTechnique {
+    Real delay = 0;      // s from touchdown to the first pedal pressure (nose lowering, reaction)
+    Real rampTime = 0;   // s to build pedal pressure to `effort`
+    Real effort = 1.0;   // sustained pedal, 0..1 (a pilot without anti-skid keeps margin)
+    static BrakingTechnique pilot() { return {1.0, 1.0, 0.7}; }
+};
+
 // Ground roll from touchdown (`touchdownKias`, flaps 30, idle) to stop with
-// maximum braking and full nose-up elevator.
-Real landingRollTest(const AircraftDefinition& def, Real touchdownKias = 47, Real dt = kDefaultDt);
+// full nose-up elevator and the given braking technique.
+Real landingRollTest(const AircraftDefinition& def, Real touchdownKias = 47, Real dt = kDefaultDt,
+                     BrakingTechnique technique = {});
 
 // ---- Flight helpers ----
 // An airborne aircraft trimmed at `kias`, `altitude` with the engine running.
