@@ -36,21 +36,24 @@ class Propeller {
 public:
     explicit Propeller(const PropellerDef& def);
     // `axialSpeed`: aircraft speed relative to the air along the thrust axis.
-    PropellerForces evaluate(Real axialSpeed, Real omega, Real density) const;
+    // `speedOfSound` sets the blade Mach numbers (compressibility).
+    PropellerForces evaluate(Real axialSpeed, Real omega, Real density, Real speedOfSound = 340.294) const;
     Real radius() const { return 0.5 * def_.diameter; }
     Real discArea() const { return kPi * radius() * radius(); }
     const PropellerDef& def() const { return def_; }
-    // Normalised coefficients vs advance angle (rad): T = cT 0.5 rho W^2 A,
-    // Q = cQ 0.5 rho W^2 A R, W^2 = V^2 + (0.7 Omega R)^2.
-    const Table1D& thrustTable() const { return cT_; }
-    const Table1D& torqueTable() const { return cQ_; }
+    // Normalised coefficients vs advance angle (rad) and the Mach number of
+    // W: T = cT 0.5 rho W^2 A, Q = cQ 0.5 rho W^2 A R, W^2 = V^2 + (0.7 Omega R)^2.
+    const Table2D& thrustTable() const { return cT_; }
+    const Table2D& torqueTable() const { return cQ_; }
 
     // One BEM solution (exposed for tests). Returns thrust and torque.
-    static void bem(const PropellerDef& def, Real v, Real omega, Real rho, Real& thrust, Real& torque);
+    // speedOfSound <= 0: incompressible.
+    static void bem(const PropellerDef& def, Real v, Real omega, Real rho, Real& thrust, Real& torque,
+                    Real speedOfSound = 0);
 
 private:
     PropellerDef def_;
-    Table1D cT_, cQ_;
+    Table2D cT_, cQ_;
 };
 
 enum class Magnetos { Off = 0, Right = 1, Left = 2, Both = 3, Start = 4 };

@@ -69,7 +69,11 @@ costs about 30 µs natively (`avdemo bench`).
   lagged by the transport time. Ground effect reduces induced angle near the
   ground.
 - **Propeller and slipstream.** Thrust and torque come from blade-element
-  tables over the advance angle. Slipstream velocity follows axial momentum
+  momentum theory with Prandtl tip loss, axial and swirl (tangential)
+  induction, and per-element compressibility (Prandtl-Glauert lift, Korn/Lock
+  drag rise from a blade thickness distribution). It is solved once per
+  propeller definition into tables over advance angle and Mach, and shared
+  between aircraft. Slipstream velocity follows axial momentum
   theory, with a swirl angle applied to the strips inside the slipstream tube.
   Slipstream scrubbing drag acts on the drag items it washes.
 - **Piston engine.** Airflow is set by manifold pressure and volumetric

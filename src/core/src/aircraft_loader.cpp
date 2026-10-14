@@ -497,6 +497,8 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
             pr.num("pitch_m", e.propeller.pitch, 1, true);
             pr.num("hub_radius_fraction", e.propeller.hubRadiusFraction);
             pr.table("chord", "r_over_r", "chord_m", e.propeller.chordVsRadius);
+            if (pr.has("thickness")) pr.table("thickness", "r_over_r", "t_over_c", e.propeller.thicknessVsRadius);
+            pr.num("korn_factor", e.propeller.kornFactor);
             if (pr.has("section")) {
                 Obj sec = pr.child("section");
                 readSection(sec, e.propeller.section);

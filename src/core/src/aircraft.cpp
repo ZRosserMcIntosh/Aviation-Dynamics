@@ -392,7 +392,7 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
         const Vec3 vDisc = vBody + cross(w, r) - (windBody + gradBody * r);
         const Vec3 axis = normalized(ed.thrustAxis);
         const Real vAx = dot(vDisc, axis);
-        const PropellerForces pf = props_[i].evaluate(vAx, s.shaftOmega[i], rho);
+        const PropellerForces pf = props_[i].evaluate(vAx, s.shaftOmega[i], rho, c.air.state.speedOfSound);
         const Vec3 thrust = axis * pf.thrust;
         force += thrust;
         moment += cross(r, thrust);

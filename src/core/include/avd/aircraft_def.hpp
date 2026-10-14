@@ -139,6 +139,10 @@ struct PropellerDef {
     Real pitch = 1.5;                 // m, geometric pitch (constant along the blade)
     Real hubRadiusFraction = 0.15;
     Table1D chordVsRadius;            // chord (m) vs r/R
+    // Thickness ratio t/c vs r/R for the compressibility drag rise of the
+    // blade elements (Korn + Lock, as on the wing). Empty: incompressible.
+    Table1D thicknessVsRadius;
+    Real kornFactor = 0.87;           // 0.87 conventional sections, 0.95 supercritical
     SectionPolar section;             // blade airfoil
     Real inertia = 1.6;               // kg m^2 (propeller alone)
     int bemElements = 24;

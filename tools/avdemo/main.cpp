@@ -98,7 +98,7 @@ int validate() {
     }
     const TakeoffResult to = takeoffTest(def, 0, 0, 0, 0, 51);
     row("Take-off ground roll (short field)", "960 ft", mToFt(to.groundRoll), "ft", 960, 20);
-    std::cout << "|  ↳ known discrepancy | suspected optimistic static thrust (BEM without swirl losses) | | | |\n";
+    std::cout << "|  ↳ known discrepancy | lift-off speed matches the POH (51 KIAS = 55 KCAS); remaining gap under investigation, see docs/validation | | | |\n";
     row("Take-off over 50 ft obstacle", "1630 ft", mToFt(to.distanceTo50ft), "ft", 1630, 20);
     const Real lr = landingRollTest(def);
     std::cout << "| Landing ground roll, maximum braking | 575 ft (POH: demonstrated braking) | " << std::setprecision(0)

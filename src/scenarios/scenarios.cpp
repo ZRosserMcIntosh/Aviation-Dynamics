@@ -361,8 +361,9 @@ TakeoffResult takeoffTest(const AircraftDefinition& def, Real elevation, Real dT
             out.groundRoll = 0;
         }
         if (std::getenv("AVD_TRACE_TAKEOFF") && i % 60 == 0)
-            std::fprintf(stderr, "t=%5.1f d=%6.0f ft ias=%5.1f h=%5.1f ft pitch=%5.1f vs=%5.0f gnd=%d\n", i * dt,
+            std::fprintf(stderr, "t=%5.1f d=%6.0f ft ias=%5.1f cas=%5.1f alpha=%5.1f h=%5.1f ft pitch=%5.1f vs=%5.0f gnd=%d\n", i * dt,
                          mToFt(length(ac.datumPosition() - start)), msToKt(ac.instruments().readings().indicatedAirspeed),
+                         msToKt(ac.instruments().truth().calibratedAirspeed), radToDeg(t2.alpha),
                          mToFt(t2.altitudeMsl - elevation - cgHeight0), radToDeg(t2.pitch), msToFpm(t2.verticalSpeed), t2.onGround);
         if (airborne && t2.altitudeMsl - elevation - cgHeight0 >= ftToM(50)) {
             const Vec3 p = ac.datumPosition() - start;

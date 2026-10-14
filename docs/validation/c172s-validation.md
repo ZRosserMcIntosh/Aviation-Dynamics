@@ -11,31 +11,56 @@ POH technique.
 |---|---|---|---|---|
 | Stall speed, flaps up, power off | 53 KCAS | 53.9 KCAS | +1.6% | ±6% |
 | Stall speed, flaps 30, power off | 48 KCAS | 49.2 KCAS | +2.6% | ±6% |
-| Full-throttle level speed, 8000 ft | 124 KTAS (75% power) | 119.8 KTAS | −3.4% | ±5% |
-| ↳ power / rpm / prop efficiency / fuel flow | 75%, about 2700 rpm, about 10.5 gph | 71% / 2491 rpm / 0.87 / 10.0 gph | | |
-| Maximum level speed, sea level | 126 KTAS | 127.0 KTAS | +0.8% | ±5% |
-| Rate of climb, sea level, 74 KIAS | 730 fpm | 706 fpm | −3.2% | ±15% |
-| Take-off ground roll (short field) | 960 ft | 769 ft | **−19.9%** | ±20% (known discrepancy) |
-| Take-off over 50 ft | 1630 ft | 1622 ft | −0.5% | ±20% |
-| Landing ground roll, maximum braking | 575 ft | 262 ft | **−54%** | reported only (known discrepancy) |
-| Static rpm, full throttle | 2300–2420 rpm | 2378 rpm | | in range |
+| Full-throttle level speed, 8000 ft | 124 KTAS (75% power) | 119.2 KTAS | −3.9% | ±5% |
+| ↳ power / rpm / prop efficiency / fuel flow | 75%, about 2700 rpm, about 10.5 gph | 73% / 2586 rpm / 0.84 / 10.4 gph | | |
+| Maximum level speed, sea level | 126 KTAS | 126.5 KTAS (2692 rpm) | +0.4% | ±5% |
+| Rate of climb, sea level, 74 KIAS | 730 fpm | 695 fpm | −4.7% | ±15% |
+| Take-off ground roll (short field) | 960 ft | 840 ft | **−12.5%** | ±20% (known discrepancy) |
+| Take-off over 50 ft | 1630 ft | 1724 ft | +5.8% | ±20% |
+| Landing ground roll, maximum braking | 575 ft | 254 ft | **−56%** | reported only (known discrepancy) |
+| Static rpm, full throttle | 2300–2420 rpm | 2337 rpm | | in range |
 | Stall warning | 5–10 kt above the stall | 8.4 kt (flaps up), 7.6 kt (flaps 30) | | in range |
 
 Hot and high, for information: at SBMT (722 m) at ISA+20 the ground roll is
-1213 ft, against 769 ft at sea-level ISA.
+1323 ft, against 840 ft at sea-level ISA.
 
 ## Known discrepancies
 
-**Take-off ground roll is about 20% short**, while the distance over 50 ft is
-within 1%. The roll is short even when rotation is moved to the POH lift-off
-speed of 51 KIAS. The likely cause is optimistic static and low-speed thrust:
-the blade-element propeller tables do not include swirl losses, and those
-losses matter most at low advance ratio. Static rpm is in the POH range, so
-the error is in thrust per rpm rather than in power.
+**Take-off ground roll is about 12% short, and the air segment is long.**
+The ground roll is 840 ft against 960 ft, and the distance from lift-off to
+50 ft is about 880 ft against the POH's 670 ft.
 
-Following the project rule, this was **not** tuned away. Reducing thrust
-would break climb and cruise, which currently match. The planned fix is to add
-swirl (tangential induction) to the BEM tables and re-validate.
+*Investigation (Milestone 2b).* The original hypothesis was propeller swirl
+loss. That was tested and **refuted**. Adding tangential induction to the BEM
+solver let the engine turn faster at static (lower torque) for about the same
+thrust, and the roll barely changed (−19.9% → −19.8%). Swirl is kept because
+it is correct physics. The investigation then established:
+
+1. **The lift-off speed is right.** The sim lifts off at 51.4 KIAS = 55.1 KCAS,
+   matching the POH technique (lift off at 51 KIAS, about 55 KCAS with the
+   high-α position error).
+2. **The propeller was too efficient at static.** A measured C172 static
+   thrust (O-320, 75 × 53 in McCauley: 211 kgf, figure of merit about 0.37)
+   scales to about 2400–2500 N for this airplane. The model gave 3056 N. The
+   propeller elements had no compressibility, although the 76 in tips run at
+   Mach 0.7–0.8. Prandtl-Glauert lift and Korn/Lock drag rise were added per
+   element, with a blade thickness distribution, and the tables became 2-D
+   in Mach. The pitch returned to the **published 60 in**, replacing the
+   compensating 1.70 m. The chord was recalibrated to the published static
+   rpm.
+3. **Rolling resistance was an icy-runway value.** It went from 0.02 to 0.04,
+   the middle of the textbook range for dry asphalt with brakes off.
+
+Together these took the roll from −19.9% to −12.5%, with every other
+comparison still in tolerance. No parameter was tuned to the take-off
+number. The sweep showed that no plausible propeller or rolling-resistance
+value closes the gap alone: adding propeller losses lengthens the roll but
+costs climb and cruise one for one.
+
+What remains points to the **lift-off and transition**: the sim leaves the
+ground at the right speed but climbs away slowly. Candidates are the
+scripted pilot's rotation and climb technique, flaps-10 drag in ground
+effect, and the POH's data reduction. This is open, not tuned.
 
 **Landing roll with maximum braking is about 54% short.** The POH figure
 reflects demonstrated, technique-limited braking: the airplane is not on the

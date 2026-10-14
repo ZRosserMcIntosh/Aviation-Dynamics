@@ -177,7 +177,36 @@ TEST_CASE("propeller: BEM thrust/torque across static, cruise, windmill and stop
     CHECK(sp.thrust < 0);
     CHECK(std::isfinite(sp.torque));
     // Tables are smooth and finite over the advance-angle domain.
-    for (Real b = -0.3; b < 1.6; b += 0.01) CHECK(std::isfinite(p.thrustTable()(b)) && std::isfinite(p.torqueTable()(b)));
+    for (Real b = -0.3; b < 1.6; b += 0.01) CHECK(std::isfinite(p.thrustTable()(b, 0.4)) && std::isfinite(p.torqueTable()(b, 0.4)));
+}
+
+TEST_CASE("propeller: swirl and tip compressibility behave physically") {
+    const PropellerDef& def = ref().engines[0].propeller;
+    const Propeller p(def);
+    // Static figure of merit T^1.5 / (P sqrt(2 rho A)) of a cruise-pitched
+    // fixed-pitch propeller: ~0.35-0.55 (a C172 O-320 test measured ~0.37).
+    const Real w = rpmToRadS(2350);
+    const PropellerForces st = p.evaluate(0, w, 1.225);
+    const Real fm = std::pow(st.thrust, 1.5) / (st.torque * w * std::sqrt(2 * 1.225 * p.discArea()));
+    CHECK_RANGE(fm, 0.35, 0.60);
+    // Same advance angle, faster tips: the drag rise costs torque per unit
+    // thrust (efficiency falls) once the tips pass their critical Mach.
+    const Real beta = 0.35;
+    const Real eLow = p.thrustTable()(beta, 0.4) / p.torqueTable()(beta, 0.4);
+    const Real eHigh = p.thrustTable()(beta, 0.85) / p.torqueTable()(beta, 0.85);
+    CHECK(eHigh < 0.95 * eLow);
+    // Without thickness data the propeller is incompressible.
+    PropellerDef inc = def;
+    inc.thicknessVsRadius = Table1D{};
+    const Propeller pi(inc);
+    CHECK_NEAR(pi.thrustTable()(beta, 0.4), pi.thrustTable()(beta, 0.85), 1e-12);
+    // The coupled axial + swirl solution converges at static (direct solver).
+    Real t, q;
+    Propeller::bem(def, 0, w, 1.225, t, q);
+    CHECK(t > 0 && q > 0);
+    // Identical definitions share the solved tables (cache) bit for bit.
+    const Propeller p2(def);
+    CHECK(p2.thrustTable()(beta, 0.6) == p.thrustTable()(beta, 0.6));
 }
 
 TEST_CASE("piston engine: rated power, altitude lapse, mixture, ignition and fuel") {

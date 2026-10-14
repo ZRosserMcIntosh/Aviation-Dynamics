@@ -40,12 +40,12 @@ against the POH revision of a specific airplane.
 | Drag build-up | calibrated | Roskam component areas scaled to POH cruise (124 KTAS at 75%, 8000 ft) and maximum speed (126 KTAS, sea level) |
 | Engine rating, displacement | published | 180 bhp at 2700 rpm, 361 in³ |
 | Engine friction, efficiency, oil pump | estimated / calibrated | fmep from Heywood; indicated efficiency calibrated to rated power |
-| Propeller | calibrated | 76 in diameter and 60 in pitch published. Effective pitch 1.70 m and chord distribution calibrated against POH static rpm and maximum speed |
+| Propeller | published / calibrated | 76 in diameter and 60 in geometric pitch published (pitch_m 1.524). Chord distribution calibrated to the POH static rpm; blade thickness estimated (drives tip compressibility) |
 | Fuel | published | Two 28 gal tanks, 26.5 gal usable each, arm 48 in, LEFT/BOTH/RIGHT selector and shutoff |
 | Fuel line volume | estimated | Sets the run-on time after a tank runs dry |
 | Battery, alternator | published | 24 V 12.75 Ah; 28 V 60 A |
 | Electrical load currents | estimated | Switches and breakers follow the POH electrical description |
-| Gear | estimated | Track and wheelbase from the POH; stiffness for about 6 cm static deflection; nose steering ±10° |
+| Gear | estimated | Track and wheelbase from the POH; stiffness for about 6 cm static deflection; nose steering ±10°; rolling resistance 0.04 (dry asphalt, textbook range 0.03–0.05) |
 | Brake friction coefficient | calibrated | 0.65, so the brakes hold full static power as the POH run-up requires |
 | Static-port position error | calibrated | Fitted to the POH airspeed calibration table, flaps up |
 | Rigging (rudder tab, aileron) | calibrated | Zero yaw and roll moment at 105 KIAS, 1500 m, as a ground-adjustable tab would be set |
@@ -59,9 +59,12 @@ source and a note. There are no `gameplay` values in this aircraft.
 All calibration used the scenarios in `src/scenarios/scenarios.cpp` without
 assists. Each change was made only after its physical cause was identified:
 
-1. **Propeller.** Static rpm was low and high-speed rpm was high, which points
-   to effective pitch rather than power. Pitch was set to 1.70 m and chord
-   scaled by 0.85.
+1. **Propeller (revised in Milestone 2b).** The first calibration set an
+   effective pitch of 1.70 m and scaled the chord by 0.85. That compensated
+   for missing physics. After swirl and tip compressibility were added, the
+   pitch returned to the published 60 in (1.524 m). Only the chord was
+   recalibrated (×1.15 of the first estimate), to the POH static rpm. The
+   static figure of merit fell into the range measured on C172s.
 2. **Drag.** Speeds were high at both ends. Slipstream scrubbing drag on the
    items inside the propeller tube was missing. Adding it brought cruise and
    maximum speed to within about 1%. The remaining scale factor is labelled

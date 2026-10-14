@@ -21,13 +21,12 @@ done badly.
 
 The goal is to make the one aircraft trustworthy enough to build the rest on.
 
-1. **Propeller swirl loss.** Add tangential induction to the BEM table
-   generator, then re-validate:
-   - take-off ground roll within ±10%;
-   - climb, cruise and maximum speed still within tolerance;
-   - static rpm still within the POH range.
-
-   Do not change drag to compensate.
+1. **Take-off roll.** ✅ Swirl and tip compressibility added, pitch returned
+   to the published value, rolling resistance corrected: −19.9% → −12.5%.
+   Swirl alone was refuted as the cause. Still open: the lift-off and
+   transition (the air segment is about 30% long). Next, review the scripted
+   pilot's rotation and climb technique and the flaps-10 drag in ground
+   effect against flight-test data.
 2. **Landing braking technique.** Add a pilot braking model (ramp, hold,
    anti-skid by feel). Compare the landing roll at POH technique; keep the
    tyre-limited result as a separate test.

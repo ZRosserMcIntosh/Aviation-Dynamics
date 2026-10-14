@@ -4,8 +4,10 @@
 // References:
 //  - BEM with Prandtl tip loss: Glauert; McCormick, "Aerodynamics,
 //    Aeronautics and Flight Mechanics", ch. 6; momentum relation
-//    dT = 4 pi r rho F (V + v) v dr. Swirl (a') is neglected (lightly loaded
-//    GA propellers: ~1-2% effect), documented in docs/architecture/propulsion.md.
+//    dT = 4 pi r rho F (V + v) v dr, and the angular-momentum relation
+//    dQ = 2 pi r^2 rho F (V + v) w dr for the far-wake swirl velocity w; the
+//    blade sees half of it (tangential speed Omega r - w/2). Swirl matters
+//    most at low advance ratio (take-off), where the blade torque is high.
 //  - Piston engine air flow and fmep: Heywood, "Internal Combustion Engine
 //    Fundamentals" (volumetric efficiency, friction mean effective pressure,
 //    equivalence-ratio effects on power).
@@ -26,6 +28,25 @@ Table1D defaultPowerVsPhi() {
                    {0.0, 0.35, 0.68, 0.84, 0.93, 0.975, 1.0, 0.985, 0.92, 0.80, 0.45, 0.0});
 }
 
+// Everything the propeller tables depend on, as a cache key.
+std::vector<Real> tableKey(const PropellerDef& d) {
+    const SectionPolar& s = d.section;
+    std::vector<Real> k{d.diameter, Real(d.blades), d.pitch, d.hubRadiusFraction, d.kornFactor, Real(d.bemElements),
+                        s.liftSlope, s.zeroLiftAlpha, s.clMax, s.clMin, s.cdMin, s.cdQuadratic, s.clAtCdMin, s.cm0,
+                        s.stallWidth, s.postStallClDrop, s.flatPlateCd};
+    for (const Table1D* t : {&d.chordVsRadius, &d.thicknessVsRadius}) {
+        k.push_back(Real(t->size()));
+        k.insert(k.end(), t->xs().begin(), t->xs().end());
+        k.insert(k.end(), t->ys().begin(), t->ys().end());
+    }
+    return k;
+}
+
+struct PropTables {
+    std::vector<Real> key;
+    Table2D cT, cQ;
+};
+
 Real bestPowerPhi(const Table1D& t) {
     Real best = 1.15, bestP = -1;
     for (std::size_t i = 0; i < t.size(); ++i)
@@ -37,7 +58,8 @@ Real bestPowerPhi(const Table1D& t) {
 
 // ---------------------------------------------------------------------------
 
-void Propeller::bem(const PropellerDef& def, Real v, Real omega, Real rho, Real& thrust, Real& torque) {
+void Propeller::bem(const PropellerDef& def, Real v, Real omega, Real rho, Real& thrust, Real& torque,
+                    Real speedOfSound) {
     const Real R = 0.5 * def.diameter;
     const Real r0 = def.hubRadiusFraction * R;
     const int n = std::max(def.bemElements, 4);
@@ -48,13 +70,28 @@ void Propeller::bem(const PropellerDef& def, Real v, Real omega, Real rho, Real&
         const Real r = r0 + (i + 0.5) * dr;
         const Real chord = def.chordVsRadius.empty() ? 0.1 * R : def.chordVsRadius(r / R);
         const Real theta = std::atan2(def.pitch, kTwoPi * r);
-        const Real ut = omega * r;
 
-        auto element = [&](Real vi, Real& dT, Real& dQ, Real& dTm) {
+        Real tipLoss = 1;
+        // wt: far-wake swirl velocity; the disk sees ut = Omega r - wt / 2.
+        auto element = [&](Real vi, Real wt, Real& dT, Real& dQ, Real& dTm, Real& dQm) {
             const Real ua = v + vi;
+            const Real ut = omega * r - 0.5 * wt;
             const Real phi = std::atan2(ua, ut);
             const Real w2 = ua * ua + ut * ut;
-            const SectionResult s = evaluateSection(def.section, theta - phi, def.section.liftSlope);
+            // Compressibility: Prandtl-Glauert lift slope and Korn/Lock drag
+            // rise at the element Mach number (tips reach M 0.7-0.8).
+            Real slope = def.section.liftSlope, dragRise = 0;
+            if (speedOfSound > 0 && !def.thicknessVsRadius.empty()) {
+                const Real m = std::sqrt(w2) / speedOfSound;
+                slope /= std::sqrt(std::max(1 - m * m, 0.09));
+                const Real tc = def.thicknessVsRadius(r / R);
+                SectionResult s0 = evaluateSection(def.section, theta - phi, slope);
+                const Real mdd = def.kornFactor - tc - std::abs(s0.cl) / 10;
+                const Real mcrit = mdd - 0.1077;  // (0.1/80)^(1/3)
+                if (m > mcrit) dragRise = 20 * std::pow(m - mcrit, 4);
+            }
+            SectionResult s = evaluateSection(def.section, theta - phi, slope);
+            s.cd += dragRise;
             const Real k = B * 0.5 * rho * w2 * chord * dr;
             dT = k * (s.cl * std::cos(phi) - s.cd * std::sin(phi));
             dQ = k * (s.cl * std::sin(phi) + s.cd * std::cos(phi)) * r;
@@ -62,39 +99,74 @@ void Propeller::bem(const PropellerDef& def, Real v, Real omega, Real rho, Real&
             const Real f = B * (R - r) / (2 * r * sphi);
             const Real F = std::max(2 / kPi * std::acos(std::exp(-f)), 0.02);
             dTm = 4 * kPi * r * rho * F * ua * vi * dr;
+            dQm = 2 * kPi * r * r * rho * F * ua * wt * dr;
+            tipLoss = F;
         };
 
-        Real dT = 0, dQ = 0, dTm = 0;
-        if (ut < 1e-6) {
+        Real dT = 0, dQ = 0, dTm = 0, dQm = 0;
+        const Real ut0 = omega * r;
+        if (ut0 < 1e-6) {
             // Stopped propeller: pure blade-element drag/lift, no induction.
-            element(0, dT, dQ, dTm);
+            element(0, 0, dT, dQ, dTm, dQm);
         } else {
-            element(0, dT, dQ, dTm);
-            const Real g0 = dT;  // residual at vi = 0 (dTm = 0)
-            Real lo, hi;
-            if (g0 > 0) {
-                lo = 0;
-                hi = ut + std::abs(v);
-            } else {
-                lo = v > 0 ? -0.45 * v : 0;
-                hi = 0;
-            }
-            auto residual = [&](Real vi) {
-                Real a, b, c;
-                element(vi, a, b, c);
-                return a - c;
-            };
-            Real glo = residual(lo), ghi = residual(hi);
-            Real vi = 0;
-            if (glo * ghi < 0) {
-                for (int it = 0; it < 50; ++it) {
-                    const Real mid = 0.5 * (lo + hi);
-                    const Real gm = residual(mid);
-                    if ((gm < 0) == (glo < 0)) { lo = mid; glo = gm; } else { hi = mid; }
+            // Axial induction for a given swirl: bisection on the thrust
+            // balance (blade element = momentum).
+            auto solveAxial = [&](Real wt) {
+                element(0, wt, dT, dQ, dTm, dQm);
+                const Real g0 = dT;  // residual at vi = 0 (dTm = 0)
+                Real lo, hi;
+                if (g0 > 0) {
+                    lo = 0;
+                    hi = ut0 + std::abs(v);
+                } else {
+                    lo = v > 0 ? -0.45 * v : 0;
+                    hi = 0;
                 }
-                vi = 0.5 * (lo + hi);
+                auto residual = [&](Real vi) {
+                    Real a, b, c, d;
+                    element(vi, wt, a, b, c, d);
+                    return a - c;
+                };
+                Real glo = residual(lo), ghi = residual(hi);
+                Real vi = 0;
+                if (glo * ghi < 0) {
+                    // Illinois (modified regula falsi): bracketed, superlinear.
+                    int side = 0;
+                    const Real tol = 1e-7 * (1 + ut0);
+                    for (int it = 0; it < 60 && hi - lo > tol; ++it) {
+                        const Real x = (lo * ghi - hi * glo) / (ghi - glo);
+                        const Real gx = residual(x);
+                        if (gx == 0) { lo = hi = x; break; }
+                        if ((gx < 0) == (glo < 0)) {
+                            lo = x; glo = gx;
+                            if (side == -1) ghi *= 0.5;
+                            side = -1;
+                        } else {
+                            hi = x; ghi = gx;
+                            if (side == 1) glo *= 0.5;
+                            side = 1;
+                        }
+                        if (std::abs(gx) < 1e-9 * (1 + std::abs(glo) + std::abs(ghi))) { lo = hi = x; break; }
+                    }
+                    vi = 0.5 * (lo + hi);
+                }
+                return vi;
+            };
+            // Swirl from the torque balance (blade torque = wake angular
+            // momentum), under-relaxed fixed point. Converges in a few
+            // iterations for propeller loadings; capped to keep ut > 0.
+            Real wt = 0, vi = 0;
+            for (int it = 0; it < 40; ++it) {
+                vi = solveAxial(wt);
+                element(vi, wt, dT, dQ, dTm, dQm);
+                const Real ua = v + vi;
+                const Real denom = 2 * kPi * r * r * rho * tipLoss * std::max(ua, 1e-3) * dr;
+                Real wtNew = ua > 1e-3 ? std::clamp(dQ / denom, 0.0, 1.2 * ut0) : 0.0;
+                if (std::abs(wtNew - wt) < 1e-4 * (1 + ut0)) { wt = wtNew; break; }
+                wt += 0.7 * (wtNew - wt);
             }
-            element(vi, dT, dQ, dTm);
+            vi = solveAxial(wt);
+            element(vi, wt, dT, dQ, dTm, dQm);
         }
         thrust += dT;
         torque += dQ;
@@ -102,27 +174,52 @@ void Propeller::bem(const PropellerDef& def, Real v, Real omega, Real rho, Real&
 }
 
 Propeller::Propeller(const PropellerDef& def) : def_(def) {
+    // Solving the tables takes a few hundred ms; every aircraft built from
+    // the same propeller definition shares them. Per thread, so no locking;
+    // a trivially destructible pointer because wasi-sdk has no thread-exit
+    // destructor hook (the small bounded cache lives as long as the thread).
+    thread_local std::vector<PropTables>* cachePtr = nullptr;
+    if (!cachePtr) cachePtr = new std::vector<PropTables>();
+    std::vector<PropTables>& cache = *cachePtr;
+    const std::vector<Real> key = tableKey(def_);
+    for (const PropTables& t : cache)
+        if (t.key == key) {
+            cT_ = t.cT;
+            cQ_ = t.cQ;
+            return;
+        }
     // Tables over advance angle beta = atan2(V, 0.7 Omega R), normalised by
     // 0.5 rho W^2 A (thrust) and 0.5 rho W^2 A R (torque).
     const Real R = radius(), A = discArea();
-    std::vector<Real> b, ct, cq;
-    for (Real deg = -20; deg <= 90.0001; deg += 1.0) {
-        const Real beta = deg * kPi / 180;
-        const Real w = 50.0;  // reference |W| (results are normalised)
-        const Real v = w * std::sin(beta);
-        const Real omega = std::max(w * std::cos(beta), 0.0) / (0.7 * R);
-        Real t, q;
-        bem(def_, v, omega, 1.0, t, q);
-        const Real norm = 0.5 * 1.0 * w * w * A;
-        b.push_back(beta);
-        ct.push_back(t / norm);
-        cq.push_back(q / (norm * R));
+    // Second dimension: Mach number of W (compressibility at the blades).
+    // Without thickness data the propeller is incompressible and one Mach
+    // column is enough.
+    const Real aRef = 340.294;
+    std::vector<Real> b, mach, ct, cq;
+    for (Real deg = -20; deg <= 90.0001; deg += 1.0) b.push_back(deg * kPi / 180);
+    if (def_.thicknessVsRadius.empty()) mach = {0.0, 1.0};
+    else mach = {0.0, 0.3, 0.4, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 1.0};
+    for (Real beta : b) {
+        for (Real m : mach) {
+            // Reference |W| (results are normalised); the incompressible
+            // table uses 50 m/s as before.
+            const Real w = def_.thicknessVsRadius.empty() || m <= 0 ? 50.0 : m * aRef;
+            const Real v = w * std::sin(beta);
+            const Real omega = std::max(w * std::cos(beta), 0.0) / (0.7 * R);
+            Real t, q;
+            bem(def_, v, omega, 1.0, t, q, def_.thicknessVsRadius.empty() || m <= 0 ? 0.0 : aRef);
+            const Real norm = 0.5 * 1.0 * w * w * A;
+            ct.push_back(t / norm);
+            cq.push_back(q / (norm * R));
+        }
     }
-    cT_ = Table1D(b, ct);
-    cQ_ = Table1D(std::move(b), cq);
+    cT_ = Table2D(b, mach, ct);
+    cQ_ = Table2D(std::move(b), std::move(mach), cq);
+    if (cache.size() >= 8) cache.erase(cache.begin());
+    cache.push_back({key, cT_, cQ_});
 }
 
-PropellerForces Propeller::evaluate(Real axialSpeed, Real omega, Real rho) const {
+PropellerForces Propeller::evaluate(Real axialSpeed, Real omega, Real rho, Real speedOfSound) const {
     PropellerForces f;
     const Real R = radius();
     const Real ut = 0.7 * std::max(omega, 0.0) * R;
@@ -130,8 +227,9 @@ PropellerForces Propeller::evaluate(Real axialSpeed, Real omega, Real rho) const
     if (w2 < 1e-10) return f;
     const Real beta = std::atan2(axialSpeed, ut);
     const Real q = 0.5 * rho * w2 * discArea();
-    f.thrust = cT_(beta) * q;
-    f.torque = cQ_(beta) * q * R;
+    const Real mach = std::sqrt(w2) / std::max(speedOfSound, 1.0);
+    f.thrust = cT_(beta, mach) * q;
+    f.torque = cQ_(beta, mach) * q * R;
     const Real n = omega / kTwoPi;
     f.advanceRatio = n > 1e-6 ? axialSpeed / (n * def_.diameter) : 1e9;
     const Real shaft = f.torque * omega;

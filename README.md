@@ -19,7 +19,7 @@ here.
 | 6-DoF | Rigid body in a local NED tangent frame on WGS-84, quaternion attitude, RK4 at a fixed 240 Hz step, floating-origin rebase | `tests/test_foundations.cpp` |
 | Atmosphere | ISA-1976 with temperature/QNH deviation, moist density, power-law boundary-layer wind, frozen von Kármán turbulence with spatial gradients | `tests/test_foundations.cpp` |
 | Aerodynamics | Strip theory over lifting surfaces with a ±180° section polar, flaps, downwash lag, ground effect, prop slipstream and swirl, fuselage Munk moment, component drag build-up | `tests/test_components.cpp`, `tests/test_flight.cpp` |
-| Propulsion | Fixed-pitch propeller from blade-element tables; piston engine with manifold pressure, mixture, friction, magnetos, starter, temperatures and oil-pressure physics | `tests/test_components.cpp` |
+| Propulsion | Fixed-pitch propeller from blade-element tables with swirl and tip compressibility; piston engine with manifold pressure, mixture, friction, magnetos, starter, temperatures and oil-pressure physics | `tests/test_components.cpp` |
 | Systems | Fuel tanks/selector/shutoff with line volume, starvation and leaks; battery/alternator/bus with named loads and breakers; engine-driven vacuum | `tests/test_systems_scenarios.cpp` |
 | Ground | Spring-damper struts, tyre bristle model, brakes, nose-wheel steering, hard-point contacts, runway surfaces at Campo de Marte (SBMT) | `tests/test_flight.cpp` |
 | Instruments | Pitot-static (IAS/CAS/EAS/TAS, position error, blockages), VSI capillary lag, vacuum attitude and heading gyros, turn coordinator and ball, pendulous wet compass, engine and system gauges, annunciators, VOR/LOC/GS receiver, transponder encoder | `tests/test_instruments.cpp` (34 cases) |
@@ -29,8 +29,8 @@ here.
 Current results against the POH are in
 [docs/validation/c172s-validation.md](docs/validation/c172s-validation.md).
 That document also covers the two known discrepancies: the take-off ground roll
-is about 20% short and the landing roll with maximum braking is about 54%
-short.
+is about 12% short (investigated; the remaining gap is in the lift-off and
+transition) and the landing roll with maximum braking is about 56% short.
 
 ## Build and run
 
