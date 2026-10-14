@@ -16,6 +16,8 @@
 
 #include <stdexcept>
 
+#include "avd/error.hpp"
+
 namespace avd {
 
 namespace {
@@ -130,7 +132,7 @@ Real groundEffectFactor(Real h, Real b) {
 }
 
 AeroModel::AeroModel(const AircraftDefinition& def) : fuselages_(def.fuselages), dragItems_(def.dragItems) {
-    if (def.surfaces.size() > 8) throw std::invalid_argument("at most 8 lifting surfaces");
+    if (def.surfaces.size() > 8) AVD_FAIL(std::invalid_argument, "at most 8 lifting surfaces");
     for (std::size_t s = 0; s < def.surfaces.size(); ++s) {
         Surface surf;
         surf.def = def.surfaces[s];
@@ -359,6 +361,7 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             tel.cd = sec.cd;
             tel.cm = sec.cm;
             tel.q = q;
+            tel.flowPerp = vPerp;
             tel.stalled = sec.stalled;
             tel.stallAlpha = S.def.section.zeroLiftAlpha + dAlpha0 + (S.def.section.clMax + dClMax) / a3;
             const int sideIdx = st.side > 0 ? 0 : 1;
@@ -381,9 +384,7 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             const StripTelemetry& tel = out.strips[i];
             if (!st.attached || tel.q <= 0) continue;
             const Vec3 r = st.position - in.cg;
-            const Vec3 v = localFlow(S, st, r, in);
-            Vec3 vPerp = v - st.spanAxis * dot(v, st.spanAxis);
-            Vec3 dragDir = normalized(-vPerp);
+            Vec3 dragDir = normalized(-tel.flowPerp);
             if (S.horizontal && eps != 0) {
                 // Downwash tilts the local flow (rotate about the lift axis).
                 const Vec3 n = normalized(cross(st.liftAxis, dragDir));

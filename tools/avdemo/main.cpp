@@ -7,6 +7,8 @@
 //   avdemo starvation [csv]    Scenario A: departure with little fuel until the engine quits
 //   avdemo shutdown            Scenario C (piston analogue): fuel shutoff valve closed in cruise
 //   avdemo cockpit             list interactive cockpit controls
+//   avdemo bench               per-step CPU cost
+#include <chrono>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
@@ -120,6 +122,41 @@ int validate() {
     return 0;
 }
 
+int bench() {
+    const AircraftDefinition def = loadReference();
+    SimpleWeather::Params wp;
+    wp.turbulence.intensity = 1.0;
+    SimpleWeather atm(wp);
+    SimpleWeather calm;
+    FlatGround ground(0);
+    auto run = [&](const AtmosphereField& a, bool onGround) {
+        Aircraft ac(def);
+        TestPilot pilot;
+        PilotInput in;
+        if (onGround) {
+            ac.setEngineRunning(true, 1000);
+            ac.placeOnGround(0, 0, 0, ground, a);
+            ac.setCockpitControl("brakes.parking", 0);
+            in.throttle = 0.3;
+        } else {
+            startTrimmedFlight(ac, {100, 1500, 0}, a, ground, &pilot);
+        }
+        const int steps = 240 * 60;
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < steps; ++i) ac.step(kDefaultDt, onGround ? in : pilot.update(ac, kDefaultDt), ground, a);
+        const auto t1 = std::chrono::steady_clock::now();
+        return std::chrono::duration<double, std::micro>(t1 - t0).count() / steps;
+    };
+    const double cruise = run(calm, false), turb = run(atm, false), taxi = run(calm, true);
+    std::cout << "## Per-step CPU cost (one core, this machine; 240 Hz fixed step, RK4 = 4+1 force evaluations)\n\n";
+    std::cout << "| Case | us / step | ms per 60 fps frame (4 steps) | % of one core in real time |\n|---|---|---|---|\n";
+    for (auto [name, us] : {std::pair<const char*, double>{"cruise, calm air", cruise}, {"cruise, world-space turbulence (48 modes)", turb},
+                            {"taxi on the gear", taxi}})
+        std::cout << "| " << name << " | " << std::fixed << std::setprecision(1) << us << " | " << std::setprecision(3)
+                  << us * 4 / 1000 << " | " << std::setprecision(2) << us * 240 / 1e4 << " % |\n";
+    return 0;
+}
+
 void listCockpit() {
     Aircraft ac(loadReference());
     std::cout << "Interactive cockpit controls (" << ac.definition().displayName << "):\n";
@@ -146,11 +183,12 @@ int main(int argc, char** argv) {
         if (!std::strcmp(cmd, "starvation")) return starvationDemo(csv);
         if (!std::strcmp(cmd, "shutdown")) return shutdownDemo();
         if (!std::strcmp(cmd, "cockpit")) { listCockpit(); return 0; }
+        if (!std::strcmp(cmd, "bench")) return bench();
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
     }
-    std::cerr << "usage: avdemo [validate|flight [csv]|starvation [csv]|shutdown|cockpit]\n";
+    std::cerr << "usage: avdemo [validate|flight [csv]|starvation [csv]|shutdown|cockpit|bench]\n";
     return 2;
 }
 

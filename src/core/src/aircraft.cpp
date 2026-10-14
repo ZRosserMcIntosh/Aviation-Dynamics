@@ -15,6 +15,8 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "avd/error.hpp"
+
 namespace avd {
 
 namespace {
@@ -32,6 +34,16 @@ Real spinSign(const PistonEngineDef& e) { return e.clockwiseFromBehind ? 1.0 : -
 
 Real saturate(Real v, Real limit) { return clamp(v, -limit, limit); }
 
+// "engine<N>.ignition" -> N-1, or -1 (no exceptions on malformed ids).
+int engineIndexFromId(const std::string& id) {
+    if (id.rfind("engine", 0) != 0) return -1;
+    int n = 0;
+    std::size_t i = 6;
+    for (; i < id.size() && id[i] >= '0' && id[i] <= '9'; ++i) n = n * 10 + (id[i] - '0');
+    if (i == 6 || id.compare(i, std::string::npos, ".ignition") != 0) return -1;
+    return n - 1;
+}
+
 }  // namespace
 
 Aircraft::Aircraft(const AircraftDefinition& def, const LocalFrame& frame)
@@ -42,7 +54,7 @@ Aircraft::Aircraft(const AircraftDefinition& def, const LocalFrame& frame)
       vacuum_(def.vacuum),
       instruments_(def.pitotStatic.staticErrorVsAlpha, def.pitotStatic.vsiTimeConstant) {
     const auto errors = def.validate();
-    if (!errors.empty()) throw std::invalid_argument(joinErrors(errors));
+    if (!errors.empty()) AVD_FAIL(std::invalid_argument, joinErrors(errors));
     aeroModel_ = std::make_unique<AeroModel>(def_);
     aeroModel_->prepare(aeroOut_);
     for (const PistonEngineDef& e : def_.engines) {
@@ -139,8 +151,7 @@ int Aircraft::cockpitControl(const std::string& id) const {
     if (id == "fuel.auxpump") return fuel_.auxPumpOn();
     if (id == "flaps.lever") return flapDetent_;
     if (id == "brakes.parking") return parkingBrake_;
-    if (id.rfind("engine", 0) == 0 && id.find(".ignition") != std::string::npos) {
-        const int e = std::stoi(id.substr(6)) - 1;
+    if (const int e = engineIndexFromId(id); e >= 0 || id.rfind("engine", 0) == 0) {
         if (e < 0 || e >= engineCount()) return -1;
         const Magnetos m = magnetos_[e];
         return m == Magnetos::Start ? 3 : static_cast<int>(m);
@@ -164,7 +175,7 @@ bool Aircraft::setCockpitControl(const std::string& id, int position) {
     else if (id == "fuel.auxpump") fuel_.setAuxPump(position == 1);
     else if (id == "flaps.lever") flapDetent_ = position;
     else if (id == "brakes.parking") parkingBrake_ = position == 1;
-    else if (id.rfind("engine", 0) == 0) magnetos_[std::stoi(id.substr(6)) - 1] = static_cast<Magnetos>(position);
+    else if (engineIndexFromId(id) >= 0) magnetos_[engineIndexFromId(id)] = static_cast<Magnetos>(position);
     else if (id.rfind("electrical.load.", 0) == 0) electrical_.setLoadSwitch(electrical_.loadIndex(id.substr(16)), position == 1);
     cockpit_[idx].position = position;
     pushEvent(FlightEventType::CockpitControlChanged, position, idx);

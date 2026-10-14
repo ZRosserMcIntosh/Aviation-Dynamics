@@ -21,26 +21,28 @@ public:
 
     ParseResult run() {
         ParseResult r;
-        try {
-            ws();
-            r.value = value(0);
-            ws();
-            if (i_ != t_.size()) fail("unexpected trailing characters");
-        } catch (const Error& e) {
-            r.error = e.msg;
-        }
+        ws();
+        r.value = value(0);
+        ws();
+        if (ok() && i_ != t_.size()) fail("unexpected trailing characters");
+        r.error = error_;
+        if (!ok()) r.value = Value();
         return r;
     }
 
 private:
-    struct Error { std::string msg; };
-
-    [[noreturn]] void fail(const std::string& m) const {
+    // Exception-free error handling (the core also builds without
+    // exceptions): the first error is recorded and every routine unwinds.
+    bool ok() const { return error_.empty(); }
+    Value fail(const std::string& m) {
+        if (!ok()) return Value();
         std::size_t line = 1, col = 1;
         for (std::size_t k = 0; k < i_ && k < t_.size(); ++k) {
             if (t_[k] == '\n') { ++line; col = 1; } else { ++col; }
         }
-        throw Error{"line " + std::to_string(line) + ", column " + std::to_string(col) + ": " + m};
+        error_ = "line " + std::to_string(line) + ", column " + std::to_string(col) + ": " + m;
+        i_ = t_.size();
+        return Value();
     }
     char peek() const { return i_ < t_.size() ? t_[i_] : '\0'; }
     void ws() {
@@ -50,9 +52,10 @@ private:
             else break;
         }
     }
-    void expect(char c) {
-        if (peek() != c) fail(std::string("expected '") + c + "'");
+    bool expect(char c) {
+        if (peek() != c) { fail(std::string("expected '") + c + "'"); return false; }
         ++i_;
+        return true;
     }
     bool literal(const char* s) {
         std::size_t n = 0;
@@ -62,30 +65,32 @@ private:
     }
 
     Value value(int depth) {
-        if (depth > 64) fail("nesting too deep");
+        if (!ok()) return Value();
+        if (depth > 64) return fail("nesting too deep");
         const char c = peek();
         if (c == '{') return object(depth);
         if (c == '[') return array(depth);
         if (c == '"') return Value::string(string());
-        if (c == 't') { if (literal("true")) return Value::boolean(true); fail("invalid literal"); }
-        if (c == 'f') { if (literal("false")) return Value::boolean(false); fail("invalid literal"); }
-        if (c == 'n') { if (literal("null")) return Value(); fail("invalid literal"); }
+        if (c == 't') return literal("true") ? Value::boolean(true) : fail("invalid literal");
+        if (c == 'f') return literal("false") ? Value::boolean(false) : fail("invalid literal");
+        if (c == 'n') return literal("null") ? Value() : fail("invalid literal");
         if (c == '-' || (c >= '0' && c <= '9')) return number();
-        fail("unexpected character");
+        return fail("unexpected character");
     }
 
     Value object(int depth) {
-        expect('{');
+        if (!expect('{')) return Value();
         Value v = Value::object();
         ws();
         if (peek() == '}') { ++i_; return v; }
-        while (true) {
+        while (ok()) {
             ws();
-            if (peek() != '"') fail("expected object key");
+            if (peek() != '"') return fail("expected object key");
             std::string k = string();
-            if (v.find(k)) fail("duplicate key \"" + k + "\"");
+            if (!ok()) break;
+            if (v.find(k)) return fail("duplicate key \"" + k + "\"");
             ws();
-            expect(':');
+            if (!expect(':')) break;
             ws();
             v.members().emplace_back(std::move(k), value(depth + 1));
             ws();
@@ -93,14 +98,15 @@ private:
             expect('}');
             return v;
         }
+        return Value();
     }
 
     Value array(int depth) {
-        expect('[');
+        if (!expect('[')) return Value();
         Value v = Value::array();
         ws();
         if (peek() == ']') { ++i_; return v; }
-        while (true) {
+        while (ok()) {
             ws();
             v.items().push_back(value(depth + 1));
             ws();
@@ -108,17 +114,19 @@ private:
             expect(']');
             return v;
         }
+        return Value();
     }
 
     std::string string() {
-        expect('"');
+        if (!expect('"')) return {};
         std::string s;
-        while (true) {
-            if (i_ >= t_.size()) fail("unterminated string");
+        while (ok()) {
+            if (i_ >= t_.size()) { fail("unterminated string"); break; }
             const char c = t_[i_++];
             if (c == '"') return s;
-            if (static_cast<unsigned char>(c) < 0x20) fail("control character in string");
+            if (static_cast<unsigned char>(c) < 0x20) { fail("control character in string"); break; }
             if (c != '\\') { s += c; continue; }
+            if (i_ >= t_.size()) { fail("unterminated string"); break; }
             const char e = t_[i_++];
             switch (e) {
                 case '"': s += '"'; break;
@@ -130,7 +138,7 @@ private:
                 case 'r': s += '\r'; break;
                 case 't': s += '\t'; break;
                 case 'u': {
-                    if (i_ + 4 > t_.size()) fail("bad \\u escape");
+                    if (i_ + 4 > t_.size()) { fail("bad \\u escape"); return {}; }
                     unsigned cp = static_cast<unsigned>(std::strtoul(t_.substr(i_, 4).c_str(), nullptr, 16));
                     i_ += 4;
                     // Encode as UTF-8 (surrogate pairs are combined when present).
@@ -153,15 +161,16 @@ private:
                     }
                     break;
                 }
-                default: fail("bad escape");
+                default: fail("bad escape"); return {};
             }
         }
+        return {};
     }
 
     Value number() {
         const std::size_t start = i_;
         if (peek() == '-') ++i_;
-        if (!(peek() >= '0' && peek() <= '9')) fail("bad number");
+        if (!(peek() >= '0' && peek() <= '9')) return fail("bad number");
         while (peek() >= '0' && peek() <= '9') ++i_;
         if (peek() == '.') { ++i_; while (peek() >= '0' && peek() <= '9') ++i_; }
         if (peek() == 'e' || peek() == 'E') {
@@ -170,12 +179,13 @@ private:
             while (peek() >= '0' && peek() <= '9') ++i_;
         }
         const double d = std::strtod(t_.substr(start, i_ - start).c_str(), nullptr);
-        if (!std::isfinite(d)) fail("number out of range");
+        if (!std::isfinite(d)) return fail("number out of range");
         return Value::number(d);
     }
 
     const std::string& t_;
     std::size_t i_ = 0;
+    std::string error_;
 };
 
 }  // namespace

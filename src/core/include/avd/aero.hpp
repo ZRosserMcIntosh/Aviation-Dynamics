@@ -92,6 +92,7 @@ struct StripTelemetry {
     Real stallAlpha = 0;       // positive stall angle incl. control effects
     Real cl = 0, cd = 0, cm = 0;
     Real q = 0;                // local dynamic pressure (0 = strip inactive)
+    Vec3 flowPerp;             // strip velocity relative to air, spanwise part removed (body)
     bool stalled = false;
 };
 
