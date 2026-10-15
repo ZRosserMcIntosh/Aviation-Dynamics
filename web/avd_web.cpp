@@ -4,6 +4,7 @@
 // A thin C ABI over avd::Aircraft so a web page can fly the real core. The page
 // only renders and reads input. World positions are returned in the São Paulo
 // World frame (ENU metres from MASP); see web/README.md for the buffer layout.
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -162,69 +163,61 @@ AVD_EXPORT void avd_set_cloud(double baseMsl, double topMsl, double liquidWater)
 
 // 0 cold and dark on runway 12, 1 engine running on runway 12, 2 on final
 // for runway 12 (3 km), 3 cruising at 3500 ft over the city.
-AVD_EXPORT void avd_reset(int mode) {
-    if (!g) return;
+namespace {
+
+// A fresh aircraft for a reset.
+void newAircraft() {
     g->ac = std::make_unique<Aircraft>(g->def, g->frame);
     g->ac->setNavEnvironment(&scenarios::saoPauloNavEnvironment());
     g->procedure = ProcedureRunner{};
     g->accumulator = 0;
     g->events.clear();
-    const RunwayDef& rw = g->airport.runways[0];
-    if (mode <= 1) {
-        const Vec3 p = scenarios::runwayPoint(rw, 30);
-        if (mode == 1) g->ac->setEngineRunning(true, 1000);
-        g->ac->placeOnGround(p.x, p.y, rw.headingTrue, *g->ground, *g->weather);
-        if (mode == 0) g->ac->setColdAndDark();
-    } else {
-        // Trimmed spawns: solve the free-air trim (calm air at the spawn
-        // altitude), then place the trimmed state on the 3 deg final for
-        // runway 12 (65 KIAS, flaps 20, throttle solved) or in level cruise
-        // over the city (100 KIAS, throttle solved). Hands-off on arrival.
-        const bool final = mode == 2;
-        g->ac->setEngineRunning(true, 2000);
-        const Real dist = final ? -3000.0 : -8000.0;
-        const Real path = final ? degToRad(-3.0) : 0.0;
-        Vec3 p = scenarios::runwayPoint(rw, dist);
-        // On final: exactly on the glide path, which starts at the glideslope
-        // antenna 300 m beyond the paved end (scenarios/airports.cpp).
-        const Real alt = g->airport.elevation + (final ? (-dist + 300.0) * std::tan(-path) : 850.0);
-        SimpleWeatherParams calm = g->weatherParams;
-        calm.windSpeed = 0;
-        calm.turbulence.intensity = 0;
-        const SimpleWeather trimAir(calm);
-        scenarios::TrimRequest req;
-        req.altitude = alt;
-        req.flapDetent = final ? 2 : 0;
-        req.tas = scenarios::tasFromCas(ktToMs(final ? 65.0 : 100.0), trimAir.atmosphere().at(alt).density);
-        req.flightPath = path;
-        const scenarios::TrimResult tr = scenarios::trim(*g->ac, req, trimAir);
-        // Rotate the trimmed (north-heading) state onto the runway heading and
-        // move it to the spawn point; the air-relative velocity gets the wind.
-        DynamicState s = tr.state;
-        const Quat toHeading = Quat::fromEuler(0, 0, rw.headingTrue);
-        s.body.attitude = toHeading * s.body.attitude;
-        s.body.attitude.normalize();
-        p.z = -alt;
-        s.body.position = p;
-        s.body.velocity = toHeading.rotate(s.body.velocity) + g->weather->sample(p, alt, 0).wind;
-        g->ac->setState(s);
-        g->ac->setCockpitControl("brakes.parking", 0);
-        // The air sample and ground planes must describe the new position
-        // before the downwash and the instruments are initialised from them.
-        g->ac->prepareContext(tr.input, *g->ground, *g->weather);
-        g->ac->settleDownwash();
-        // The trimmed elevator goes into the trim wheel: neutral stick holds it.
-        Real elevUp = 0.4;
-        for (const auto& sd : g->def.surfaces)
-            for (const auto& pd : sd.panels)
-                for (const auto& c : pd.controls)
-                    if (c.channel == ControlChannel::Elevator) elevUp = c.maxNegative;
-        g->ac->setElevatorTrim(tr.elevator * elevUp / g->def.controls.elevatorTrimRange);
-        g->trimThrottle = tr.input.throttle;
-        g->trimMixture = tr.input.mixture;
-    }
+}
+
+// Trimmed airborne spawn: solve the free-air trim in calm air at the spawn
+// altitude (throttle solved for the flight path), rotate the trimmed
+// north-heading state onto `heading` and place it at `posNed` / `altMsl`;
+// the air-relative velocity gets the wind. Hands-off on arrival: the trimmed
+// elevator goes into the trim wheel.
+void placeTrimmed(Vec3 posNed, Real altMsl, Real heading, Real kias, int flapDetent, Real path) {
+    g->ac->setEngineRunning(true, 2000);
+    SimpleWeatherParams calm = g->weatherParams;
+    calm.windSpeed = 0;
+    calm.turbulence.intensity = 0;
+    const SimpleWeather trimAir(calm);
+    scenarios::TrimRequest req;
+    req.altitude = altMsl;
+    req.flapDetent = flapDetent;
+    req.tas = scenarios::tasFromCas(ktToMs(kias), trimAir.atmosphere().at(altMsl).density);
+    req.flightPath = path;
+    const scenarios::TrimResult tr = scenarios::trim(*g->ac, req, trimAir);
+    DynamicState s = tr.state;
+    const Quat toHeading = Quat::fromEuler(0, 0, heading);
+    s.body.attitude = toHeading * s.body.attitude;
+    s.body.attitude.normalize();
+    posNed.z = -altMsl;
+    s.body.position = posNed;
+    s.body.velocity = toHeading.rotate(s.body.velocity) + g->weather->sample(posNed, altMsl, 0).wind;
+    g->ac->setState(s);
+    g->ac->setCockpitControl("brakes.parking", 0);
+    // The air sample and ground planes must describe the new position
+    // before the downwash and the instruments are initialised from them.
+    g->ac->prepareContext(tr.input, *g->ground, *g->weather);
+    g->ac->settleDownwash();
+    Real elevUp = 0.4;
+    for (const auto& sd : g->def.surfaces)
+        for (const auto& pd : sd.panels)
+            for (const auto& c : pd.controls)
+                if (c.channel == ControlChannel::Elevator) elevUp = c.maxNegative;
+    g->ac->setElevatorTrim(tr.elevator * elevUp / g->def.controls.elevatorTrimRange);
+    g->trimThrottle = tr.input.throttle;
+    g->trimMixture = tr.input.mixture;
+}
+
+// Instruments and radios after any reset.
+void finishReset(bool seedInstruments) {
     g->ac->instruments().setAltimeterSetting(g->weather->atmosphere().conditions().seaLevelPressure);
-    if (mode >= 1) g->ac->resetInstrumentsToTruth();
+    if (seedInstruments) g->ac->resetInstrumentsToTruth();
     // Radios: NAV 1 on the (synthetic) runway 12 localizer, the test VOR in standby.
     InstrumentPanel& p = g->ac->instruments();
     p.setNavStandby(0, 110300);
@@ -237,6 +230,43 @@ AVD_EXPORT void avd_reset(int mode) {
     g->ac->drainEvents();
 }
 
+}  // namespace
+
+AVD_EXPORT void avd_reset(int mode) {
+    if (!g) return;
+    newAircraft();
+    const RunwayDef& rw = g->airport.runways[0];
+    if (mode <= 1) {
+        const Vec3 p = scenarios::runwayPoint(rw, 30);
+        if (mode == 1) g->ac->setEngineRunning(true, 1000);
+        g->ac->placeOnGround(p.x, p.y, rw.headingTrue, *g->ground, *g->weather);
+        if (mode == 0) g->ac->setColdAndDark();
+    } else {
+        // Mode 2: on the 3 deg final for runway 12 (65 KIAS, flaps 20), exactly
+        // on the glide path, which starts at the glideslope antenna 300 m beyond
+        // the paved end (scenarios/airports.cpp). Mode 3: level cruise, 100 KIAS.
+        const bool final = mode == 2;
+        const Real dist = final ? -3000.0 : -8000.0;
+        const Real path = final ? degToRad(-3.0) : 0.0;
+        const Real alt = g->airport.elevation + (final ? (-dist + 300.0) * std::tan(-path) : 850.0);
+        placeTrimmed(scenarios::runwayPoint(rw, dist), alt, rw.headingTrue, final ? 65.0 : 100.0, final ? 2 : 0, path);
+    }
+    finishReset(mode >= 1);
+}
+
+// Trimmed, level, hands-off spawn anywhere in the world: world ENU position
+// (m east and north of the world anchor), height above the field elevation
+// (m), true heading (deg), indicated airspeed (kt) and flap detent.
+AVD_EXPORT void avd_reset_air(double east, double north, double heightAboveField, double headingDeg, double kias,
+                              int flapDetent) {
+    if (!g) return;
+    newAircraft();
+    const Vec3 ned = world::nedFromEnu({east, north, 0});
+    placeTrimmed(ned, g->airport.elevation + std::max(heightAboveField, 30.0), degToRad(headingDeg),
+                 std::clamp(kias, 55.0, 150.0), std::clamp(flapDetent, 0, 3), 0.0);
+    finishReset(true);
+}
+
 // Compass correction card from a compass swing: what the compass reads (deg)
 // on magnetic headings 0, 30, ... 330 ("FOR" -> "STEER").
 AVD_EXPORT double* avd_compass_card() {
@@ -247,7 +277,7 @@ AVD_EXPORT double* avd_compass_card() {
     return g_state;
 }
 
-// Throttle and mixture of the last trimmed spawn (modes 2 and 3), so the
+// Throttle and mixture of the last trimmed spawn (modes 2 and 3, avd_reset_air), so the
 // host's levers start where the trim put them.
 AVD_EXPORT double avd_trim_throttle() { return g ? g->trimThrottle : 0.0; }
 AVD_EXPORT double avd_trim_mixture() { return g ? g->trimMixture : 1.0; }
