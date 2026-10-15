@@ -53,9 +53,18 @@ A.avd_set_assist(2);
 A.avd_set_input(0, 0, 0, A.avd_trim_throttle(), A.avd_trim_mixture(), 0, 0, 0, 0);
 A.avd_advance(0.25);
 const vs0 = A.cockpitState()[3];
-for (let i = 0; i < 10; ++i) A.avd_advance(1);
+for (let i = 0; i < 40; ++i) A.avd_advance(0.25);  // 10 s (each call is clamped to 0.25 s)
 c = A.cockpitState();
 check(Math.abs(vs0 - c[53]) < 60, `final spawn: VSI reads the descent at once (${vs0.toFixed(0)} fpm)`);
 check(Math.abs(c[0] - 65) < 2 && Math.abs(c[53] + 345) < 60, `final spawn trimmed: ${c[0].toFixed(1)} KIAS, ${c[53].toFixed(0)} fpm after 10 s hands-off`);
 check(Math.abs(c[38]) < 0.1 && Math.abs(c[41]) < 0.2, `on the ILS: CDI ${c[38].toFixed(2)}, GS ${c[41].toFixed(2)}`);
+// Spawn anywhere: over MASP, 600 m above the field, heading north at 100 KIAS.
+A.avd_reset_air(0, 0, 600, 0, 100, 0);
+A.avd_set_input(0, 0, 0, A.avd_trim_throttle(), A.avd_trim_mixture(), 0, 0, 0, 0);
+for (let i = 0; i < 40; ++i) A.avd_advance(0.25);  // 10 s (each call is clamped to 0.25 s)
+c = A.cockpitState();
+const st = A.state();
+check(Math.abs(c[0] - 100) < 3 && Math.abs(c[53]) < 150, `spawn over MASP trimmed: ${c[0].toFixed(1)} KIAS, ${c[53].toFixed(0)} fpm after 10 s`);
+check(Math.abs(st[0]) < 60 && st[1] > 400 && st[1] < 600 && Math.abs(st[14] - 600 / 0.3048) < 150,
+  `spawn position: ${st[0].toFixed(0)} m E, ${st[1].toFixed(0)} m N, ${st[14].toFixed(0)} ft above the field`);
 process.exit(failures ? 1 : 0);
