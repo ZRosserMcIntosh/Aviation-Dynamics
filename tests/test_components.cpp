@@ -1,0 +1,350 @@
+// Aviation Dynamics — component tests: aerodynamics, propulsion, systems, instruments.
+// SPDX-License-Identifier: MIT
+#include "avd/aero.hpp"
+#include "avd/instruments.hpp"
+#include "avd/propulsion.hpp"
+#include "avd/systems.hpp"
+#include "avd/units.hpp"
+#include "avd_test.hpp"
+#include "scenarios.hpp"
+
+using namespace avd;
+using namespace avd::units;
+
+namespace {
+const AircraftDefinition& ref() {
+    static const AircraftDefinition d = scenarios::loadReference();
+    return d;
+}
+
+AeroOutputs evalAero(const AeroModel& m, const Vec3& vBody, const Vec3& omega = {}, const ControlDeflections& c = {},
+                     Real heightAgl = 1e9) {
+    AeroOutputs out;
+    m.prepare(out);
+    AeroInputs in;
+    in.velocityBody = vBody;
+    in.omegaBody = omega;
+    in.cg = {-1.05, 0, -0.15};
+    in.controls = c;
+    in.heightAboveGround = heightAgl;
+    m.evaluate(in, out);
+    return out;
+}
+
+Vec3 flow(Real v, Real alpha, Real beta = 0) {
+    return {v * std::cos(alpha) * std::cos(beta), v * std::sin(beta), v * std::sin(alpha) * std::cos(beta)};
+}
+}  // namespace
+
+// ---------------------------------------------------------------- section ----
+
+TEST_CASE("aero: section polar spans -180..180 with stall and post-stall") {
+    SectionPolar p;
+    p.zeroLiftAlpha = degToRad(-2);
+    p.clMax = 1.5;
+    const Real a = 6.0;
+    CHECK_NEAR(evaluateSection(p, p.zeroLiftAlpha, a).cl, 0, 1e-12);
+    const Real slope = (evaluateSection(p, 0.05, a).cl - evaluateSection(p, 0.0, a).cl) / 0.05;
+    CHECK_NEAR(slope, a, 1e-9);
+    // Peak near clMax, then a lift break.
+    Real peak = 0, peakAlpha = 0;
+    for (Real al = 0; al < 0.6; al += 0.001) {
+        const Real cl = evaluateSection(p, al, a).cl;
+        if (cl > peak) { peak = cl; peakAlpha = al; }
+    }
+    CHECK_NEAR(peak, 1.5, 0.05);
+    CHECK(evaluateSection(p, peakAlpha + 0.15, a).cl < 0.85 * peak);
+    CHECK(evaluateSection(p, peakAlpha + 0.15, a).stalled);
+    // Flat plate at 90 deg: no lift, maximum drag.
+    const SectionResult s90 = evaluateSection(p, kPi / 2, a);
+    CHECK_NEAR(s90.cl, 0, 1e-6);
+    CHECK_NEAR(s90.cd, p.flatPlateCd, 0.01);
+    // Inverted flight works (negative stall), reversed flow is finite.
+    CHECK(evaluateSection(p, degToRad(-10), a).cl < -0.7);
+    for (Real al = -kPi; al <= kPi; al += 0.01) {
+        const SectionResult s = evaluateSection(p, al, a);
+        CHECK(std::isfinite(s.cl) && std::isfinite(s.cd) && std::isfinite(s.cm) && s.cd > 0);
+    }
+    // A flap shifts lift up and raises clMax.
+    CHECK(evaluateSection(p, 0.0, a, -0.1, 0.4).cl > evaluateSection(p, 0.0, a).cl + 0.5);
+}
+
+TEST_CASE("aero: finite-wing relations (Helmbold slope, flap tau, ground effect)") {
+    // AR 7.5 unswept, a2d = 2 pi * 0.95: ~4.75 /rad.
+    CHECK_RANGE(liftCurveSlope3D(7.5, 0, 2 * kPi * 0.95), 4.5, 5.0);
+    CHECK(liftCurveSlope3D(7.5, 0.6, 6.0) < liftCurveSlope3D(7.5, 0, 6.0));  // sweep reduces slope
+    CHECK(liftCurveSlope3D(7.5, 0, 6.0, 0.6) > liftCurveSlope3D(7.5, 0, 6.0));  // compressibility raises it
+    CHECK_NEAR(flapEffectiveness(0.25), 0.60, 0.02);  // classic thin-airfoil value
+    CHECK_NEAR(flapEffectiveness(1.0), 1.0, 1e-9);
+    CHECK_NEAR(groundEffectFactor(1e9, 11), 1.0, 1e-9);
+    CHECK_NEAR(groundEffectFactor(11.0 / 8, 11), 0.8, 1e-9);  // h = b/8: 4/5
+    CHECK(groundEffectFactor(0.5, 11) < 0.4);
+}
+
+// ------------------------------------------------------------ airframe ----
+
+TEST_CASE("aero: reference airframe static stability and damping signs") {
+    const AeroModel m(ref());
+    const Real v = 50;
+    // Symmetric flight: no lateral force or moments (no slipstream here).
+    const AeroOutputs sym = evalAero(m, flow(v, 0.05));
+    CHECK_NEAR(sym.force.y, 0, 1e-6);
+    CHECK_NEAR(sym.moment.x, 0, 1e-6);
+    CHECK_NEAR(sym.moment.z, 0, 1e-6);
+    CHECK(sym.force.z < 0);  // lift acts up (-Z body)
+    // Cm_alpha < 0 about a mid-envelope CG.
+    const Real m1 = evalAero(m, flow(v, 0.02)).moment.y, m2 = evalAero(m, flow(v, 0.10)).moment.y;
+    CHECK(m2 < m1);
+    // Weathercock: sideslip from the right yaws the nose right (Cn_beta > 0).
+    const AeroOutputs sl = evalAero(m, flow(v, 0.05, 0.08));
+    CHECK(sl.moment.z > 0);
+    CHECK(sl.force.y < 0);   // side force opposes the slip
+    CHECK(sl.moment.x < 0);  // dihedral effect: Cl_beta < 0
+    // Damping: roll rate, pitch rate and yaw rate are opposed.
+    CHECK(evalAero(m, flow(v, 0.05), {0.5, 0, 0}).moment.x < -1000);
+    CHECK(evalAero(m, flow(v, 0.05), {0, 0.3, 0}).moment.y < m1);
+    CHECK(evalAero(m, flow(v, 0.05), {0, 0, 0.3}).moment.z < -100);
+}
+
+TEST_CASE("aero: control surfaces act in the commanded sense; ailerons show adverse yaw") {
+    const AeroModel m(ref());
+    const Vec3 vb = flow(45, 0.06);
+    const AeroOutputs base = evalAero(m, vb);
+    ControlDeflections c;
+    c.aileron = 0.5;
+    const AeroOutputs ail = evalAero(m, vb, {}, c);
+    CHECK(ail.moment.x > base.moment.x + 500);  // roll right
+    // Adverse yaw is defined in stability axes (body x rotated by alpha into
+    // the flight path): N_s = N_b cos(a) - L_b sin(a).
+    const Real a = 0.06;
+    auto nStab = [a](const AeroOutputs& o) { return o.moment.z * std::cos(a) - o.moment.x * std::sin(a); };
+    CHECK(nStab(ail) < nStab(base) - 50);  // adverse: nose left
+    c = {};
+    c.elevator = 0.5;
+    CHECK(evalAero(m, vb, {}, c).moment.y > base.moment.y + 500);  // nose up
+    c = {};
+    c.rudder = 0.5;
+    CHECK(evalAero(m, vb, {}, c).moment.z > base.moment.z + 200);  // nose right
+    c = {};
+    c.flap = degToRad(30);
+    const AeroOutputs fl = evalAero(m, vb, {}, c);
+    CHECK(-fl.force.z > -base.force.z * 1.3);  // more lift
+    CHECK(fl.force.x < base.force.x);          // more drag
+}
+
+TEST_CASE("aero: ground effect, stall asymmetry and component loss") {
+    const AeroModel m(ref());
+    const Vec3 vb = flow(30, 0.10);
+    const AeroOutputs free = evalAero(m, vb), ge = evalAero(m, vb, {}, {}, 1.2);
+    CHECK(-ge.force.z > -free.force.z);  // more lift near the ground
+    CHECK(ge.force.x > free.force.x);    // less induced drag
+    // Rolling at high alpha: the descending (right) wing stalls first -> autorotation tendency.
+    const AeroOutputs roll = evalAero(m, flow(28, degToRad(15)), {0.8, 0, 0});
+    int right = 0, left = 0;
+    for (int i = m.firstStrip(0); i < m.endStrip(0); ++i) {
+        // Strip order: panel0 right(3) left(3), panel1 right(5) left(5).
+        const int k = i - m.firstStrip(0);
+        const bool isRight = (k < 3) || (k >= 6 && k < 11);
+        if (roll.strips[i].stalled) (isRight ? right : left)++;
+    }
+    CHECK(right > left);
+    // Losing the left wing removes its lift and produces a large rolling moment.
+    AeroModel damaged(ref());
+    damaged.setSurfaceAttached(0, -1, false);
+    const AeroOutputs d = evalAero(damaged, flow(50, 0.05));
+    const AeroOutputs h = evalAero(m, flow(50, 0.05));
+    CHECK(-d.force.z < 0.65 * -h.force.z);
+    CHECK(d.moment.x < -5000);  // rolls toward the missing (left) wing
+}
+
+// ----------------------------------------------------------- propulsion ----
+
+TEST_CASE("propeller: BEM thrust/torque across static, cruise, windmill and stopped") {
+    const Propeller p(ref().engines[0].propeller);
+    const Real w = rpmToRadS(2350);
+    const PropellerForces st = p.evaluate(0, w, 1.225);
+    CHECK_RANGE(st.thrust, 2200, 3600);       // static thrust of a 180 hp fixed-pitch prop
+    CHECK_RANGE(st.torque * w, 80e3, 140e3);  // absorbs most of the engine's power
+    const PropellerForces cr = p.evaluate(60, rpmToRadS(2500), 0.96);
+    CHECK(cr.thrust < st.thrust);
+    CHECK_RANGE(cr.efficiency, 0.75, 0.90);
+    // High advance ratio at low rpm: windmilling (negative thrust, negative torque).
+    const PropellerForces wm = p.evaluate(60, rpmToRadS(800), 1.225);
+    CHECK(wm.thrust < 0);
+    CHECK(wm.torque < 0);
+    // Stopped propeller: drag only, finite.
+    const PropellerForces sp = p.evaluate(50, 0, 1.225);
+    CHECK(sp.thrust < 0);
+    CHECK(std::isfinite(sp.torque));
+    // Tables are smooth and finite over the advance-angle domain.
+    for (Real b = -0.3; b < 1.6; b += 0.01) CHECK(std::isfinite(p.thrustTable()(b, 0.4)) && std::isfinite(p.torqueTable()(b, 0.4)));
+}
+
+TEST_CASE("propeller: swirl and tip compressibility behave physically") {
+    const PropellerDef& def = ref().engines[0].propeller;
+    const Propeller p(def);
+    // Static figure of merit T^1.5 / (P sqrt(2 rho A)) of a cruise-pitched
+    // fixed-pitch propeller: ~0.35-0.55 (a C172 O-320 test measured ~0.37).
+    const Real w = rpmToRadS(2350);
+    const PropellerForces st = p.evaluate(0, w, 1.225);
+    const Real fm = std::pow(st.thrust, 1.5) / (st.torque * w * std::sqrt(2 * 1.225 * p.discArea()));
+    CHECK_RANGE(fm, 0.35, 0.60);
+    // Same advance angle, faster tips: the drag rise costs torque per unit
+    // thrust (efficiency falls) once the tips pass their critical Mach.
+    const Real beta = 0.35;
+    const Real eLow = p.thrustTable()(beta, 0.4) / p.torqueTable()(beta, 0.4);
+    const Real eHigh = p.thrustTable()(beta, 0.85) / p.torqueTable()(beta, 0.85);
+    CHECK(eHigh < 0.95 * eLow);
+    // Without thickness data the propeller is incompressible.
+    PropellerDef inc = def;
+    inc.thicknessVsRadius = Table1D{};
+    const Propeller pi(inc);
+    CHECK_NEAR(pi.thrustTable()(beta, 0.4), pi.thrustTable()(beta, 0.85), 1e-12);
+    // The coupled axial + swirl solution converges at static (direct solver).
+    Real t, q;
+    Propeller::bem(def, 0, w, 1.225, t, q);
+    CHECK(t > 0 && q > 0);
+    // Identical definitions share the solved tables (cache) bit for bit.
+    const Propeller p2(def);
+    CHECK(p2.thrustTable()(beta, 0.6) == p.thrustTable()(beta, 0.6));
+}
+
+TEST_CASE("piston engine: rated power, altitude lapse, mixture, ignition and fuel") {
+    const PistonEngine e(ref().engines[0]);
+    PistonEngineInputs in;
+    in.throttle = 1;
+    in.magnetos = Magnetos::Both;
+    in.fuelAtEngine = true;
+    in.mixture = scenarios::bestPowerMixture(ref(), 1.225);
+    const Real wr = rpmToRadS(2700);
+    const PistonEngineState sl = e.evaluate(in, wr);
+    CHECK_NEAR(sl.brakePower, 134200, 1500);  // calibrated: rated power at rated rpm
+    CHECK(sl.firing);
+    // BSFC at best power: 0.42-0.52 lb/hp/h; fuel flow ~13-16 US gal/h.
+    const Real bsfc = kgToLb(sl.fuelFlow * 3600) / wToHp(sl.brakePower);
+    CHECK_RANGE(bsfc, 0.42, 0.54);
+    CHECK_RANGE(m3ToGal(sl.fuelFlow / 720.0) * 3600, 12.0, 17.0);
+    // 8000 ft full throttle: ~70-78% (normally aspirated lapse).
+    const AirState a8 = StandardAtmosphere().at(ftToM(8000));
+    PistonEngineInputs hi = in;
+    hi.ambientPressure = a8.pressure;
+    hi.ambientTemperature = a8.temperature;
+    hi.ambientDensity = a8.density;
+    hi.mixture = scenarios::bestPowerMixture(ref(), a8.density);
+    CHECK_RANGE(e.evaluate(hi, wr).brakePower / sl.brakePower, 0.68, 0.80);
+    // Full rich at altitude is too rich: less power than best-power mixture.
+    PistonEngineInputs rich = hi;
+    rich.mixture = 1.0;
+    CHECK(e.evaluate(rich, wr).brakePower < e.evaluate(hi, wr).brakePower);
+    // Single magneto: small rpm-drop-sized power loss.
+    PistonEngineInputs mag = in;
+    mag.magnetos = Magnetos::Left;
+    CHECK_RANGE(e.evaluate(mag, wr).brakePower / sl.brakePower, 0.94, 0.99);
+    // Idle cut-off, magnetos off, no fuel: no combustion.
+    PistonEngineInputs cut = in;
+    cut.mixture = 0;
+    CHECK(!e.evaluate(cut, wr).firing);
+    CHECK_NEAR(e.evaluate(cut, wr).fuelFlow, 0, 0);
+    PistonEngineInputs off = in;
+    off.magnetos = Magnetos::Off;
+    CHECK(!e.evaluate(off, wr).firing);
+    CHECK(e.evaluate(off, wr).brakeTorque < 0);  // friction only
+    PistonEngineInputs dry = in;
+    dry.fuelAtEngine = false;
+    CHECK(!e.evaluate(dry, wr).firing);
+    // Starter cranks against friction.
+    PistonEngineInputs crank = in;
+    crank.magnetos = Magnetos::Start;
+    crank.starterPowered = true;
+    const PistonEngineState cs = e.evaluate(crank, rpmToRadS(100));
+    CHECK(cs.starterTorque + cs.brakeTorque > 0);
+}
+
+// -------------------------------------------------------------- systems ----
+
+TEST_CASE("fuel system: selector, usable fuel, shutoff valve, line and leaks") {
+    FuelSystem f(ref().fuel);
+    const Real demand = 0.01;  // kg/s
+    f.setSelector(0);         // LEFT
+    for (int i = 0; i < 1000; ++i) f.step(0.1, demand, true);
+    CHECK(f.tankQuantity(0) < f.tankQuantity(1));
+    CHECK_NEAR(f.tankQuantity(1), ref().fuel.tanks[1].initial, 1e-12);
+    // BOTH draws evenly.
+    FuelSystem b(ref().fuel);
+    b.setSelector(1);
+    for (int i = 0; i < 1000; ++i) b.step(0.1, demand, true);
+    CHECK_NEAR(b.tankQuantity(0), b.tankQuantity(1), 1e-9);
+    // Mass is conserved: fuel removed from tanks + line = fuel delivered.
+    CHECK_NEAR((2 * 0.106 + ref().fuel.lineVolume - b.totalQuantity() - b.lineQuantity()) * 720, demand * 100, 1e-6);
+    // Unusable fuel stays in the tank; the line then drains and the engine starves.
+    FuelSystem s(ref().fuel);
+    s.setTankQuantity(0, 0.0057);  // 5.7 L: just above the unusable 5.68 L
+    s.setSelector(0);
+    int stepsToStarve = 0;
+    while (s.fuelAtEngine() && stepsToStarve < 100000) { s.step(0.1, demand, true); ++stepsToStarve; }
+    CHECK(!s.fuelAtEngine());
+    CHECK_NEAR(s.tankQuantity(0), ref().fuel.tanks[0].unusable, 1e-9);
+    CHECK(s.starving());
+    // Shutoff valve: the engine runs only on line fuel, then starves.
+    FuelSystem v(ref().fuel);
+    v.setShutoffOpen(false);
+    Real t = 0;
+    while (v.fuelAtEngine() && t < 100) { v.step(0.1, demand, true); t += 0.1; }
+    CHECK_NEAR(t, ref().fuel.lineVolume * 720 / demand, 0.2);
+    // Leak drains even with valves closed.
+    FuelSystem l(ref().fuel);
+    l.setLeakRate(1, 1e-4);
+    l.step(10, 0, false);
+    CHECK_NEAR(l.tankQuantity(1), 0.106 - 1e-3, 1e-12);
+}
+
+TEST_CASE("electrical system: master switches, alternator, starter load and depletion") {
+    ElectricalSystem e(ref().electrical, 900);
+    e.setAvionicsSwitch(true);
+    e.step(0.1, {});
+    CHECK_NEAR(e.busVoltage(), 0, 0);  // cold and dark
+    e.setBatterySwitch(true);
+    e.step(0.1, {});
+    CHECK_RANGE(e.busVoltage(), 24, 26);
+    // Starter current sags the bus.
+    ElectricalInputs crank;
+    crank.starterCurrent = 150;
+    e.step(0.1, crank);
+    CHECK(e.busVoltage() < 22);
+    CHECK(e.busVoltage() > 16);
+    // Alternator needs its switch, field voltage and rpm.
+    ElectricalInputs run;
+    run.alternatorRpm = 2000;
+    e.step(0.1, run);
+    CHECK(!e.alternatorOnline());
+    e.setAlternatorSwitch(true);
+    e.step(0.1, run);
+    CHECK(e.alternatorOnline());
+    CHECK_NEAR(e.busVoltage(), 28, 1e-9);
+    CHECK(e.batteryCurrent() < 0);  // charging
+    // Alternator failure: the battery carries the loads until it is flat.
+    e.setAlternatorFailed(true);
+    Real t = 0;
+    while (e.busVoltage() > 18 && t < 4 * 3600) { e.step(1, run); t += 1; }
+    CHECK_RANGE(t / 60, 20, 200);  // 12.75 Ah at ~10.5 A of loads
+    const int tc = e.loadIndex("turn_coordinator");
+    CHECK(tc >= 0);
+    CHECK(!e.loadPowered(tc));
+    // A battery that cannot hold the starter above 16 V cannot crank.
+    ElectricalSystem weak(ref().electrical, 900);
+    weak.setBatterySwitch(true);
+    weak.setBatteryCharge(0.03);
+    weak.step(0.1, crank);
+    CHECK(weak.busVoltage() < 16);
+}
+
+TEST_CASE("vacuum system: suction follows the engine-driven pump") {
+    VacuumSystem v(ref().vacuum);
+    v.step(0.1, 2400);
+    CHECK_NEAR(v.suction(), inHgToPa(5.0), 1);
+    v.step(0.1, 750);
+    CHECK_NEAR(v.suction(), inHgToPa(5.0) * 0.5, 1);
+    v.setPumpFailed(true);
+    v.step(0.1, 2400);
+    CHECK(v.suction() == 0);
+}
