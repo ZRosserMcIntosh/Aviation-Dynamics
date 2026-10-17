@@ -53,6 +53,7 @@ struct ControlDeflections {
     Real elevator = 0;  // + nose up (stick aft); includes trim offset in rad-equivalent
     Real rudder = 0;    // + yaw right
     Real flap = 0;      // rad, trailing edge down
+    Real spoiler = 0;   // fraction of main-wing lift spoiled (speedbrake / lift dump)
 };
 
 // Propeller slipstream as seen by downstream surfaces.

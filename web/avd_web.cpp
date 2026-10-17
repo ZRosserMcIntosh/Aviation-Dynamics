@@ -46,11 +46,13 @@ struct Sim {
     PilotInput raw;
     Real accumulator = 0;
     std::string events;
+    int jetStart = 0;  // jet Quick Start: 0 idle, 1 starting engine 1, 2 engine 2, 3 done
 };
 
 Sim* g = nullptr;
 double g_state[kStateSize];
 double g_cockpit[96];
+double g_jet[32];
 char* g_text = nullptr;
 int g_textCap = 0;
 std::vector<std::string> g_errors;
@@ -172,6 +174,7 @@ void newAircraft() {
     g->procedure = ProcedureRunner{};
     g->accumulator = 0;
     g->events.clear();
+    g->jetStart = 0;
 }
 
 // Trimmed airborne spawn: solve the free-air trim in calm air at the spawn
@@ -181,6 +184,8 @@ void newAircraft() {
 // elevator goes into the trim wheel.
 void placeTrimmed(Vec3 posNed, Real altMsl, Real heading, Real kias, int flapDetent, Real path) {
     g->ac->setEngineRunning(true, 2000);
+    // Retractable gear: down on the approach (landing flap), up otherwise.
+    g->ac->setGearImmediately(flapDetent >= 2);
     SimpleWeatherParams calm = g->weatherParams;
     calm.windSpeed = 0;
     calm.turbulence.intensity = 0;
@@ -245,11 +250,15 @@ AVD_EXPORT void avd_reset(int mode) {
         // Mode 2: on the 3 deg final for runway 12 (65 KIAS, flaps 20), exactly
         // on the glide path, which starts at the glideslope antenna 300 m beyond
         // the paved end (scenarios/airports.cpp). Mode 3: level cruise, 100 KIAS.
+        // Jets: final at 125 KIAS (about Vref + 10) with landing flap and the gear down, cruise at 250 KIAS.
         const bool final = mode == 2;
-        const Real dist = final ? -3000.0 : -8000.0;
+        const bool jet = g->ac->turbofanCount() > 0;
+        const int landingFlap = jet ? static_cast<int>(g->def.controls.flapDetents.size()) - 1 : 2;
+        const Real dist = final ? (jet ? -6000.0 : -3000.0) : -8000.0;
         const Real path = final ? degToRad(-3.0) : 0.0;
-        const Real alt = g->airport.elevation + (final ? (-dist + 300.0) * std::tan(-path) : 850.0);
-        placeTrimmed(scenarios::runwayPoint(rw, dist), alt, rw.headingTrue, final ? 65.0 : 100.0, final ? 2 : 0, path);
+        const Real alt = g->airport.elevation + (final ? (-dist + 300.0) * std::tan(-path) : (jet ? 1500.0 : 850.0));
+        const Real kias = final ? (jet ? 125.0 : 65.0) : (jet ? 250.0 : 100.0);
+        placeTrimmed(scenarios::runwayPoint(rw, dist), alt, rw.headingTrue, kias, final ? landingFlap : 0, path);
     }
     finishReset(mode >= 1);
 }
@@ -263,7 +272,7 @@ AVD_EXPORT void avd_reset_air(double east, double north, double heightAboveField
     newAircraft();
     const Vec3 ned = world::nedFromEnu({east, north, 0});
     placeTrimmed(ned, g->airport.elevation + std::max(heightAboveField, 30.0), degToRad(headingDeg),
-                 std::clamp(kias, 55.0, 150.0), std::clamp(flapDetent, 0, 3), 0.0);
+                 std::clamp(kias, 55.0, 350.0), std::clamp(flapDetent, 0, 3), 0.0);
     finishReset(true);
 }
 
@@ -304,14 +313,94 @@ AVD_EXPORT void avd_set_assist(int preset) {
 }
 
 AVD_EXPORT void avd_quick_start() {
-    if (g) g->procedure.start(quickStartPistonSingle(*g->ac));
+    if (!g) return;
+    if (g->ac->turbofanCount() > 0) {
+        // Jet: power up, then the fuel control switches one engine at a time
+        // (each start runs the starter, light-off and spool-up in the core).
+        Aircraft& ac = *g->ac;
+        ac.setCockpitControl("electrical.battery", 1);
+        ac.setCockpitControl("electrical.alternator", 1);
+        ac.setCockpitControl("electrical.avionics", 1);
+        ac.setCockpitControl("fuel.auxpump", 1);
+        ac.setCockpitControl("electrical.load.beacon", 1);
+        ac.setCockpitControl("engine1.fuel", 1);
+        g->jetStart = 1;
+        return;
+    }
+    g->procedure.start(quickStartPistonSingle(*g->ac));
 }
+
+namespace {
+void updateJetStart() {
+    if (!g || g->jetStart == 0 || g->jetStart == 3) return;
+    Aircraft& ac = *g->ac;
+    const int n = ac.turbofanCount();
+    const int i = g->jetStart - 1;
+    if (i < n && ac.turbofanState(i).running) {
+        if (i + 1 < n) {
+            ac.setCockpitControl("engine" + std::to_string(i + 2) + ".fuel", 1);
+            g->jetStart = i + 2;
+        } else {
+            ac.setCockpitControl("electrical.load.nav_lights", 1);
+            ac.setCockpitControl("electrical.load.strobes", 1);
+            g->jetStart = 3;
+        }
+    }
+}
+}  // namespace
 
 // Procedure status: 0 idle, 1 running, 2 done, 3 failed; message in the text buffer.
 AVD_EXPORT int avd_procedure_status() {
     if (!g) return 0;
+    if (g->jetStart > 0) {
+        const int i = std::min(g->jetStart, g->ac->turbofanCount()) - 1;
+        putText(g->jetStart == 3 ? "Both engines running." : "Starting engine " + std::to_string(i + 1) + "...");
+        return g->jetStart == 3 ? 2 : 1;
+    }
     putText(g->procedure.message());
     return static_cast<int>(g->procedure.status());
+}
+
+// Attitude indicator caging knob (square the gyro to the case; use in level flight).
+AVD_EXPORT void avd_ai_cage() {
+    if (g) g->ac->instruments().cageAttitude(g->ac->state().body.attitude);
+}
+
+// Jet systems (32 doubles): [0] turbofans, [1] gear position 0..1, [2] gear
+// lever (1 down), [3] speedbrake position 0..1, [4] speedbrake detent, [5] Mach,
+// [6] fuel kg, [7] fuel flow kg/h; engines at 8 + 8 i: N1 %, N2 %, ITT degC,
+// fuel flow kg/h, thrust kN, running, starting, fuel switch; [24] MMO,
+// [25] VMO kt, [26] TAS kt, [27] flap deg, [28] trim, [29] weight on wheels,
+// [30], [31] oil pressure psi (engines 1, 2).
+AVD_EXPORT double* avd_jet() {
+    for (double& v : g_jet) v = 0;
+    if (!g) return g_jet;
+    const Aircraft& ac = *g->ac;
+    const AircraftTelemetry& t = ac.telemetry();
+    g_jet[0] = ac.turbofanCount();
+    g_jet[1] = ac.gearPosition();
+    g_jet[2] = ac.cockpitControl("gear.lever") != 0;
+    g_jet[3] = ac.speedbrakePosition();
+    g_jet[4] = std::max(ac.cockpitControl("speedbrake.lever"), 0);
+    g_jet[5] = t.mach;
+    g_jet[6] = t.fuelMass;
+    Real ff = 0;
+    for (int i = 0; i < std::min(ac.turbofanCount(), 2); ++i) {
+        const TurbofanState& e = ac.turbofanState(i);
+        double* o = g_jet + 8 + 8 * i;
+        o[0] = e.n1 * 100; o[1] = e.n2 * 100; o[2] = e.itt - 273.15; o[3] = e.fuelFlow * 3600; o[4] = e.thrust / 1000;
+        o[5] = e.running; o[6] = e.starting; o[7] = ac.cockpitControl("engine" + std::to_string(i + 1) + ".fuel") == 1;
+        g_jet[30 + i] = e.oilPressure / 6894.757;
+        ff += e.fuelFlow;
+    }
+    g_jet[7] = ff * 3600;
+    g_jet[24] = g->def.limits.maxOperatingMach;
+    g_jet[25] = msToKt(g->def.limits.neverExceedIas);
+    g_jet[26] = msToKt(t.trueAirspeed);
+    g_jet[27] = radToDeg(t.flapAngle);
+    g_jet[28] = t.elevatorTrim;
+    g_jet[29] = t.onGround;
+    return g_jet;
 }
 
 // Advance by wall-clock seconds at a fixed 240 Hz (at most 0.25 s per call).
@@ -326,6 +415,7 @@ AVD_EXPORT int avd_advance(double seconds) {
         g->accumulator -= kDt;
         ++n;
     }
+    updateJetStart();
     collectEvents();
     return n;
 }
@@ -389,7 +479,8 @@ AVD_EXPORT double* avd_state() {
     s[21] = m3ToGal(r.fuelFlow / g->def.fuel.density) * 3600; s[22] = r.fuelGauge[0] * 1000; s[23] = r.fuelGauge[1] * 1000;
     s[24] = g->raw.throttle; s[25] = g->raw.mixture;
     s[26] = radToDeg(t.flapAngle); s[27] = t.elevatorTrim; s[28] = t.onGround; s[29] = r.stallHorn;
-    s[30] = e.engine.running; s[31] = r.voltmeter; s[32] = ac.electrical().alternatorOnline(); s[33] = paToInHg(ac.vacuum().suction());
+    s[30] = ac.turbofanCount() > 0 ? ac.turbofanState(0).running || ac.turbofanState(std::min(1, ac.turbofanCount() - 1)).running
+                                   : e.engine.running; s[31] = r.voltmeter; s[32] = ac.electrical().alternatorOnline(); s[33] = paToInHg(ac.vacuum().suction());
     s[34] = ac.electrical().batteryCharge();
     s[35] = radToDeg(r.attitudeRoll); s[36] = radToDeg(r.attitudePitch); s[37] = std::fmod(radToDeg(r.headingIndicator) + 360.0, 360.0);
     s[38] = radToDeg(r.turnRate); s[39] = r.slipBall;

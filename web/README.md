@@ -5,7 +5,7 @@ exceptions or RTTI, and the WASI imports are stubs because the core does no
 I/O. The C ABI is in `avd_web.cpp`.
 
 ```sh
-WASI_SDK=/path/to/wasi-sdk web/build_wasi.sh   # → web/dist/avd.wasm, avd.mjs, tupi_t180.json
+WASI_SDK=/path/to/wasi-sdk web/build_wasi.sh   # → web/dist/avd.wasm, avd.mjs, tupi_t180.json, top_g.json
 node web/smoke_test.mjs                        # take-off, Quick Start, ILS reception, instruments
 node web/cockpit/build_page.mjs                # → web/dist/cockpit.html (one self-contained file)
 node web/cockpit/browser_test.mjs              # headless Chromium check of the bundled page (needs playwright)
@@ -31,11 +31,11 @@ call is clamped to 0.25 s. It returns the number of steps run.
 | Function | Meaning |
 |---|---|
 | `avd_reset(mode)` | Reset scenario: 0 cold and dark on runway 12, 1 engine running on runway 12, 2 on final for runway 12 (3 km), 3 cruising over the city. Sets NAV 1 to 110.30 active and 113.70 standby, OBS and bug 122, COM standby 132.80, transponder ALT |
-| `avd_reset_air(east, north, heightAboveField, headingDeg, kias, flap)` | Trimmed, level, hands-off spawn anywhere in the world (ENU metres from the world anchor, height in m above the field elevation, true heading, 55–150 KIAS, flap detent 0–3). Read the levers with `avd_trim_throttle()` / `avd_trim_mixture()` |
+| `avd_reset_air(east, north, heightAboveField, headingDeg, kias, flap)` | Trimmed, level, hands-off spawn anywhere in the world (ENU metres from the world anchor, height in m above the field elevation, true heading, 55–350 KIAS, flap detent 0–3). Read the levers with `avd_trim_throttle()` / `avd_trim_mixture()` |
 | `avd_set_weather(windMs, windFromDeg, turbulenceMs, isaDevC, humidity)` | Weather (rebuilds the field) |
 | `avd_set_input(pitch, roll, yaw, throttle, mixture, brakeL, brakeR, trimRate, starter)` | Raw pilot input in −1..1 or 0..1. Starter is held while 1 |
 | `avd_set_assist(p)` | 0 Arcade, 1 Sport, 2 Simulation |
-| `avd_quick_start()` / `avd_procedure_status()` | Run the Quick Start checklist through the cockpit. Status: 0 idle, 1 running, 2 done, 3 failed; the message is in the text buffer |
+| `avd_quick_start()` / `avd_procedure_status()` | Run the Quick Start checklist through the cockpit (turbofan aircraft: power up, then each engine's fuel control switch to RUN in turn). Status: 0 idle, 1 running, 2 done, 3 failed; the message is in the text buffer |
 | `avd_cockpit_count()` / `avd_cockpit_text(i)` / `avd_cockpit_cycle(i)` | Switch registry: `id\|label\|pos0;pos1…\|current` |
 | `avd_altimeter_adjust(hundredthsInHg)` | Kollsman knob |
 | `avd_dg_adjust(deg)` / `avd_dg_sync()` / `avd_heading_bug(deg)` | Heading indicator knobs |
@@ -48,6 +48,8 @@ call is clamped to 0.25 s. It returns the number of steps run.
 | `avd_trim_throttle()` / `avd_trim_mixture()` | Lever positions of the last trimmed spawn (modes 2 and 3), so the host starts hands-off |
 | `avd_compass_card()` | 12 doubles: compass reading (deg) on magnetic headings 0, 30, … 330 from a compass swing (the FOR/STEER card) |
 | `avd_events()` | Event lines since the last call (text buffer) |
+| `avd_ai_cage()` | Attitude indicator caging knob: squares the gyro to the case and clears a tumble (use wings level) |
+| `avd_jet()` | 32 doubles for turbofan aircraft: [0] engines, [1] gear position, [2] gear lever, [3] speedbrake position, [4] speedbrake detent, [5] Mach, [6] fuel kg, [7] fuel flow kg/h; per engine at 8 + 8i: N1 %, N2 %, ITT °C, fuel flow kg/h, thrust kN, running, starting, fuel switch; [24] MMO, [25] VMO kt, [26] TAS kt, [27] flap deg, [28] trim, [29] weight on wheels, [30–31] oil psi |
 
 ## `avd_state()`: 64 doubles
 

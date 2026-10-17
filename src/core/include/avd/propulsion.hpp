@@ -103,4 +103,52 @@ private:
     Real etaIndicated_ = 0.3;
 };
 
+// ---- Turbofan (see TurbofanDef) --------------------------------------------
+
+struct TurbofanInputs {
+    Real throttle = 0;            // 0 idle .. 1 take-off
+    bool fuelOn = false;          // fuel control switch at RUN
+    bool fuelAtEngine = false;    // the fuel system delivers fuel
+    bool starterPowered = false;  // bus power for the starter and igniters
+    Real ambientPressure = isa::kSeaLevelPressure;
+    Real ambientTemperature = isa::kSeaLevelTemperature;
+    Real mach = 0;
+};
+
+struct TurbofanState {
+    Real n1 = 0, n2 = 0;          // fan and core speed, fraction of take-off
+    bool running = false;         // lit and at or above idle
+    bool starting = false;        // start sequence in progress
+    Real thrust = 0;              // N, net, along the thrust axis
+    Real thrustFraction = 0;      // of the available take-off thrust
+    Real fuelFlow = 0;            // kg/s
+    Real itt = 288;               // K, inter-turbine temperature
+    Real oilPressure = 0;         // Pa
+};
+
+class TurbofanEngine {
+public:
+    explicit TurbofanEngine(const TurbofanDef& def);
+    const TurbofanDef& def() const { return def_; }
+    // Fan speed the fuel control schedules for a throttle position.
+    Real commandedN1(Real throttle) const { return def_.idleN1 + (1 - def_.idleN1) * clamp(throttle, 0.0, 1.0); }
+    // Take-off thrust available at the flight condition (Mattingly lapse).
+    Real availableThrust(Real pressure, Real temperature, Real mach) const;
+    // Thrust fraction of the available thrust at fan speed n1 (lit engine).
+    Real thrustFraction(Real n1) const;
+    // Thrust, fuel flow, ITT and oil pressure for the spool speeds in `s`
+    // at the flight condition (pure; spool speeds unchanged).
+    void evaluate(TurbofanState& s, const TurbofanInputs& in) const;
+    // Spool dynamics and the start / shut-down sequence over dt.
+    void step(TurbofanState& s, const TurbofanInputs& in, Real dt) const;
+    // Lit and stabilised at the commanded fan speed (trim, spawns).
+    void setSteady(TurbofanState& s, const TurbofanInputs& in) const;
+    Real n2FromN1(Real n1) const;
+    Real n1FromN2(Real n2) const;
+
+private:
+    TurbofanDef def_;
+    Real tauUp_ = 1.0;            // s, acceleration time-constant scale (calibrated)
+};
+
 }  // namespace avd

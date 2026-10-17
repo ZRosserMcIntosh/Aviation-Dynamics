@@ -178,6 +178,32 @@ std::vector<std::string> AircraftDefinition::validate() const {
     }
 
     if (engines.size() > 4) c.add("engines", "at most 4 engines");
+    if (turbofans.size() > 4) c.add("turbofans", "at most 4 engines");
+    if (!engines.empty() && !turbofans.empty()) c.add("turbofans", "piston engines and turbofans cannot be mixed");
+    for (std::size_t i = 0; i < turbofans.size(); ++i) {
+        const TurbofanDef& e = turbofans[i];
+        const auto p = idx("turbofans", i);
+        c.finite(p + ".position", e.position);
+        if (!(length(e.thrustAxis) > 0.5)) c.add(p + ".thrustAxis", "must be a non-zero vector");
+        c.positive(p + ".staticThrust", e.staticThrust);
+        c.range(p + ".bypassRatio", e.bypassRatio, 0, 15);
+        c.range(p + ".throttleRatio", e.throttleRatio, 0.9, 1.3);
+        c.range(p + ".lapseMachCoefficient", e.lapseMachCoefficient, 0, 1);
+        c.range(p + ".idleN1", e.idleN1, 0.1, 0.5);
+        c.range(p + ".idleN2", e.idleN2, 0.3, 0.8);
+        c.range(p + ".idleThrustFraction", e.idleThrustFraction, 0, 0.2);
+        c.range(p + ".thrustExponent", e.thrustExponent, 0.5, 4);
+        c.positive(p + ".accelerationTime", e.accelerationTime);
+        c.positive(p + ".decelerationTime", e.decelerationTime);
+        c.positive(p + ".startTime", e.startTime);
+        c.positive(p + ".tsfcStatic", e.tsfcStatic);
+        c.range(p + ".tsfcMachSlope", e.tsfcMachSlope, 0, 3);
+        c.nonNegative(p + ".idleFuelFlow", e.idleFuelFlow);
+        c.positive(p + ".ittIdle", e.ittIdle);
+        c.positive(p + ".ittTakeoff", e.ittTakeoff);
+        c.nonNegative(p + ".oilPressureIdle", e.oilPressureIdle);
+        c.nonNegative(p + ".oilPressureMax", e.oilPressureMax);
+    }
     for (std::size_t i = 0; i < engines.size(); ++i) {
         const PistonEngineDef& e = engines[i];
         const auto p = idx("engines", i);
@@ -275,6 +301,15 @@ std::vector<std::string> AircraftDefinition::validate() const {
     c.positive("controls.elevatorTrimRate", controls.elevatorTrimRate);
     c.range("controls.riggingAileron", controls.riggingAileron, -0.3, 0.3);
     c.range("controls.riggingRudder", controls.riggingRudder, -0.3, 0.3);
+    c.positive("controls.gear.transitTime", controls.gear.transitTime);
+    c.nonNegative("controls.gear.dragArea", controls.gear.dragArea);
+    c.nonNegative("controls.gear.maxExtendedIas", controls.gear.maxExtendedIas);
+    if (controls.speedbrake.present) {
+        c.range("controls.speedbrake.detents", controls.speedbrake.detents, 2, 6);
+        c.nonNegative("controls.speedbrake.dragArea", controls.speedbrake.dragArea);
+        c.range("controls.speedbrake.liftLossFraction", controls.speedbrake.liftLossFraction, 0, 0.9);
+        c.positive("controls.speedbrake.rate", controls.speedbrake.rate);
+    }
     c.finite("pitotStatic.pitotPosition", pitotStatic.pitotPosition);
     c.finite("pitotStatic.staticPosition", pitotStatic.staticPosition);
     c.table("pitotStatic.staticErrorVsAlpha", pitotStatic.staticErrorVsAlpha);
@@ -328,6 +363,7 @@ std::vector<std::string> AircraftDefinition::validate() const {
             c.add("panel.avionics.comSpacingKhz", "must be 25 or 8.33");
     }
     c.nonNegative("limits.neverExceedIas", limits.neverExceedIas);
+    c.range("limits.maxOperatingMach", limits.maxOperatingMach, 0, 3);
     c.table("limits.vfeVsFlap", limits.flapExtendedIasVsFlap);
     c.range("limits.limitLoadPositive", limits.limitLoadPositive, 1, 15);
     c.range("limits.limitLoadNegative", limits.limitLoadNegative, -15, 0);

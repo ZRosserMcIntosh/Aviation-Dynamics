@@ -126,6 +126,9 @@ struct AircraftTelemetry {
     Real busVoltage = 0;
     AirSample air;
     std::array<EngineTelemetry, kMaxEngines> engines{};
+    std::array<TurbofanState, kMaxEngines> turbofans{};
+    Real gearPosition = 1;                   // 0 up and locked .. 1 down and locked
+    Real speedbrake = 0;                     // 0 retracted .. 1 fully deployed
     std::array<GearTelemetry, kMaxGear> gear{};
     ControlDeflections controls;
 };
@@ -154,6 +157,7 @@ public:
     void setColdAndDark();
     // Initial-condition setters (spawn/trim): flaps already at a detent, trim position.
     void setFlapsImmediately(int detent);
+    void setGearImmediately(bool down) { gearDown_ = down; gearPos_ = down || !def_.controls.gear.retractable ? 1.0 : 0.0; syncCockpitPositions(); }
     void setElevatorTrim(Real trim) { trim_ = clamp(trim, -1.0, 1.0); }
     Real elevatorTrim() const { return trim_; }
     Real flapAngle() const { return flapAngle_; }
@@ -194,6 +198,13 @@ public:
     int engineCount() const { return static_cast<int>(engines_.size()); }
     const PistonEngine& engine(int i) const { return engines_[i]; }
     const Propeller& propeller(int i) const { return props_[i]; }
+    int turbofanCount() const { return static_cast<int>(turbofans_.size()); }
+    const TurbofanEngine& turbofan(int i) const { return turbofans_[i]; }
+    const TurbofanState& turbofanState(int i) const { return turboState_[i]; }
+    // Trim/spawn: turbofans lit and held at the commanded fan speed (no spool lag).
+    void setTurbofansSteady(bool on) { turbofanSteady_ = on; }
+    Real gearPosition() const { return gearPos_; }
+    Real speedbrakePosition() const { return speedbrakePos_; }
 
     // ---- Loading -------------------------------------------------------------
     void setStationMass(int station, Real kg);
@@ -249,6 +260,7 @@ private:
         Real wingHeightAgl = 1e9;
         ControlDeflections controls;
         std::array<PistonEngineInputs, kMaxEngines> engineIn{};
+        std::array<TurbofanInputs, kMaxEngines> turboIn{};
         Real brakeLeft = 0, brakeRight = 0;
         Real steer = 0;  // pedal, -1..1
     };
@@ -268,6 +280,7 @@ private:
     std::unique_ptr<AeroModel> aeroModel_;
     std::vector<PistonEngine> engines_;
     std::vector<Propeller> props_;
+    std::vector<TurbofanEngine> turbofans_;
     FuelSystem fuel_;
     ElectricalSystem electrical_;
     VacuumSystem vacuum_;
@@ -289,6 +302,14 @@ private:
     Real trim_ = 0;  // -1..1
     bool parkingBrake_ = false;
     bool flapMoving_ = false;
+    std::array<bool, kMaxEngines> turboFuel_{};     // fuel control switches at RUN
+    std::array<TurbofanState, kMaxEngines> turboState_{};
+    bool turbofanSteady_ = false;
+    bool gearDown_ = true;
+    Real gearPos_ = 1;
+    int speedbrakeDetent_ = 0;
+    Real speedbrakePos_ = 0;
+    bool machOverWas_ = false;
 
     // Derived/lagged.
     std::array<Real, 8> downwashLag_{};

@@ -67,4 +67,41 @@ const st = A.state();
 check(Math.abs(c[0] - 100) < 3 && Math.abs(c[53]) < 150, `spawn over MASP trimmed: ${c[0].toFixed(1)} KIAS, ${c[53].toFixed(0)} fpm after 10 s`);
 check(Math.abs(st[0]) < 60 && st[1] > 400 && st[1] < 600 && Math.abs(st[14] - 600 / 0.3048) < 150,
   `spawn position: ${st[0].toFixed(0)} m E, ${st[1].toFixed(0)} m N, ${st[14].toFixed(0)} ft above the field`);
+// A 135 deg roll: the attitude indicator follows (360 deg roll, no tumble) and is not stuck afterwards.
+A.avd_set_assist(2);
+A.avd_reset_air(0, 0, 900, 0, 110, 0);
+for (let i = 0; i < 6; ++i) { A.avd_set_input(0, 1, 0, A.avd_trim_throttle(), A.avd_trim_mixture(), 0, 0, 0, 0); A.avd_advance(0.25); }
+c = A.cockpitState();
+check(c[6] === 0 && Math.abs(c[5] - c[55]) < 5, `steep roll: AI ${c[5].toFixed(0)} deg vs ${c[55].toFixed(0)} deg, not tumbled`);
+A.avd_ai_cage();
+check(A.cockpitState()[6] === 0, 'caging knob');
+
+// ---- The Top G (turbofan, retractable gear, speedbrake) ----
+const B = await createAvdModule();
+const jetErrors = B.load(await readFile(new URL('./dist/top_g.json', import.meta.url), 'utf8'));
+check(jetErrors.length === 0, `top_g.json loads${jetErrors.length ? ': ' + jetErrors.join('; ') : ''}`);
+B.avd_set_assist(0);
+B.avd_reset(1);
+check(B.jet()[0] === 2 && B.jet()[13] === 1 && B.jet()[21] === 1, 'jet: two turbofans running at idle on the runway');
+B.avd_cockpit_cycle(B.cockpit().find((x) => x.id === 'brakes.parking').index);
+for (let i = 0; i < 40 * 4; ++i) {
+  const js = B.state();
+  B.avd_set_input(js[10] > 125 ? Math.max(-1, Math.min(1, 0.15 * (10 - js[8]))) : 0, 0, 0, 1, 1, 0, 0, 0, 0);
+  B.avd_advance(0.25);
+}
+let j = B.jet(), js = B.state();
+check(js[28] === 0 && js[14] > 200, `jet: airborne after 40 s at full thrust (AGL ${js[14].toFixed(0)} ft, N1 ${j[8].toFixed(0)} %)`);
+B.avd_cockpit_cycle(B.cockpit().find((x) => x.id === 'gear.lever').index);
+for (let i = 0; i < 40; ++i) B.avd_advance(0.25);
+check(B.jet()[1] === 0, 'jet: gear retracts');
+B.avd_set_assist(2);
+B.avd_reset_air(0, 0, 3000, 0, 250, 0);
+for (let i = 0; i < 40; ++i) { B.avd_set_input(0, 0, 0, B.avd_trim_throttle(), 1, 0, 0, 0, 0); B.avd_advance(0.25); }
+c = B.cockpitState();
+check(Math.abs(c[0] - 250) < 4 && Math.abs(c[53]) < 200 && B.jet()[1] === 0, `jet spawn trimmed: ${c[0].toFixed(1)} KIAS, ${c[53].toFixed(0)} fpm, gear up`);
+B.avd_reset(0);
+B.avd_quick_start();
+for (let i = 0; i < 100 * 4; ++i) { B.avd_set_input(0, 0, 0, 0, 1, 0, 0, 0, 0); B.avd_advance(0.25); }
+j = B.jet();
+check(j[13] === 1 && j[21] === 1 && B.procedure().status === 2, `jet Quick Start: both engines running (N2 ${j[9].toFixed(0)} / ${j[17].toFixed(0)} %)`);
 process.exit(failures ? 1 : 0);
