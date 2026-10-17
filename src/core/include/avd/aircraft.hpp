@@ -204,6 +204,8 @@ public:
     // Trim/spawn: turbofans lit and held at the commanded fan speed (no spool lag).
     void setTurbofansSteady(bool on) { turbofanSteady_ = on; }
     Real gearPosition() const { return gearPos_; }
+    // Propeller slipstream of engine i at the last recorded evaluation (visualisation).
+    const SlipstreamState& slipstream(int i) const { return slip_[i]; }
     Real speedbrakePosition() const { return speedbrakePos_; }
 
     // ---- Loading -------------------------------------------------------------

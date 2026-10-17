@@ -128,6 +128,16 @@ public:
     Real downwashGradient(int s) const { return surfaces_[s].downwashGradient; }
     int downwashSource(int s) const { return surfaces_[s].def.downwashSource; }
     Vec3 surfaceCentroid(int s) const { return surfaces_[s].centroid; }
+    // Strip geometry for visualisation and analysis (structural frame).
+    struct StripGeometry {
+        int surface = 0, side = 1;
+        Vec3 position, chordAxis, normalAxis, spanAxis;
+        Real area = 0, chord = 0;
+    };
+    StripGeometry stripGeometry(int i) const {
+        const Strip& s = strips_[static_cast<std::size_t>(i)];
+        return {s.surface, s.side, s.position, s.chordAxis, s.normalAxis, s.spanAxis, s.area, s.chord};
+    }
 
     // Detach (or re-attach) every strip of a surface on one side (+1 right, -1
     // left, 0 both). Used by the damage system and tests.

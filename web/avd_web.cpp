@@ -53,6 +53,8 @@ Sim* g = nullptr;
 double g_state[kStateSize];
 double g_cockpit[96];
 double g_jet[32];
+constexpr int kFlowStrips = 64, kFlowStride = 16;
+double g_flow[16 + kFlowStrips * kFlowStride + 4 * 10];
 char* g_text = nullptr;
 int g_textCap = 0;
 std::vector<std::string> g_errors;
@@ -359,6 +361,65 @@ AVD_EXPORT int avd_procedure_status() {
     }
     putText(g->procedure.message());
     return static_cast<int>(g->procedure.status());
+}
+
+// Airflow (for the flow visualisation): what the strip aerodynamics computed
+// this step. Header: [0] strips, [1] engines, [2] TAS m/s, [3] alpha, [4] beta
+// (rad), [5] density, [6..8] CG (structural frame), [9] speed of sound.
+// Strips from 16, 16 doubles each: quarter-chord position xyz, span axis xyz,
+// normal (lift side) axis xyz, chord, area, cl, alpha, q, stall alpha, surface.
+// Engines after the strips, 10 doubles each: position xyz, thrust axis xyz,
+// radius, slipstream / jet velocity increment (m/s), thrust (N), kind (0
+// propeller, 1 turbofan). Structural frame: x forward, y right, z down.
+AVD_EXPORT double* avd_flow() {
+    for (double& v : g_flow) v = 0;
+    if (!g) return g_flow;
+    const Aircraft& ac = *g->ac;
+    const AeroModel& am = ac.aeroModel();
+    const AeroOutputs& ao = ac.aero();
+    const int n = std::min(am.stripCount(), kFlowStrips);
+    g_flow[0] = n;
+    g_flow[2] = ao.airspeed; g_flow[3] = ao.alpha; g_flow[4] = ao.beta;
+    g_flow[5] = ac.telemetry().air.state.density;
+    const Vec3 cg = ac.massProperties().cg;
+    g_flow[6] = cg.x; g_flow[7] = cg.y; g_flow[8] = cg.z;
+    g_flow[9] = ac.telemetry().air.state.speedOfSound;
+    for (int i = 0; i < n; ++i) {
+        const AeroModel::StripGeometry sg = am.stripGeometry(i);
+        const StripTelemetry& t = ao.strips[static_cast<std::size_t>(i)];
+        double* o = g_flow + 16 + i * kFlowStride;
+        o[0] = sg.position.x; o[1] = sg.position.y; o[2] = sg.position.z;
+        o[3] = sg.spanAxis.x; o[4] = sg.spanAxis.y; o[5] = sg.spanAxis.z;
+        o[6] = sg.normalAxis.x; o[7] = sg.normalAxis.y; o[8] = sg.normalAxis.z;
+        o[9] = sg.chord; o[10] = sg.area; o[11] = t.cl; o[12] = t.alpha; o[13] = t.q; o[14] = t.stallAlpha;
+        o[15] = sg.surface;
+    }
+    double* e = g_flow + 16 + kFlowStrips * kFlowStride;
+    int ne = 0;
+    for (int i = 0; i < ac.engineCount() && ne < 4; ++i, ++ne) {
+        const SlipstreamState& ss = ac.slipstream(i);
+        double* o = e + ne * 10;
+        o[0] = ss.discCentre.x; o[1] = ss.discCentre.y; o[2] = ss.discCentre.z;
+        o[3] = ss.axis.x; o[4] = ss.axis.y; o[5] = ss.axis.z;
+        o[6] = ss.radius; o[7] = ss.axialIncrement; o[8] = ac.telemetry().engines[static_cast<std::size_t>(i)].prop.thrust; o[9] = 0;
+    }
+    for (int i = 0; i < ac.turbofanCount() && ne < 4; ++i, ++ne) {
+        const TurbofanDef& d = g->def.turbofans[static_cast<std::size_t>(i)];
+        const TurbofanState& ts = ac.turbofanState(i);
+        double* o = e + ne * 10;
+        const Real rNozzle = 0.45;
+        const Real rho = std::max(ac.telemetry().air.state.density, 0.05);
+        const Real v0 = ao.airspeed;
+        // Fully expanded jet: T = mdot (vj - v0), mdot = rho A vj.
+        const Real A = kPi * rNozzle * rNozzle;
+        const Real vj = 0.5 * (v0 + std::sqrt(v0 * v0 + 4 * std::max(ts.thrust, 0.0) / (rho * A)));
+        o[0] = d.position.x; o[1] = d.position.y; o[2] = d.position.z;
+        const Vec3 ax = normalized(d.thrustAxis);
+        o[3] = ax.x; o[4] = ax.y; o[5] = ax.z;
+        o[6] = rNozzle; o[7] = std::max(vj - v0, 0.0); o[8] = ts.thrust; o[9] = 1;
+    }
+    g_flow[1] = ne;
+    return g_flow;
 }
 
 // Attitude indicator caging knob (square the gyro to the case; use in level flight).

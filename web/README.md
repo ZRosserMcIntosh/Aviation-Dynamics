@@ -50,6 +50,7 @@ call is clamped to 0.25 s. It returns the number of steps run.
 | `avd_events()` | Event lines since the last call (text buffer) |
 | `avd_ai_cage()` | Attitude indicator caging knob: squares the gyro to the case and clears a tumble (use wings level) |
 | `avd_jet()` | 32 doubles for turbofan aircraft: [0] engines, [1] gear position, [2] gear lever, [3] speedbrake position, [4] speedbrake detent, [5] Mach, [6] fuel kg, [7] fuel flow kg/h; per engine at 8 + 8i: N1 %, N2 %, ITT °C, fuel flow kg/h, thrust kN, running, starting, fuel switch; [24] MMO, [25] VMO kt, [26] TAS kt, [27] flap deg, [28] trim, [29] weight on wheels, [30–31] oil psi |
+| `avd_flow()` | Airflow-visualisation snapshot (1,080 doubles): header [0] strips, [1] engines, [2] TAS m/s, [3] α, [4] β, [5] ρ, [6–8] CG (FRD), [9] speed of sound; per lifting strip at 16 + 16i (up to 64): quarter-chord position, span axis, normal (FRD body), chord, area, cl, local α, dynamic pressure, stall α, surface index; per engine at 1040 + 10k: position, thrust axis, disc/nozzle radius, slipstream velocity increment, thrust N, kind (0 propeller, 1 turbofan) |
 
 ## `avd_state()`: 64 doubles
 
