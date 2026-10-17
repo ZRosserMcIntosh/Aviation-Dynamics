@@ -61,8 +61,8 @@ struct AttitudeIndicatorDef {
     GyroPower power = GyroPower::Vacuum;
     std::string electricalLoad;           // when power = Electric
     Real erectionRate = 0.00175;          // rad/s (~6 deg/min, pendulous-vane erection)
-    Real pitchLimit = 1.22;               // rad (70 deg); beyond it the gyro tumbles
-    Real rollLimit = 1.92;                // rad (110 deg); 0 = unlimited (360 deg roll)
+    Real pitchLimit = 1.48;               // rad (85 deg); beyond it the gyro tumbles
+    Real rollLimit = 0;                   // rad; 0 = unlimited (360 deg roll, modern instruments)
     Real spinUpTime = 60.0;               // s, rotor time constant
     Real spinDownTime = 200.0;            // s, rotor coast-down time constant
     Real minimumUsefulSpin = 0.7;         // below this the pendulous erection is ineffective
@@ -73,7 +73,7 @@ struct HeadingIndicatorDef {
     GyroPower power = GyroPower::Vacuum;
     std::string electricalLoad;
     Real mechanicalDrift = 2.9e-5;        // rad/s (6 deg/h, bearing friction/imbalance)
-    Real gimbalLimit = 0.96;              // rad (55 deg) bank or pitch: tumbles beyond
+    Real gimbalLimit = 1.40;              // rad (80 deg) bank or pitch: tumbles beyond
     Real spinUpTime = 60.0;
     Real spinDownTime = 200.0;
 };

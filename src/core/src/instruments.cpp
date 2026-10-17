@@ -272,12 +272,18 @@ void InstrumentPanel::updateAttitude(Real dt, const SensorInputs& in) {
     const Vec3 db = q.inverseRotate(aiAxis_);
     const Real pitch = -std::asin(clamp(db.x, -1.0, 1.0));
     const Real roll = std::atan2(db.y, db.z);
-    // Gimbal stops: beyond them a spinning gyro tumbles.
+    // Gimbal stops. Striking one with the rotor spinning tumbles the gyro: one
+    // violent precession of the rotor axis at the moment of impact (about the
+    // case's lateral axis, ~70 deg), after which the gimbals ride free again
+    // and the pendulous vanes re-erect it. The kick is edge-triggered: the stop
+    // is not a force that keeps acting while the attitude stays beyond it.
     const bool beyond = std::abs(pitch) > d.pitchLimit || (d.rollLimit > 0 && std::abs(roll) > d.rollLimit);
-    if (beyond && aiSpin_ >= d.minimumUsefulSpin) {
-        aiAxis_ = normalized(aiAxis_ + q.rotate({1, 0, 0}) * 0.9);
+    if (beyond && !aiAtStop_ && aiSpin_ >= d.minimumUsefulSpin) {
+        const Vec3 lateral = q.rotate({0, 1, 0});
+        aiAxis_ = normalized(rotateAbout(aiAxis_, lateral, pitch >= 0 ? 1.2 : -1.2));
         s_.attitudeTumbled = true;
     }
+    aiAtStop_ = beyond;
     if (s_.attitudeTumbled && dot(aiAxis_, Vec3{0, 0, 1}) > std::cos(0.09)) s_.attitudeTumbled = false;
     const Vec3 db2 = q.inverseRotate(aiAxis_);
     s_.attitudePitch = -std::asin(clamp(db2.x, -1.0, 1.0));
@@ -525,6 +531,7 @@ void InstrumentPanel::resetToTruth(const SensorInputs& in) {
     pitotHeat_ = in.pitotHeatOn ? 1.0 : 0.0;
     aiSpin_ = dgSpin_ = tcSpin_ = 1;
     aiAxis_ = {0, 0, 1};
+    aiAtStop_ = false;
     s_.attitudeTumbled = false;
     dgAxisAzimuth_ = 0;
     dgCardOffset_ = 0;
@@ -533,6 +540,14 @@ void InstrumentPanel::resetToTruth(const SensorInputs& in) {
     syncHeadingIndicator(t_.magneticHeading);
     s_.turnCoordinatorDeflection = 0;
     tcGimbal_.reset(0);
+}
+
+void InstrumentPanel::cageAttitude(const Quat& attitude) {
+    // The caging knob locks the gimbals square to the case: the rotor axis is
+    // forced onto the airframe's own vertical (so cage in level flight).
+    aiAxis_ = attitude.rotate({0, 0, 1});
+    aiAtStop_ = false;
+    s_.attitudeTumbled = false;
 }
 
 void InstrumentPanel::resetCold(const SensorInputs& in) {

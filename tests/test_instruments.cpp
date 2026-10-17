@@ -28,12 +28,14 @@ constexpr Real kDt = kDefaultDt;
 constexpr Real kStdRate = kPi / 60;
 
 struct Flight {
-    Aircraft ac{ref(), saoPauloWorldFrame()};
+    Aircraft ac;
     SimpleWeather atm;
     FlatGround ground{0};
     TestPilot pilot;
     TrimResult trim;
-    explicit Flight(Real kias = 100, Real alt = 1500, const SimpleWeather::Params* wp = nullptr) {
+    explicit Flight(Real kias = 100, Real alt = 1500, const SimpleWeather::Params* wp = nullptr,
+                    const AircraftDefinition& def = ref())
+        : ac(def, saoPauloWorldFrame()) {
         if (wp) atm = SimpleWeather(*wp);
         ac.setNavEnvironment(&saoPauloNavEnvironment());
         startTrimmedFlight(ac, {kias, alt, 0}, atm, ground, &pilot, &trim);
@@ -481,9 +483,28 @@ TEST_CASE("failure: alternator failure -- battery discharges, VOLTS annunciator 
     CHECK(f.ac.electrical().batteryCharge() < 0.6);
 }
 
-TEST_CASE("failure: exceeding the attitude gyro's limits tumbles it; it re-erects over minutes") {
+TEST_CASE("attitude gyro: a 360-degree instrument follows a 125-degree bank without tumbling") {
     Flight f(110, 2000);
-    // A 120 deg bank exceeds the 110 deg roll limit.
+    f.pilot.lateral = TestPilot::Lateral::Bank;
+    f.pilot.maxBank = 2.5;
+    f.pilot.targetBank = degToRad(125);
+    Real worst = 0, steepest = 0;
+    for (int i = 0; i < 8 * 240; ++i) {
+        f.ac.step(kDt, f.pilot.update(f.ac, kDt), f.ground, f.atm);
+        CHECK(!f.cs().attitudeTumbled);
+        worst = std::max(worst, std::abs(wrapPi(f.cs().attitudeRoll - f.truth().roll)));
+        steepest = std::max(steepest, std::abs(f.truth().roll));
+    }
+    CHECK(steepest > degToRad(115));
+    CHECK(worst < degToRad(4));
+}
+
+TEST_CASE("failure: exceeding the attitude gyro's limits tumbles it once; it re-erects, and caging restores it") {
+    // An older instrument with 110 deg roll stops.
+    AircraftDefinition def = ref();
+    def.panel.attitude.rollLimit = degToRad(110);
+    Flight f(110, 2000, nullptr, def);
+    // A 125 deg bank exceeds the 110 deg roll limit.
     f.pilot.lateral = TestPilot::Lateral::Bank;
     f.pilot.maxBank = 2.5;
     f.pilot.targetBank = degToRad(125);
@@ -499,8 +520,25 @@ TEST_CASE("failure: exceeding the attitude gyro's limits tumbles it; it re-erect
     f.pilot.controls.throttle = f.trim.throttle;
     f.fly(30);
     CHECK(std::abs(f.cs().attitudeRoll - f.truth().roll) + std::abs(f.cs().attitudePitch - f.truth().pitch) > degToRad(5));
+    // One kick at the stop, not a force that pins it there: the display is
+    // off but not at the 90 deg end of its travel.
+    CHECK(std::abs(f.cs().attitudePitch) < degToRad(80));
     for (int i = 0; i < 20; ++i) f.fly(60);
     CHECK_NEAR(f.cs().attitudeRoll, f.truth().roll, degToRad(3));
+    CHECK(!f.cs().attitudeTumbled);
+    // Tumble again, then cage in level flight: restored at once.
+    f.pilot.lateral = TestPilot::Lateral::Bank;
+    f.pilot.vertical = TestPilot::Vertical::Pitch;
+    f.pilot.targetBank = degToRad(125);
+    for (int i = 0; i < 8 * 240 && !f.cs().attitudeTumbled; ++i) f.ac.step(kDt, f.pilot.update(f.ac, kDt), f.ground, f.atm);
+    CHECK(f.cs().attitudeTumbled);
+    f.pilot.targetBank = 0;
+    f.pilot.vertical = TestPilot::Vertical::Altitude;
+    f.fly(20);
+    f.ac.instruments().cageAttitude(f.ac.state().body.attitude);
+    f.fly(1);
+    CHECK(!f.cs().attitudeTumbled);
+    CHECK_NEAR(f.cs().attitudeRoll, f.truth().roll, degToRad(2));
 }
 
 // ================================================================= navigation ==
