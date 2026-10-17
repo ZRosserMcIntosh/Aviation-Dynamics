@@ -204,6 +204,19 @@ TEST_CASE("propeller: swirl and tip compressibility behave physically") {
     Real t, q;
     Propeller::bem(def, 0, w, 1.225, t, q);
     CHECK(t > 0 && q > 0);
+    // ... and where the tip drag rise dominates the torque (tip Mach ~1.4,
+    // the M = 1.0 table column), from slight reverse flow to climb speed:
+    // thrust falls and torque rises smoothly with axial speed. An
+    // under-relaxed fixed point on the swirl oscillated here.
+    const Real omegaHigh = 503.8;
+    Real tPrev = 1e30, qPrev = 0;
+    for (Real v = -12; v <= 20; v += 2) {
+        Propeller::bem(def, v, omegaHigh, 1.0, t, q, 340.294);
+        CHECK(t < tPrev);
+        CHECK(q > qPrev);
+        tPrev = t;
+        qPrev = q;
+    }
     // Identical definitions share the solved tables (cache) bit for bit.
     const Propeller p2(def);
     CHECK(p2.thrustTable()(beta, 0.6) == p.thrustTable()(beta, 0.6));

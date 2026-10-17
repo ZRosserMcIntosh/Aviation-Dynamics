@@ -15,7 +15,7 @@ POH technique.
 | ↳ power / rpm / prop efficiency / fuel flow | 75%, about 2700 rpm, about 10.5 gph | 73% / 2586 rpm / 0.84 / 10.4 gph | | |
 | Maximum level speed, sea level | 126 KTAS | 126.5 KTAS (2692 rpm) | +0.4% | ±5% |
 | Rate of climb, sea level, 74 KIAS | 730 fpm | 695 fpm | −4.7% | ±15% |
-| Take-off ground roll (short field) | 960 ft | 840 ft | **−12.5%** | ±20% (known discrepancy) |
+| Take-off ground roll (short field) | 960 ft | 840 ft | −12.5% | ±20% |
 | Take-off over 50 ft | 1630 ft | 1724 ft | +5.8% | ±20% |
 | Landing ground roll, pilot braking technique | 575 ft | 468 ft | −18.7% | ±20% |
 | ↳ tyre-limited bound (full pedal at touchdown) | — | 254 ft | | physics check |
@@ -23,19 +23,29 @@ POH technique.
 | Stall warning | 5–10 kt above the stall | 8.4 kt (flaps up), 7.6 kt (flaps 30) | | in range |
 
 Hot and high, for information: at SBMT (722 m) at ISA+20 the ground roll is
-1323 ft, against 840 ft at sea-level ISA.
+1350 ft, against 840 ft at sea-level ISA.
 
-## Known discrepancies
+## Investigated comparisons
 
-**Take-off ground roll is about 12% short, and the air segment is long.**
-The ground roll is 840 ft against 960 ft, and the distance from lift-off to
-50 ft is about 880 ft against the POH's 670 ft.
+Every comparison above is within its tolerance; the test bounds are
+symmetric. The two that once needed a "known discrepancy" note are recorded
+here with what closed them.
+
+**Take-off: ground roll −12.5%, air segment long.** The ground roll is
+840 ft against 960 ft (it was −19.9% and carried a widened 0.75× lower test
+bound). The distance from lift-off to 50 ft is about 880 ft against the
+POH's 670 ft; the total over 50 ft is +5.8%, within tolerance.
 
 *Investigation (Milestone 2b).* The original hypothesis was propeller swirl
 loss. That was tested and **refuted**. Adding tangential induction to the BEM
 solver let the engine turn faster at static (lower torque) for about the same
 thrust, and the roll barely changed (−19.9% → −19.8%). Swirl is kept because
-it is correct physics. The investigation then established:
+it is correct physics. Each blade element solves the axial and tangential
+momentum balances together (dT = 4πrρF(V+v)v dr, dQ = 4πr³ρF(V+v)Ωa′ dr):
+a bracketed root on the swirl, with the axial balance re-solved at each trial
+value. This replaced an under-relaxed fixed point that left high-tip-Mach and
+reverse-flow table entries unconverged; the operating envelope, and so every
+number on this page, was unchanged. The investigation then established:
 
 1. **The lift-off speed is right.** The sim lifts off at 51.4 KIAS = 55.1 KCAS,
    matching the POH technique (lift off at 51 KIAS, about 55 KCAS with the
@@ -61,7 +71,8 @@ costs climb and cruise one for one.
 What remains points to the **lift-off and transition**: the sim leaves the
 ground at the right speed but climbs away slowly. Candidates are the
 scripted pilot's rotation and climb technique, flaps-10 drag in ground
-effect, and the POH's data reduction. This is open, not tuned.
+effect, and the POH's data reduction. This is within tolerance and not
+tuned; it is the first place to look if the take-off is refined further.
 
 **Landing roll: closed to −19% by modelling the pilot, not the airplane.**
 The POH figure (575 ft) is a demonstrated landing. The old test braked at

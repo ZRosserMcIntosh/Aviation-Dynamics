@@ -5,7 +5,8 @@
 //  - BEM with Prandtl tip loss: Glauert; McCormick, "Aerodynamics,
 //    Aeronautics and Flight Mechanics", ch. 6; momentum relation
 //    dT = 4 pi r rho F (V + v) v dr, and the angular-momentum relation
-//    dQ = 2 pi r^2 rho F (V + v) w dr for the far-wake swirl velocity w; the
+//    dQ = 2 pi r^2 rho F (V + v) w dr for the far-wake swirl velocity w
+//    (w = 2 a' Omega r, i.e. dQ = 4 pi r^3 rho F (V + v) Omega a' dr); the
 //    blade sees half of it (tangential speed Omega r - w/2). Swirl matters
 //    most at low advance ratio (take-off), where the blade torque is high.
 //  - Piston engine air flow and fmep: Heywood, "Internal Combustion Engine
@@ -153,17 +154,47 @@ void Propeller::bem(const PropellerDef& def, Real v, Real omega, Real rho, Real&
                 return vi;
             };
             // Swirl from the torque balance (blade torque = wake angular
-            // momentum), under-relaxed fixed point. Converges in a few
-            // iterations for propeller loadings; capped to keep ut > 0.
-            Real wt = 0, vi = 0;
-            for (int it = 0; it < 40; ++it) {
+            // momentum, wt = 2 a' Omega r): bracketed root of
+            // g(wt) = wt - dQ / (2 pi r^2 rho F ua dr) on [0, wMax], the axial
+            // balance re-solved at each trial swirl, so both inductions
+            // satisfy their momentum relations together. A fixed-point
+            // iteration oscillates where drag rise dominates the torque (tip
+            // Mach > 1) and as ua -> 0 (flow from behind); the bracket does not.
+            // wMax keeps ut >= 0.4 Omega r. Windmilling (dQ < 0): no swirl.
+            const Real wMax = 1.2 * ut0;
+            Real vi = 0;
+            auto swirlResidual = [&](Real wt) {
                 vi = solveAxial(wt);
                 element(vi, wt, dT, dQ, dTm, dQm);
                 const Real ua = v + vi;
-                const Real denom = 2 * kPi * r * r * rho * tipLoss * std::max(ua, 1e-3) * dr;
-                Real wtNew = ua > 1e-3 ? std::clamp(dQ / denom, 0.0, 1.2 * ut0) : 0.0;
-                if (std::abs(wtNew - wt) < 1e-4 * (1 + ut0)) { wt = wtNew; break; }
-                wt += 0.7 * (wtNew - wt);
+                if (ua <= 1e-3 || dQ <= 0) return wt;
+                return wt - dQ / (2 * kPi * r * r * rho * tipLoss * ua * dr);
+            };
+            Real lo = 0, hi = wMax;
+            Real glo = swirlResidual(lo);
+            Real wt = 0;
+            if (glo < 0) {
+                Real ghi = swirlResidual(hi);
+                wt = hi;  // momentum swirl beyond the cap: hold the cap
+                if (ghi > 0) {
+                    int side = 0;
+                    const Real tol = 1e-6 * (1 + ut0);
+                    for (int it = 0; it < 60 && hi - lo > tol; ++it) {
+                        const Real x = (lo * ghi - hi * glo) / (ghi - glo);
+                        const Real gx = swirlResidual(x);
+                        if (gx == 0) { lo = hi = x; break; }
+                        if (gx < 0) {
+                            lo = x; glo = gx;
+                            if (side == -1) ghi *= 0.5;
+                            side = -1;
+                        } else {
+                            hi = x; ghi = gx;
+                            if (side == 1) glo *= 0.5;
+                            side = 1;
+                        }
+                    }
+                    wt = 0.5 * (lo + hi);
+                }
             }
             vi = solveAxial(wt);
             element(vi, wt, dT, dQ, dTm, dQm);

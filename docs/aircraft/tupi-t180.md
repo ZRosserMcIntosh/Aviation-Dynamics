@@ -78,5 +78,5 @@ assists. Each change was made only after its physical cause was identified:
    −1° and slipstream exposure 0.6. Both are in the plausible range for the
    C172's fixed stabiliser.
 
-Behaviour that was *not* tuned away is listed under known discrepancies in the
-validation report.
+Behaviour that was *not* tuned away is recorded under investigated
+comparisons in the validation report.
