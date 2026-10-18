@@ -141,6 +141,20 @@ const plan = B.loadsheet(true);
 check(plan.tanks[0].litres === plan.tanks[0].capacity && (plan.flags & 3) === 3, `load sheet: full tanks and cabin plan ${Math.round(plan.gross)} kg, over ramp and MTOW flagged`);
 B.avd_reset(1);
 check(Math.abs(B.state()[40] - plan.gross) < 1 && Math.abs(B.loadsheet(false).gross - plan.gross) < 1, `the next spawn carries it (${Math.round(B.state()[40])} kg)`);
+// Crosswind on final: the spawn crabs into it and tracks the localizer; the
+// smoothed wind, track and drift are reported.
+B.avd_set_weather(15 * 0.5144, 60, 0, 0, 0.6);
+B.avd_reset(2);
+for (let i = 0; i < 40; ++i) { B.avd_set_input(0, 0, 0, B.avd_trim_throttle(), 1, 0, 0, 0, 0); B.avd_advance(0.25); }
+const xw = B.state(), xc = B.cockpitState();
+check(Math.abs(xc[38]) < 0.3 && xw[62] < -3 && Math.abs(xw[59] - 60) < 25 && xw[60] > 8,
+  `crosswind final: CDI ${xc[38].toFixed(2)}, drift ${xw[62].toFixed(1)} deg, wind ${xw[59].toFixed(0)}/${xw[60].toFixed(0)} kt, track ${xw[61].toFixed(0)}`);
+const wg = B.windGrid(15, 15, 8, 8, 6, 4);
+check(wg.length === 3 * 8 * 6 * 4 && wg.every(Number.isFinite), `wind grid around the aircraft (${wg.length / 3} points)`);
+B.avd_set_weather(0, 0, 0, 0, 0.6);
+B.avd_set_runway_water(8);
+check(B.state()[63] === 8, 'standing water on the runway (8 mm)');
+B.avd_set_runway_water(0);
 // The default airport is Congonhas (runway 35L), with its test ILS on NAV 1.
 const ap = B.airport();
 check(ap.icao === 'SBSP' && ap.runway === '35L', `default airport ${ap.icao} runway ${ap.runway}`);

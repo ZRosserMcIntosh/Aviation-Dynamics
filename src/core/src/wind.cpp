@@ -177,14 +177,24 @@ TurbulenceField::TurbulenceField(const Params& p) : p_(p) {
     for (Mode& m : modes_) m.amplitude = std::sqrt(m.amplitude / energySum * 6.0) * p.intensity;
 }
 
-void TurbulenceField::evaluate(const Vec3& x, Vec3& velocity, Mat3& gradient) const {
+void TurbulenceField::evaluate(const Vec3& x, Vec3& velocity, Mat3& gradient, Real extent) const {
     velocity = {};
     gradient = Mat3::zero();
     for (const Mode& m : modes_) {
         const Real arg = dot(m.k, x) + m.phase;
         const Real c = std::cos(arg), s = std::sin(arg);
-        velocity += m.dir * (m.amplitude * c);
-        const Vec3 d = m.dir * (-m.amplitude * s);
+        // Least-squares linear fit over the body (see the header).
+        Real fit0 = 1, fit1 = 1;
+        if (extent > 0) {
+            const Real h = 0.5 * length(m.k) * extent;
+            if (h > 1e-3) {
+                const Real sh = std::sin(h), ch = std::cos(h);
+                fit0 = sh / h;
+                fit1 = 3 * (sh - h * ch) / (h * h * h);
+            }
+        }
+        velocity += m.dir * (m.amplitude * c * fit0);
+        const Vec3 d = m.dir * (-m.amplitude * s * fit1);
         const Real dv[3] = {d.x, d.y, d.z}, kv[3] = {m.k.x, m.k.y, m.k.z};
         for (int i = 0; i < 3; ++i)
             for (int j = 0; j < 3; ++j) gradient.m[i][j] += dv[i] * kv[j];
@@ -281,14 +291,15 @@ void AtmosphericTurbulence::coefficients(Real agl, Real altitudeMsl, const Turbu
     }
 }
 
-void AtmosphericTurbulence::evaluate(const Vec3& x, Real agl, Real altitudeMsl, Vec3& velocity, Mat3& gradient) const {
+void AtmosphericTurbulence::evaluate(const Vec3& x, Real agl, Real altitudeMsl, Vec3& velocity, Mat3& gradient,
+                                     Real extent) const {
     const TurbulenceLocal l{frictionVelocity_, 0};
     const TurbulenceLocal local[7] = {l, l, l, l, l, l, l};
-    evaluate(x, agl, altitudeMsl, local, 0.25, velocity, gradient);
+    evaluate(x, agl, altitudeMsl, local, 0.25, velocity, gradient, extent);
 }
 
 void AtmosphericTurbulence::evaluate(const Vec3& x, Real agl, Real altitudeMsl, const TurbulenceLocal local[7], Real d,
-                                     Vec3& velocity, Mat3& gradient) const {
+                                     Vec3& velocity, Mat3& gradient, Real extent) const {
     velocity = {};
     gradient = Mat3::zero();
     if (!active_) return;
@@ -308,7 +319,7 @@ void AtmosphericTurbulence::evaluate(const Vec3& x, Real agl, Real altitudeMsl, 
         if (!used) continue;
         Vec3 f;
         Mat3 g;
-        bank_[static_cast<std::size_t>(k)].evaluate(x, f, g);
+        bank_[static_cast<std::size_t>(k)].evaluate(x, f, g, extent);
         const Vec3 a = at * f;
         const Mat3 ga = at * g;
         const Real av[3] = {a.x, a.y, a.z};
@@ -378,9 +389,20 @@ Vec3 Microburst::velocity(const Vec3& x, Real z, Real t) const {
     const Real dx = x.x - (north + driftNorth * age), dy = x.y - (east + driftEast * age);
     const Real q = (dx * dx + dy * dy) / (radius * radius);
     const Real zs = outflowDecayHeight, eps = surfaceLayerDepth;
+    // Vertical profile F(z) = z* (1 - e^-z/z*) - eps (1 - e^-z/eps), whose
+    // derivative is the outflow shape, times the altitude shaping S(z):
+    // w = -lambda e^-q F S and u = lambda R^2 / (2 r) (1 - e^-q) d(F S)/dz.
+    const Real F = zs * -std::expm1(-z / zs) - eps * -std::expm1(-z / eps);
+    Real S = 1, dS = 0;
+    if (z > downdraftTop && downdraftFade > 0) {
+        const Real a = (z - downdraftTop) / downdraftFade;
+        S = std::exp(-a * a);
+        dS = -2 * a / downdraftFade * S;
+    }
+    const Real shape = outflowShape(z, zs, eps) * S + F * dS;
     // u / r = lambda R^2 / 2 (1 - e^-q) / r^2 = lambda / 2 (1 - e^-q) / q.
-    const Real radialOverR = 0.5 * lam * (q > 1e-12 ? -std::expm1(-q) / q : 1.0) * outflowShape(z, zs, eps);
-    const Real wUp = -lam * std::exp(-q) * (zs * -std::expm1(-z / zs) - eps * -std::expm1(-z / eps));
+    const Real radialOverR = 0.5 * lam * (q > 1e-12 ? -std::expm1(-q) / q : 1.0) * shape;
+    const Real wUp = -lam * std::exp(-q) * F * S;
     return {radialOverR * dx, radialOverR * dy, -wUp};
 }
 

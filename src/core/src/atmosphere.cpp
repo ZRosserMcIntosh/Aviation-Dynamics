@@ -254,7 +254,7 @@ SimpleWeather::LocalWind SimpleWeather::localWind(const Vec3& pos, Real agl, Rea
     return lw;
 }
 
-AirSample SimpleWeather::sample(const Vec3& positionNed, Real altitudeMsl, Real time) const {
+AirSample SimpleWeather::sample(const Vec3& positionNed, Real altitudeMsl, Real time, Real extent) const {
     AirSample s;
     s.state = atm_.at(altitudeMsl);
     if (p_.cloudTop > p_.cloudBase && altitudeMsl >= p_.cloudBase && altitudeMsl <= p_.cloudTop)
@@ -271,7 +271,7 @@ AirSample SimpleWeather::sample(const Vec3& positionNed, Real altitudeMsl, Real 
         if (turbulence_.active()) {
             Vec3 u;
             Mat3 g;
-            turbulence_.evaluate(positionNed - adv * time, agl, altitudeMsl, u, g);
+            turbulence_.evaluate(positionNed - adv * time, agl, altitudeMsl, u, g, extent);
             s.wind += u;
             s.windGradient = s.windGradient + g;
         }
@@ -297,7 +297,7 @@ AirSample SimpleWeather::sample(const Vec3& positionNed, Real altitudeMsl, Real 
         if (turbulence_.active()) {
             Vec3 u;
             Mat3 g;
-            turbulence_.evaluate(positionNed - adv * time, agl, altitudeMsl, tl, d, u, g);
+            turbulence_.evaluate(positionNed - adv * time, agl, altitudeMsl, tl, d, u, g, extent);
             s.wind += u;
             s.windGradient = s.windGradient + g;
         }

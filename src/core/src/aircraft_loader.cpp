@@ -632,6 +632,7 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("cornering_stiffness_n_per_rad", g.corneringStiffness);
         o.num("relaxation_length_m", g.relaxationLength);
         o.num("longitudinal_stiffness_n_per_m", g.longitudinalStiffness);
+        o.num("tyre_pressure_psi", g.tyrePressure, 6894.757);
         d.gear.push_back(g);
     });
     r.each("contacts", [&](Obj& o, std::size_t) {

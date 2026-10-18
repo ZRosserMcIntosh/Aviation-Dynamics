@@ -476,3 +476,52 @@ TEST_CASE("top g: the load sheet checks the zero-fuel, landing and ramp weights"
     CHECK((ls.flags & kOverMaxLanding) != 0);
     CHECK_NEAR(ls.fuelUsable, 2 * (13664.0 - 40.0) * 1e-3 * jet().fuel.density, 1e-6);
 }
+
+TEST_CASE("ground: wet-runway friction follows 25.109 and collapses at the hydroplaning speed") {
+    SurfaceProperties dry = surfaces::kAsphalt, wet = dry, flooded = dry;
+    wet.waterDepth = 0.001;
+    flooded.waterDepth = 0.008;
+    const Real psi = 6894.757;
+    CHECK_NEAR(wetTyreFriction(dry, ktToMs(100), 50 * psi), 0.8, 1e-12);
+    // 50 psi at 100 kt: -0.0350 + 0.306 - 0.851 + 0.883.
+    CHECK_NEAR(wetTyreFriction(wet, ktToMs(100), 50 * psi), 0.303, 1e-9);
+    CHECK_NEAR(wetTyreFriction(wet, ktToMs(100), 200 * psi), -0.0331 + 0.252 - 0.658 + 0.692, 1e-9);
+    CHECK_NEAR(wetTyreFriction(wet, 0, 50 * psi), 0.8, 1e-12);   // never above dry
+    CHECK_NEAR(msToKt(hydroplaningSpeed(38 * psi)), 9 * std::sqrt(38.0), 1e-9);
+    CHECK_NEAR(wetTyreFriction(flooded, hydroplaningSpeed(190 * psi) * 1.01, 190 * psi), 0.05, 1e-12);
+    CHECK(wetTyreFriction(flooded, ktToMs(60), 190 * psi) < wetTyreFriction(wet, ktToMs(60), 190 * psi));
+    SurfaceProperties grass = surfaces::kGrass;
+    grass.waterDepth = 0.001;
+    CHECK_NEAR(wetTyreFriction(grass, 10, 0), 0.6 * surfaces::kGrass.friction, 1e-12);
+}
+
+TEST_CASE("top g: a wet runway lengthens the stop; standing water above the hydroplaning speed far more") {
+    auto stop = [](Real waterDepth, Real kt) {
+        Aircraft ac(jet());
+        SimpleWeather atm;
+        SurfaceProperties s = surfaces::kAsphalt;
+        s.waterDepth = waterDepth;
+        FlatGround ground(0, s);
+        ac.setEngineRunning(true);
+        ac.placeOnGround(0, 0, 0, ground, atm);
+        ac.setCockpitControl("brakes.parking", 0);
+        DynamicState st = ac.state();
+        st.body.velocity = {ktToMs(kt), 0, 0};
+        ac.setState(st);
+        PilotInput in;
+        in.brakeLeft = in.brakeRight = 1;
+        const Real x0 = ac.state().body.position.x;
+        for (int i = 0; i < 240 * 90; ++i) {
+            ac.step(kDt, in, ground, atm);
+            if (i > 240 && ac.telemetry().groundSpeed < 0.5) break;
+        }
+        return ac.state().body.position.x - x0;
+    };
+    // From 100 kt (below the ~124 kt hydroplaning speed of 190 psi tyres).
+    const Real dry = stop(0, 100), wet = stop(0.001, 100), flooded = stop(0.008, 100);
+    CHECK(wet > 1.3 * dry);
+    CHECK(flooded > 1.1 * wet);
+    // From 140 kt the tyres ride on standing water until they slow below it.
+    const Real wetFast = stop(0.001, 140), floodedFast = stop(0.008, 140);
+    CHECK(floodedFast > wetFast + 150);
+}

@@ -49,6 +49,7 @@ export default async function createAvdModule(wasmBytes) {
   A.flow = () => new Float64Array(memory.buffer, ex.avd_flow(), 16 + 64 * 16 + 40);
   A.jet = () => new Float64Array(memory.buffer, ex.avd_jet(), 64);
   A.runway = () => Array.from(new Float64Array(memory.buffer, ex.avd_runway(), 6));
+  A.windGrid = (hx, hy, hz, nx, ny, nz) => new Float64Array(memory.buffer, ex.avd_wind_grid(hx, hy, hz, nx, ny, nz), 3 * nx * ny * nz);
   A.airport = () => { const [icao, name, runway, reciprocal] = A.text(ex.avd_airport_text()).split('|'); return { icao, name, runway, reciprocal }; };
   // Weight and balance: planned (next spawn) or current. Masses in kg, x in
   // the structural frame (m, forward positive), fuel in litres.

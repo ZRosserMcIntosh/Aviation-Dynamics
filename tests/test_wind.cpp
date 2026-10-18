@@ -570,3 +570,47 @@ TEST_CASE("spatial: Campo de Marte -- airfield report, city around it, Cantareir
     const Real up = -w.sample({slope.x, slope.y, -(crestMsl - 150)}, crestMsl - 150, 0).wind.z;
     CHECK(up > 0.4);
 }
+
+TEST_CASE("microburst: the downdraft fades above the shaft top, with continuity kept in the fade") {
+    Microburst m;
+    m.startTime = 0;
+    SimpleWeather::Params p;
+    p.microbursts.push_back(m);
+    p.turbulence.mechanical = false;
+    const SimpleWeather w(p);
+    const Real t = 200;
+    const Real at1000 = w.sample({0, 0, -1000}, 1000, t).wind.z;
+    CHECK(at1000 > 15);                                     // a strong shaft up to its top
+    CHECK(std::abs(w.sample({0, 0, -3000}, 3000, t).wind.z) < 1);
+    CHECK(std::abs(w.sample({0, 0, -8000}, 8000, t).wind.z) < 1e-6);
+    // Inflow converges into the shaft where it fades (radial wind points inward).
+    CHECK(w.sample({800, 0, -1600}, 1600, t).wind.x < 0);
+    for (const Vec3& x : {Vec3{300, 400, -1300}, Vec3{-900, 200, -1900}, Vec3{0, 700, -2500}}) {
+        const Mat3 g = w.sample(x, -x.z, t).windGradient;
+        CHECK(std::abs(g.m[0][0] + g.m[1][1] + g.m[2][2]) < 1e-5);
+        CHECK(gradientError(w, x, 0, t) < 1e-4);
+    }
+}
+
+TEST_CASE("turbulence: eddies shorter than the span are averaged over it, not extrapolated to the tips") {
+    // Moderate turbulence; the gradient a body of 11 m span sees, applied
+    // linearly out to its tips, against the true tip-to-tip difference.
+    SimpleWeatherParams p;
+    p.windSpeed = 8;
+    p.turbulence.severity = TurbulenceSeverity::Moderate;
+    const SimpleWeather w(p);
+    for (Real agl : {150.0, 900.0}) {
+        Real sTrue = 0, sPoint = 0, sSpan = 0;
+        const int n = 3000;
+        for (int i = 0; i < n; ++i) {
+            const Vec3 x{i * 3.7, 0, -agl};
+            const Real dTrue = w.sample(x + Vec3{0, 5.5, 0}, agl, 0).wind.z - w.sample(x - Vec3{0, 5.5, 0}, agl, 0).wind.z;
+            sTrue += dTrue * dTrue;
+            sPoint += sq(11 * w.sample(x, agl, 0).windGradient.m[2][1]);
+            sSpan += sq(11 * w.sample(x, agl, 0, 11.0).windGradient.m[2][1]);
+        }
+        const Real rTrue = std::sqrt(sTrue / n), rPoint = std::sqrt(sPoint / n), rSpan = std::sqrt(sSpan / n);
+        CHECK(rPoint > 3 * rTrue);                 // the point gradient over-forces the wing
+        CHECK_RANGE(rSpan / rTrue, 0.65, 1.2);     // the span-fitted one matches it
+    }
+}

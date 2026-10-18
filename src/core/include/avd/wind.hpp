@@ -124,8 +124,12 @@ public:
     const Params& params() const { return p_; }
     bool active() const { return p_.intensity > 0 && !modes_.empty(); }
     // Velocity (NED) and gradient at a position already shifted into the
-    // frozen-turbulence frame.
-    void evaluate(const Vec3& x, Vec3& velocity, Mat3& gradient) const;
+    // frozen-turbulence frame. `extent` > 0: as seen by a body of that size
+    // (m), the best linear fit of each mode over it: velocity scaled by
+    // sin(x)/x and gradient by 3 (sin x - x cos x) / x^3, x = |k| extent / 2.
+    // Eddies much shorter than the airframe average out instead of being
+    // extrapolated from the CG to the wingtips.
+    void evaluate(const Vec3& x, Vec3& velocity, Mat3& gradient, Real extent = 0) const;
 
 private:
     struct Mode {
@@ -187,11 +191,12 @@ public:
     TurbulenceStatistics statistics(Real heightAgl, Real altitudeMsl, const TurbulenceLocal& local) const;
     // Velocity (NED) and its gradient at `xFrozen` (position already shifted
     // into the frozen frame), whose height is heightAgl / altitudeMsl.
-    void evaluate(const Vec3& xFrozen, Real heightAgl, Real altitudeMsl, Vec3& velocity, Mat3& gradient) const;
+    void evaluate(const Vec3& xFrozen, Real heightAgl, Real altitudeMsl, Vec3& velocity, Mat3& gradient,
+                  Real extent = 0) const;
     // With spatially varying statistics: `local[0]` at the point, then at
     // +-step along north, east and down (7 entries), for the gradient.
     void evaluate(const Vec3& xFrozen, Real heightAgl, Real altitudeMsl, const TurbulenceLocal local[7], Real step,
-                  Vec3& velocity, Mat3& gradient) const;
+                  Vec3& velocity, Mat3& gradient, Real extent = 0) const;
 
     // Bank of unit-intensity fields at integral scales kScale0 * 2^i.
     static constexpr int kScales = 10;
@@ -244,6 +249,13 @@ struct Microburst {
     Real peakOutflow = 15;      // m/s, the peak radial wind
     Real outflowDecayHeight = 600;  // z*, m: decay of the outflow with height
     Real surfaceLayerDepth = 30;    // eps, m: friction layer under the outflow
+    // Altitude shaping (after Vicroy 1992): the bare Oseguera-Bowles
+    // downdraft keeps growing with height toward lambda z*; a real shaft
+    // starts near cloud base. Above `downdraftTop` (m AGL) the vertical flow
+    // fades over `downdraftFade` (m, Gaussian), with the radial flow derived
+    // from it, so continuity still holds: air converges into the shaft aloft.
+    Real downdraftTop = 1000;
+    Real downdraftFade = 800;
     Real startTime = 0;         // s
     Real growthTime = 120;      // s to full strength
     Real matureTime = 300;      // s held at full strength

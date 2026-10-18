@@ -382,7 +382,9 @@ void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, con
     const Quat& q = s_.body.attitude;
     const Vec3& pos = s_.body.position;
     const Real alt = frame_.origin().height - pos.z;
-    c.air = atm.sample(pos, alt, time_);
+    // The air as the airframe sees it: turbulence shorter than the span is
+    // averaged over it (the strips extrapolate the gradient linearly).
+    c.air = atm.sample(pos, alt, time_, def_.referenceSpan);
     c.gravity = {0, 0, wgs84::normalGravity(frame_.origin().latitude, alt)};
 
     auto plane = [&](const Vec3& p) {
@@ -612,7 +614,7 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
                 f = normalized(f - n * dot(f, n));
                 const Vec3 l = cross(n, f);
                 const Real vLong = dot(vPt, f), vLat = dot(vPt, l);
-                const Real mu = gp.surface.friction;
+                const Real mu = wetTyreFriction(gp.surface, vLong, g.tyrePressure);
                 const Real brake = g.brakeGroup == 0 ? c.brakeLeft : (g.brakeGroup == 1 ? c.brakeRight : 0.0);
                 const Real limLong = std::min(N * (g.rollingResistance * gp.surface.rollingResistance +
                                                    brake * g.maxBrakeForceCoefficient),

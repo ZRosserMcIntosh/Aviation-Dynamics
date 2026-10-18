@@ -101,6 +101,14 @@ class AtmosphereField {
 public:
     virtual ~AtmosphereField() = default;
     virtual AirSample sample(const Vec3& positionNed, Real altitudeMsl, Real time) const = 0;
+    // As seen by a body of size `extent` (m, e.g. the wing span): turbulence
+    // shorter than the body is averaged over it rather than extrapolated
+    // linearly from the sample point. Fields without small-scale structure
+    // need not override this.
+    virtual AirSample sample(const Vec3& positionNed, Real altitudeMsl, Real time, Real extent) const {
+        (void)extent;
+        return sample(positionNed, altitudeMsl, time);
+    }
 };
 
 // Parameters for SimpleWeather.
@@ -146,7 +154,8 @@ public:
     explicit SimpleWeather(const Params& p);
     const Params& params() const { return p_; }
     const StandardAtmosphere& atmosphere() const { return atm_; }
-    AirSample sample(const Vec3& positionNed, Real altitudeMsl, Real time) const override;
+    AirSample sample(const Vec3& positionNed, Real altitudeMsl, Real time) const override { return sample(positionNed, altitudeMsl, time, 0); }
+    AirSample sample(const Vec3& positionNed, Real altitudeMsl, Real time, Real extent) const override;
     // Mean wind (no turbulence or events) at a height over the reference
     // site, and at a place and time with the spatial variation.
     Vec3 meanWindAt(Real heightAgl) const;

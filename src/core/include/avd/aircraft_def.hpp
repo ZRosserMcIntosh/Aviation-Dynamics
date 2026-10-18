@@ -307,6 +307,7 @@ struct GearDef {
     Real corneringStiffness = 4e4;    // N/rad
     Real relaxationLength = 0.3;      // m
     Real longitudinalStiffness = 2e5; // N/m (bristle model for braking/stiction)
+    Real tyrePressure = 0;            // Pa, inflation (wet-runway friction, hydroplaning); 0 = unknown
 };
 
 // Hard points that should never touch the ground (tail, wingtips, prop tip,

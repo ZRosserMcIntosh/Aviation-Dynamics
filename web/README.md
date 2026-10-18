@@ -31,7 +31,7 @@ call is clamped to 0.25 s. It returns the number of steps run.
 | Function | Meaning |
 |---|---|
 | `avd_reset(mode)` | Reset scenario: 0 cold and dark on runway 12, 1 engine running on runway 12, 2 on final for runway 12 (3 km), 3 cruising over the city. Sets NAV 1 to 110.30 active and 113.70 standby, OBS and bug 122, COM standby 132.80, transponder ALT |
-| `avd_reset_air(east, north, heightAboveField, headingDeg, kias, flap)` | Trimmed, level, hands-off spawn anywhere in the world (ENU metres from the world anchor, height in m above the field elevation, true heading, 55–350 KIAS, flap detent 0–3). Read the levers with `avd_trim_throttle()` / `avd_trim_mixture()` |
+| `avd_reset_air(east, north, heightAboveField, headingDeg, kias, flap)` | Trimmed, level, hands-off spawn anywhere in the world (ENU metres from the world anchor, height in m above the field elevation, true track (the spawn crabs into the mean wind to make it good), 55–350 KIAS, flap detent 0–3). Read the levers with `avd_trim_throttle()` / `avd_trim_mixture()` |
 | `avd_set_weather(windMs, windFromDeg, turbulenceMs, isaDevC, humidity)` | Weather (rebuilds the field). The wind is the airfield report; it brings its own mechanical turbulence, weaker wind and stronger gusts over the city around SBMT, backing with height, and Cantareira ridge lift. `turbulenceMs` is an extra RMS on top |
 | `avd_set_wind_detail(severity, wStarMs, ziM)` | Turbulence class (0 none, 1 light, 2 moderate, 3 severe; MIL-HDBK-1797) and thermals (w*, convective-layer depth m AGL; w* 0 = none) |
 | `avd_set_wind_hazard(kind)` | 0 none, 1 microburst 2 km before the runway in use (12 m/s outflow), 2 gust front from the SW reaching the field in ~5 min; placed at the current sim time |
@@ -40,6 +40,8 @@ call is clamped to 0.25 s. It returns the number of steps run.
 | `avd_set_airport(id)` / `avd_airport_text()` | Spawn airport: 0 Campo de Marte (SBMT, runway 12), 1 Congonhas (SBSP, runway 35L, the default). Kept across aircraft loads; takes effect at the next reset. Text: `ICAO\|name\|runway\|reciprocal`. `avd_runway()` describes the runway in use |
 | `avd_set_station(i, kg)` / `avd_set_tank(i, litres)` | Planned load, applied to every new spawn (trimmed spawns trim at that weight). No upper limit on stations (placards are reported, not enforced); tanks hold at most their capacity |
 | `avd_loadsheet(planned)` / `avd_loadsheet_names()` | Weight and balance of the planned load (1) or the aircraft now (0); layout below. `A.loadsheet(planned)` returns it as an object |
+| `avd_set_runway_water(mm)` | Water on the airfield: 0 dry, under 3 mm wet (14 CFR 25.109 wet braking), 3 mm and more standing water (hydroplaning above 9·√p kt) |
+| `avd_wind_grid(hx, hy, hz, nx, ny, nz)` | Wind around the aircraft minus the wind at the CG, body axes, on an nx·ny·nz grid (≤ 16·12·8) over ±hx, ±hy, ±hz m: eddies, thermals and shear for the airflow view. `A.windGrid(...)` |
 | `avd_set_level_hold(on)` | Straight-and-level hold (auto-trim that keeps the airplane straight and level with the stick released), with any preset; kept when the preset changes |
 | `avd_quick_start()` / `avd_procedure_status()` | Run the Quick Start checklist through the cockpit (turbofan aircraft: power up, then each engine's fuel control switch to RUN in turn). Status: 0 idle, 1 running, 2 done, 3 failed; the message is in the text buffer |
 | `avd_cockpit_count()` / `avd_cockpit_text(i)` / `avd_cockpit_cycle(i)` | Switch registry: `id\|label\|pos0;pos1…\|current` |
@@ -99,6 +101,9 @@ Indices and fields:
 | 56 | yaw input on the nose-wheel tiller (below 5 kt on the ground) |
 | 57 | aircraft has a tiller |
 | 58 | straight-and-level hold in underspeed protection (descending to keep flying speed) |
+| 59, 60 | wind at the aircraft, smoothed over 3 s: from (deg true), speed (kt) |
+| 61, 62 | ground track (deg true), drift (track − heading, deg, + right) |
+| 63 | water on the airfield (mm) |
 
 ## `avd_loadsheet(planned)`: 256 doubles
 

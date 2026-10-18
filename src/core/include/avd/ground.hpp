@@ -8,6 +8,7 @@
 // ord::GroundQuery so a single host adapter can serve both vehicle types.
 #pragma once
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -18,7 +19,7 @@ namespace avd {
 struct SurfaceProperties {
     Real friction = 0.8;            // peak tyre-surface friction coefficient (braking)
     Real rollingResistance = 1.0;   // multiplier on the gear's rolling-resistance coefficient
-    Real wetness = 0;               // 0 dry .. 1 flooded (hook; wet-runway model is M5)
+    Real waterDepth = 0;            // m of water on it: 0 dry, < 3 mm wet, >= 3 mm standing water
     int id = 0;                     // 0 asphalt, 1 concrete, 2 grass, 3 dirt, 4 water ...
 };
 
@@ -29,6 +30,23 @@ inline constexpr SurfaceProperties kConcrete{0.8, 1.0, 0, 1};
 // class values; Estimated), braking friction ~0.4.
 inline constexpr SurfaceProperties kGrass{0.4, 2.5, 0, 2};
 }  // namespace surfaces
+
+// Peak tyre-surface friction with water on the surface, at tyre ground
+// speed `speed` (m/s) and inflation pressure `tyrePressure` (Pa; 0 = unknown,
+// taken as 50 psi):
+// - wet paved surface (< 3 mm): the 14 CFR 25.109(c)(1) maximum wet braking
+//   coefficient, a cubic in V/100 (V true ground speed, kt) for 50, 100 and
+//   200 psi, interpolated linearly in pressure (held at the 200 psi curve
+//   above it), never more than the dry value;
+// - standing water (>= 3 mm): additionally halved toward the dynamic
+//   hydroplaning speed V_P = 9 sqrt(p) kt (Horne, NASA TN D-2056) and 0.05
+//   at and above it, where the tyre rides on the water (estimated shape);
+// - wet unpaved surfaces: 60% of dry (estimated).
+// Anti-skid efficiency is not applied here: the brake and tyre models stop
+// short of the peak by themselves.
+Real wetTyreFriction(const SurfaceProperties& s, Real speed, Real tyrePressure);
+// Dynamic hydroplaning speed (m/s) for a tyre pressure (Pa).
+Real hydroplaningSpeed(Real tyrePressure);
 
 struct GroundHit {
     bool hit = false;
@@ -87,8 +105,12 @@ public:
     GroundHit raycast(const Vec3& origin, const Vec3& dir, Real maxDistance) const override;
     // Surface down-coordinate and properties at a horizontal position.
     void surfaceAt(Real north, Real east, Real& down, Vec3& normal, SurfaceProperties& s) const;
+    // Water on the whole airfield (m): rain, standing water.
+    void setWaterDepth(Real m) { waterDepth_ = std::max(m, 0.0); }
+    Real waterDepth() const { return waterDepth_; }
 
 private:
+    Real waterDepth_ = 0;
     Real fieldDown_;
     SurfaceProperties field_;
     std::vector<RunwayDef> runways_;

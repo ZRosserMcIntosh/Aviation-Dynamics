@@ -17,7 +17,8 @@ for f in avd_text avd_load avd_error_text avd_set_weather avd_reset avd_set_inpu
          avd_xpdr_mode avd_dimmer avd_failure avd_trim_throttle avd_trim_mixture avd_compass_card avd_set_cloud avd_reset_air \
          avd_ai_cage avd_jet avd_flow avd_set_level_hold \
          avd_set_station avd_set_tank avd_loadsheet avd_loadsheet_names avd_set_airport avd_airport_text \
-         avd_set_wind_detail avd_set_wind_hazard; do
+         avd_set_wind_detail avd_set_wind_hazard \
+         avd_set_runway_water avd_wind_grid; do
   EXPORTS="$EXPORTS -Wl,--export=$f"
 done
 "$WASI_SDK/bin/clang++" --target=wasm32-wasip1 --sysroot="$WASI_SDK/share/wasi-sysroot" \

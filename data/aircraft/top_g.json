@@ -111,6 +111,12 @@
    "note": "Oleo stiffness and damping sized for static deflection ~0.14 m and ~0.4 critical damping at MTOW."
   },
   {
+   "field": "gear.tyre_pressure_psi",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Typical of large business jets (G650 figures not public): mains ~190 psi (hydroplaning ~124 kt), nose ~160 psi."
+  },
+  {
    "field": "gear.nose.steering",
    "kind": "estimated",
    "source": "EST",
@@ -665,6 +671,7 @@
  "gear": [
   {
    "name": "nose",
+   "tyre_pressure_psi": 160,
    "attach_m": [
     -3.1,
     0.0,
@@ -688,6 +695,7 @@
   },
   {
    "name": "left main",
+   "tyre_pressure_psi": 190,
    "attach_m": [
     -16.9,
     -2.25,
@@ -709,6 +717,7 @@
   },
   {
    "name": "right main",
+   "tyre_pressure_psi": 190,
    "attach_m": [
     -16.9,
     2.25,

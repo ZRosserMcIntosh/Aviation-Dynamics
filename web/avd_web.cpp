@@ -56,6 +56,9 @@ struct Sim {
     ProcedureRunner procedure;
     PilotInput raw;
     Real accumulator = 0;
+    Vec3 windAvg;              // the wind at the aircraft, low-passed (3 s) as avionics show it
+    bool windAvgValid = false;
+    Real runwayWater = 0;      // m of water on the airfield
     std::string events;
     int jetStart = 0;  // jet Quick Start: 0 idle, 1 starting engine 1, 2 engine 2, 3 done
     // Trimmed CLmax cache for the low-speed awareness band and V-speeds.
@@ -83,6 +86,7 @@ void rebuildWeather();
 void buildAirport() {
     g->airport = makeAirport(g_airportId, g->frame);
     g->ground = scenarios::makeAirfieldGround(g->airport, g->frame);
+    g->ground->setWaterDepth(g->runwayWater);
     rebuildWeather();  // the wind surroundings and hazards are placed around it
 }
 
@@ -290,14 +294,17 @@ void newAircraft() {
     g->jetStart = 0;
     g->trimThrottle = 0;
     g->trimMixture = 1;
+    g->windAvgValid = false;
 }
 
 // Trimmed airborne spawn: solve the free-air trim in calm air at the spawn
 // altitude (throttle solved for the flight path), rotate the trimmed
-// north-heading state onto `heading` and place it at `posNed` / `altMsl`;
-// the air-relative velocity gets the wind. Hands-off on arrival: the trimmed
-// elevator goes into the trim wheel.
-void placeTrimmed(Vec3 posNed, Real altMsl, Real heading, Real kias, int flapDetent, Real path) {
+// north-heading state onto the heading that makes good `track` in the mean
+// wind there (crabbed into it), and place it at `posNed` / `altMsl`; the
+// air-relative velocity gets the wind. `path` is the flight-path angle over
+// the ground (a 3 deg glide path stays 3 deg in a headwind). Hands-off on
+// arrival: the trimmed elevator goes into the trim wheel.
+void placeTrimmed(Vec3 posNed, Real altMsl, Real track, Real kias, int flapDetent, Real path) {
     g->ac->setEngineRunning(true, 2000);
     // Retractable gear: down on the approach (landing flap), up otherwise.
     g->ac->setGearImmediately(flapDetent >= 2);
@@ -316,13 +323,28 @@ void placeTrimmed(Vec3 posNed, Real altMsl, Real heading, Real kias, int flapDet
     req.altitude = altMsl;
     req.flapDetent = flapDetent;
     req.tas = scenarios::tasFromCas(ktToMs(kias), trimAir.atmosphere().at(altMsl));
-    req.flightPath = path;
+    // The mean wind the pilot plans with (no turbulence or hazards): crab
+    // angle and the air-mass flight path that give `track` and `path` over
+    // the ground (wind correction angle asin(crosswind / horizontal TAS)).
+    posNed.z = -altMsl;
+    SimpleWeatherParams mean = calm;
+    mean.windSpeed = g->weatherParams.windSpeed;
+    const Vec3 w = SimpleWeather(mean).sample(posNed, altMsl, 0).wind;
+    const Real cross = -w.x * std::sin(track) + w.y * std::cos(track);  // from the left: +
+    const Real along = w.x * std::cos(track) + w.y * std::sin(track);
+    Real heading = track, airPath = path;
+    for (int it = 0; it < 4; ++it) {
+        const Real vh = req.tas * std::cos(airPath);
+        heading = track - std::asin(clamp(cross / vh, -0.9, 0.9));
+        const Real gs = vh * std::cos(heading - track) + along;
+        airPath = std::asin(clamp((gs * std::tan(path) + w.z) / req.tas, -0.5, 0.5));  // w.z: down
+    }
+    req.flightPath = airPath;
     const scenarios::TrimResult tr = scenarios::trim(*g->ac, req, trimAir);
     DynamicState s = tr.state;
     const Quat toHeading = Quat::fromEuler(0, 0, heading);
     s.body.attitude = toHeading * s.body.attitude;
     s.body.attitude.normalize();
-    posNed.z = -altMsl;
     s.body.position = posNed;
     s.body.velocity = toHeading.rotate(s.body.velocity) + g->weather->sample(posNed, altMsl, 0).wind;
     g->ac->setState(s);
@@ -395,7 +417,8 @@ AVD_EXPORT void avd_reset(int mode) {
 
 // Trimmed, level, hands-off spawn anywhere in the world: world ENU position
 // (m east and north of the world anchor), height above the field elevation
-// (m), true heading (deg), indicated airspeed (kt) and flap detent.
+// (m), true track (deg; the spawn crabs into the mean wind to make it good),
+// indicated airspeed (kt) and flap detent.
 AVD_EXPORT void avd_reset_air(double east, double north, double heightAboveField, double headingDeg, double kias,
                               int flapDetent) {
     if (!g) return;
@@ -681,6 +704,10 @@ AVD_EXPORT int avd_advance(double seconds) {
         g->ac->step(kDt, in, *g->ground, *g->weather);
         g->accumulator -= kDt;
         ++n;
+        const Vec3 w = g->ac->telemetry().air.wind;
+        if (!g->windAvgValid) g->windAvg = w;
+        g->windAvg = g->windAvg + (w - g->windAvg) * (kDt / 3.0);
+        g->windAvgValid = true;
     }
     updateJetStart();
     collectEvents();
@@ -771,7 +798,54 @@ AVD_EXPORT double* avd_state() {
     s[53] = mToFt(t.altitudeMsl); s[54] = g->assist.report().active();
     s[55] = g->assist.report().levelHold; s[56] = g->assist.report().yawOnTiller; s[57] = ac.hasTiller();
     s[58] = g->assist.report().underspeed;
+    // Wind (smoothed), track and drift, as a navigation display shows them.
+    const Vec3 w = g->windAvgValid ? g->windAvg : t.air.wind;
+    const Real ws = std::hypot(w.x, w.y);
+    s[59] = ws > 0.05 ? std::fmod(radToDeg(std::atan2(-w.y, -w.x)) + 720.0, 360.0) : 0.0;  // from, true
+    s[60] = msToKt(ws);
+    const Vec3 v = ac.state().body.velocity;
+    const Real track = std::hypot(v.x, v.y) > 1.0 ? std::atan2(v.y, v.x) : t.heading;
+    s[61] = std::fmod(radToDeg(track) + 360.0, 360.0);
+    s[62] = radToDeg(wrapPi(track - t.heading));  // drift, + right
+    s[63] = g->runwayWater * 1000;
     return s;
+}
+
+// ---- Runway condition and the wind around the aircraft --------------------
+// Water on the airfield (mm): 0 dry, under 3 wet, 3 and more standing water.
+AVD_EXPORT void avd_set_runway_water(double mm) {
+    if (!g) return;
+    g->runwayWater = std::clamp(std::isfinite(mm) ? mm : 0.0, 0.0, 50.0) * 1e-3;
+    g->ground->setWaterDepth(g->runwayWater);
+}
+
+double g_windGrid[3 * 16 * 12 * 8];
+// The wind field around the aircraft for the airflow view: a grid of nx * ny
+// * nz points (at most 16 x 12 x 8) spanning +-hx, +-hy, +-hz metres about the
+// CG along the body axes (x forward, y right, z down), x fastest. Each entry
+// is the wind there minus the wind at the CG, in body axes (m/s): the eddies,
+// thermals and shear the free stream at the CG does not carry.
+AVD_EXPORT double* avd_wind_grid(double hx, double hy, double hz, int nx, int ny, int nz) {
+    std::fill(std::begin(g_windGrid), std::end(g_windGrid), 0.0);
+    if (!g) return g_windGrid;
+    nx = std::clamp(nx, 2, 16), ny = std::clamp(ny, 2, 12), nz = std::clamp(nz, 2, 8);
+    const Aircraft& ac = *g->ac;
+    const Quat& q = ac.state().body.attitude;
+    const Vec3 c = ac.state().body.position;
+    const Real alt = ac.altitudeMsl(), t = ac.time();
+    const Vec3 w0 = g->weather->sample(c, alt, t).wind;
+    double* o = g_windGrid;
+    for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+            for (int i = 0; i < nx; ++i) {
+                const Vec3 b{hx * (2.0 * i / (nx - 1) - 1), hy * (2.0 * j / (ny - 1) - 1), hz * (2.0 * k / (nz - 1) - 1)};
+                const Vec3 p = c + q.rotate(b);
+                const Vec3 d = q.inverseRotate(g->weather->sample(p, alt - (p.z - c.z), t).wind - w0);
+                *o++ = d.x;
+                *o++ = d.y;
+                *o++ = d.z;
+            }
+    return g_windGrid;
 }
 
 // ---- Weight and balance ---------------------------------------------------

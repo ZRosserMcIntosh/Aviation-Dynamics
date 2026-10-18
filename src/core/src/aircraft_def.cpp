@@ -299,6 +299,7 @@ std::vector<std::string> AircraftDefinition::validate() const {
         c.positive(p + ".corneringStiffness", g.corneringStiffness);
         c.positive(p + ".relaxationLength", g.relaxationLength);
         c.positive(p + ".longitudinalStiffness", g.longitudinalStiffness);
+        c.range(p + ".tyrePressure", g.tyrePressure, 0, 3e6);
     }
     if (contacts.size() > 16) c.add("contacts", "at most 16 contact points");
     for (std::size_t i = 0; i < contacts.size(); ++i) {
