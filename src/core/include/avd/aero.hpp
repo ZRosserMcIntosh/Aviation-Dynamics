@@ -133,10 +133,11 @@ public:
         int surface = 0, side = 1;
         Vec3 position, chordAxis, normalAxis, spanAxis;
         Real area = 0, chord = 0;
+        Real width = 0;  // length along spanAxis (m)
     };
     StripGeometry stripGeometry(int i) const {
         const Strip& s = strips_[static_cast<std::size_t>(i)];
-        return {s.surface, s.side, s.position, s.chordAxis, s.normalAxis, s.spanAxis, s.area, s.chord};
+        return {s.surface, s.side, s.position, s.chordAxis, s.normalAxis, s.spanAxis, s.area, s.chord, s.width};
     }
 
     // Detach (or re-attach) every strip of a surface on one side (+1 right, -1
@@ -163,6 +164,7 @@ private:
         Vec3 spanAxis;          // geometric spanwise unit vector
         Vec3 liftAxis;          // cross(chord, normal): lift = cross(-dragDir, liftAxis)
         Real area, chord;
+        Real width;             // length along spanAxis
         bool attached = true;
         int controlCount = 0;
         std::array<StripControl, 3> controls{};

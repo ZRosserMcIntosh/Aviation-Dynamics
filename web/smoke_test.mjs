@@ -191,4 +191,22 @@ check(hi - lo > 4, `moderate turbulence: CAS ${lo.toFixed(1)}-${hi.toFixed(1)} k
 A.avd_set_wind_detail(0, 2, 1500);  // thermals: just runs
 A.avd_advance(1);
 check(Number.isFinite(A.cockpitState()[49]), 'thermals over the city');
+// The wake: shed behind the aircraft, rolled up, exported in ENU.
+A.avd_set_wind_detail(0, 0, 1500);
+A.avd_reset(3);
+A.avd_set_input(0, 0, 0, A.avd_trim_throttle(), A.avd_trim_mixture(), 0, 0, 0, 0);
+const t0w = performance.now();
+for (let i = 0; i < 15 * 4; ++i) A.avd_advance(0.25);
+const wakeMs = (performance.now() - t0w) / 15;
+const wk = A.wake();
+let oldest = 0, finite = true;
+for (let k = 0; k < wk.n; ++k) { for (let q = 0; q < 9; ++q) finite = finite && Number.isFinite(wk.seg[k * 9 + q]); oldest = Math.max(oldest, wk.seg[k * 9 + 8]); }
+check(wk.n > 30 && finite && wk.gmax > 5 && wk.gmax < 80 && oldest > 10,
+  `wake: ${wk.n} segments, max circulation ${wk.gmax.toFixed(1)} m2/s, oldest ${oldest.toFixed(1)} s; ${wakeMs.toFixed(1)} ms per simulated s`);
+const wkAt = A.state();
+const box = A.windBox([wkAt[0], wkAt[1], wkAt[2]], [800, 800, 200], 8, 8, 4);
+check(box.length === 768 && box.every(Number.isFinite), 'wind box around the aircraft');
+A.avd_set_wake(0);
+check(A.wake().n === 0, 'wake off: nothing shed');
+A.avd_set_wake(1);
 process.exit(failures ? 1 : 0);

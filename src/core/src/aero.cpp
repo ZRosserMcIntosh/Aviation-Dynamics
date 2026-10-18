@@ -201,6 +201,7 @@ void AeroModel::addPanel(int si, const PanelDef& p, int side) {
         s.position = root + tipOffset * t;
         s.chord = lerp(p.rootChord, p.tipChord, t);
         s.area = s.chord * p.span / p.strips;
+        s.width = length(tipOffset) / p.strips;
         const Real inc = lerp(p.rootIncidence, p.tipIncidence, t);
         s.chordAxis = chord0 * std::cos(inc) + normal0 * std::sin(inc);
         s.normalAxis = normal0 * std::cos(inc) - chord0 * std::sin(inc);

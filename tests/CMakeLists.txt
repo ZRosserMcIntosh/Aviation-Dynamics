@@ -10,6 +10,7 @@ set(AVD_TEST_SOURCES
   test_world.cpp
   test_jet.cpp
   test_wind.cpp
+  test_wake.cpp
 )
 add_executable(avd_tests ${AVD_TEST_SOURCES})
 target_link_libraries(avd_tests PRIVATE avd_scenarios)

@@ -50,6 +50,16 @@ export default async function createAvdModule(wasmBytes) {
   A.jet = () => new Float64Array(memory.buffer, ex.avd_jet(), 64);
   A.runway = () => Array.from(new Float64Array(memory.buffer, ex.avd_runway(), 6));
   A.windGrid = (hx, hy, hz, nx, ny, nz) => new Float64Array(memory.buffer, ex.avd_wind_grid(hx, hy, hz, nx, ny, nz), 3 * nx * ny * nz);
+  // The wake's vortex segments: { n, gmax, ground, seg } with 9 numbers a
+  // segment (a and b ENU m, circulation m^2/s, core radius m, age s). A view
+  // into the module's memory: copy what you keep.
+  A.wake = () => {
+    const h = new Float64Array(memory.buffer, ex.avd_wake(), 8);
+    const n = h[0] | 0;
+    return { n, gmax: h[1], ground: h[2], seg: new Float64Array(memory.buffer, h.byteOffset + 64, n * 9) };
+  };
+  // The wind (ENU m/s) on a grid over centre +- half size (ENU m), x fastest.
+  A.windBox = (c, h, nx, ny, nz) => new Float64Array(memory.buffer, ex.avd_wind_box(c[0], c[1], c[2], h[0], h[1], h[2], nx, ny, nz), 3 * nx * ny * nz);
   A.airport = () => { const [icao, name, runway, reciprocal] = A.text(ex.avd_airport_text()).split('|'); return { icao, name, runway, reciprocal }; };
   // Weight and balance: planned (next spawn) or current. Masses in kg, x in
   // the structural frame (m, forward positive), fuel in litres.

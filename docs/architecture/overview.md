@@ -89,6 +89,21 @@ costs about 30 µs natively (`avdemo bench`).
   commands add, limited to the larger authority. A powered steering actuator
   has a slew-rate limit (`steer_rate_deg_per_s`); without one the wheel
   follows a mechanical linkage at once.
+- **Wake.** `Wake` (`avd/wake.hpp`) is what the aircraft leaves in the air,
+  outside the integrated state. The aircraft owns no reference to it. Each
+  surface's trailing-edge circulation (Kutta–Joukowski from the strips' lift)
+  is shed at intervals of about half a span. The shed vortices form "gates" of
+  vortex rings that stay where they were shed. Each gate:
+  - rolls up into one vortex per same-sign run (Betz) over the Spreiter–Sacks
+    distance;
+  - moves with the local wind plus its own induction and ground images;
+  - grows Lamb–Oseen cores (Squire);
+  - decays in two phases after Holzäpfel's P2P model.
+
+  Older gates are thinned. `WakeField` wraps an `AtmosphereField` with wakes,
+  so an aircraft flying into one feels it through the ordinary air sample. The
+  sample uses the wake gradient averaged over the span. The host updates the
+  wake after each step, and the web build passes `WakeField` to the step.
 - **World.** `TiledWorldGround` provides the open-world ground: 500 m tiles
   with a terrain heightfield, surface classes and extruded buildings. Hard
   points inside a building are pushed out through the nearest wall, and the

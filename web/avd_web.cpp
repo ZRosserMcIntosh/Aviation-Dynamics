@@ -16,6 +16,7 @@
 #include "avd/loading.hpp"
 #include "avd/procedures.hpp"
 #include "avd/units.hpp"
+#include "avd/wake.hpp"
 #include "avd/world_frame.hpp"
 
 #if defined(__EMSCRIPTEN__)
@@ -66,7 +67,13 @@ struct Sim {
     Real clmaxKey = -1, clmax = 0, clmaxTakeoff = 0, clmaxLanding = 0;
     // Planned load (kg per station, m^3 per tank), applied to every new spawn.
     std::vector<Real> loadStations, loadTanks;
+    // The aircraft's wake: shed into the air, and felt when flown into (its
+    // own gates older than kOwnWakeAge s: after a 360, a go-around).
+    std::unique_ptr<Wake> wake;
+    std::unique_ptr<WakeField> air;  // the weather with the wake in it
+    bool wakeOn = true;
 };
+constexpr Real kOwnWakeAge = 4.0;
 
 Sim* g = nullptr;
 double g_state[kStateSize];
@@ -154,6 +161,19 @@ void collectEvents() {
 }
 
 // The São Paulo wind surroundings plus the page's settings and hazard.
+// Ambient eddy dissipation rate (m^2/s^3) for the wake's decay, from the
+// weather settings: calm air, the surface wind's mechanical turbulence (u* ~
+// 0.08 U10, eps = u*^3 / (kappa z) at ~100 m), the clear-air class, the RMS
+// intensity (eps ~ sigma^3 / L, L ~ 300 m) and convection (0.4 w*^3 / zi).
+Real eddyDissipation() {
+    const auto& w = g->wx;
+    static constexpr Real kClass[4] = {0, 2e-3, 1.5e-2, 8e-2};
+    Real eps = 1e-4 + std::pow(0.08 * w.windSpeed, 3) / (0.4 * 100) + kClass[std::clamp(w.severity, 0, 3)];
+    eps += std::pow(w.turbulence, 3) / 300;
+    if (w.convectiveVelocity > 0) eps += 0.4 * std::pow(w.convectiveVelocity, 3) / std::max(w.convectiveDepth, 100.0);
+    return eps;
+}
+
 void rebuildWeather() {
     const auto& w = g->wx;
     SimpleWeather::Params wp;
@@ -199,6 +219,8 @@ void rebuildWeather() {
     }
     g->weatherParams = wp;
     g->weather = std::make_unique<SimpleWeather>(wp);
+    if (g->air) g->air->setBase(*g->weather);
+    if (g->wake) g->wake->setEddyDissipation(eddyDissipation());
 }
 
 }  // namespace
@@ -295,6 +317,18 @@ void newAircraft() {
     g->trimThrottle = 0;
     g->trimMixture = 1;
     g->windAvgValid = false;
+    WakeParams wp;
+    wp.maxBinsPerSurface = 12;  // the near wake for display and encounters; fewer segments
+    wp.eddyDissipation = eddyDissipation();
+    g->wake = std::make_unique<Wake>(g->ac->aeroModel(), wp);
+    g->air = std::make_unique<WakeField>(*g->weather);
+    g->air->add(*g->wake, kOwnWakeAge);
+}
+
+// The air the aircraft flies in: the weather, with its wake when that is on.
+const AtmosphereField& flightAir() {
+    if (g->wakeOn && g->air) return *g->air;
+    return *g->weather;
 }
 
 // Trimmed airborne spawn: solve the free-air trim in calm air at the spawn
@@ -385,6 +419,7 @@ void finishReset(bool seedInstruments) {
     p.setComStandby(0, 132800);
     p.setTransponderMode(TransponderMode::Altitude);
     g->ac->drainEvents();
+    if (g->wake) g->wake->reset();  // a new start leaves nothing in the air
 }
 
 }  // namespace
@@ -703,7 +738,8 @@ AVD_EXPORT int avd_advance(double seconds) {
     while (g->accumulator >= kDt) {
         PilotInput in = g->assist.apply(g->raw, *g->ac, kDt);
         g->procedure.update(*g->ac, in, kDt);
-        g->ac->step(kDt, in, *g->ground, *g->weather);
+        g->ac->step(kDt, in, *g->ground, flightAir());
+        if (g->wakeOn) g->wake->update(*g->ac, *g->weather, g->ground.get());
         g->accumulator -= kDt;
         ++n;
         const Vec3 w = g->ac->telemetry().air.wind;
@@ -848,6 +884,72 @@ AVD_EXPORT double* avd_wind_grid(double hx, double hy, double hz, int nx, int ny
                 *o++ = d.z;
             }
     return g_windGrid;
+}
+
+// ---- Wake ------------------------------------------------------------------
+// Shed and felt (on, the default) or neither (off).
+AVD_EXPORT void avd_set_wake(int on) {
+    if (!g) return;
+    g->wakeOn = on != 0;
+    if (!g->wakeOn && g->wake) g->wake->reset();
+}
+
+// The wake's vortex segments (see web/README.md): [0] count, [1] the largest
+// |circulation| (m^2/s), [2] ground height (ENU up, m; -1e9 without), then
+// kWakeStride doubles per segment: end a (ENU, m), end b, circulation (m^2/s,
+// right-handed about a -> b), Lamb-Oseen core radius (m), age (s). Bound,
+// attached, shed and ground-image segments; at most kWakeMax.
+constexpr int kWakeMax = 4096, kWakeStride = 9, kWakeHeader = 8;
+double g_wake[kWakeHeader + kWakeMax * kWakeStride];
+std::vector<WakeSegment> g_wakeSegments;
+AVD_EXPORT double* avd_wake() {
+    g_wake[0] = g_wake[1] = 0;
+    g_wake[2] = -1e9;
+    if (!g || !g->wake || !g->wakeOn) return g_wake;
+    g->wake->segments(g_wakeSegments);
+    const GroundHit h = g->ground->below(g->ac->state().body.position);
+    if (h.hit) g_wake[2] = -h.point.z;
+    int n = 0;
+    Real gmax = 0;
+    for (const WakeSegment& w : g_wakeSegments) {
+        if (n >= kWakeMax) break;
+        const Vec3 a = world::enuFromNed(w.a), b = world::enuFromNed(w.b);
+        double* o = g_wake + kWakeHeader + n * kWakeStride;
+        o[0] = a.x; o[1] = a.y; o[2] = a.z;
+        o[3] = b.x; o[4] = b.y; o[5] = b.z;
+        o[6] = w.gamma; o[7] = w.core; o[8] = w.age;
+        gmax = std::max(gmax, std::abs(w.gamma));
+        ++n;
+    }
+    g_wake[0] = n;
+    g_wake[1] = gmax;
+    return g_wake;
+}
+
+// The wind (ENU, m/s, the air's own velocity) on an nx x ny x nz grid over
+// the box centre (cE, cN, cU) +- (hE, hN, hU), ENU metres, x fastest. Each
+// value is averaged over the grid spacing (smaller eddies would alias).
+double g_windBox[3 * 24 * 24 * 12];
+AVD_EXPORT double* avd_wind_box(double cE, double cN, double cU, double hE, double hN, double hU, int nx, int ny, int nz) {
+    std::fill(std::begin(g_windBox), std::end(g_windBox), 0.0);
+    if (!g) return g_windBox;
+    nx = std::clamp(nx, 2, 24), ny = std::clamp(ny, 2, 24), nz = std::clamp(nz, 2, 12);
+    const Real t = g->ac->time();
+    // MSL altitude of NED z = 0.
+    const Real msl0 = g->ac->altitudeMsl() + g->ac->state().body.position.z;
+    const Real extent = std::min({2 * hE / (nx - 1), 2 * hN / (ny - 1), 2 * hU / (nz - 1)});
+    double* o = g_windBox;
+    for (int k = 0; k < nz; ++k)
+        for (int j = 0; j < ny; ++j)
+            for (int i = 0; i < nx; ++i) {
+                const Vec3 enu{cE + hE * (2.0 * i / (nx - 1) - 1), cN + hN * (2.0 * j / (ny - 1) - 1), cU + hU * (2.0 * k / (nz - 1) - 1)};
+                const Vec3 p = world::nedFromEnu(enu);
+                const Vec3 w = world::enuFromNed(g->weather->sample(p, msl0 - p.z, t, extent).wind);
+                *o++ = w.x;
+                *o++ = w.y;
+                *o++ = w.z;
+            }
+    return g_windBox;
 }
 
 // ---- Weight and balance ---------------------------------------------------
