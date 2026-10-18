@@ -78,7 +78,13 @@
    "field": "surfaces",
    "kind": "estimated",
    "source": "EST",
-   "note": "Planform matching the published area and span; quarter-chord sweep 27/33 deg; supercritical section polar (section clmax 1.48, no leading-edge devices: with simple sweep theory the wing reaches CLmax ~1.25, near the published ~112 KIAS clean stall at mid weight); single-slotted Fowler flaps, 25 % chord, extending the chord 12 % at full deflection, dclmax/dcl 0.9 (approach speeds near the published ~115-125 KIAS). Wing incidence (-0.0/-0.7/-3.0 deg root/kink/tip) and tailplane incidence (-0.8 deg) set for a ~1.7 deg cruise attitude with the elevator near neutral at M0.85."
+   "note": "Planform matching the published area and span (30.36 m including the winglets); quarter-chord sweep 27/33 deg; supercritical section polar, clmax 1.8 at flight Reynolds numbers (~2e7). Span loading by the nonlinear lifting line: with 6 deg of washout (incidence 0 / -0.7 / -6 deg root / kink / tip) the clean wing reaches CLmax ~1.24, near the published ~112 KIAS clean stall at mid weight. Winglets estimated from photographs: canted 75 deg, ~1.6 m tall, 40 deg sweep, chords 1.8 / 0.6 m, toed out 3 deg. Single-slotted Fowler flaps to ~70 % semi-span (meeting the ailerons), 25 % chord, extending the chord 12 % at full deflection, dclmax/dcl 0.9 (landing CLmax ~2.08; 1-g stall ~100 KIAS at mid weight). Tailplane incidence -0.8 deg (stabiliser neutral) for a ~1.7 deg cruise attitude."
+  },
+  {
+   "field": "controls.stabilizer_trim",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "The G650 trims with a movable horizontal stabiliser; travel (10 deg nose up, 3 deg nose down) estimated for the class, not published."
   },
   {
    "field": "turbofans",
@@ -205,7 +211,7 @@
    "section": {
     "lift_slope_per_rad": 6.3,
     "zero_lift_alpha_deg": -3.2,
-    "cl_max": 1.48,
+    "cl_max": 1.8,
     "cl_min": -1.0,
     "cd_min": 0.0062,
     "cd_quadratic": 0.006,
@@ -216,6 +222,7 @@
     "flat_plate_cd": 1.9
    },
    "span_efficiency": 0.88,
+   "lifting_line": true,
    "thickness_ratio": 0.11,
    "korn_factor": 0.95,
    "panels": [
@@ -268,20 +275,20 @@
       4.2,
       0.7299
      ],
-     "span_m": 10.98,
+     "span_m": 10.56,
      "root_chord_m": 4.7,
-     "tip_chord_m": 1.65,
+     "tip_chord_m": 1.767,
      "sweep_deg": 33.0,
      "dihedral_deg": 3.0,
      "root_incidence_deg": -0.7,
-     "tip_incidence_deg": -3.0,
+     "tip_incidence_deg": -6.0,
      "strips": 8,
      "controls": [
       {
        "name": "flap",
        "channel": "flap",
        "span_start": 0.0,
-       "span_end": 0.5,
+       "span_end": 0.6,
        "chord_fraction": 0.25,
        "max_positive_deg": 39,
        "max_negative_deg": 0,
@@ -316,6 +323,21 @@
        "profile_drag_per_rad2": 0.25
       }
      ]
+    },
+    {
+     "root_quarter_chord_m": [
+      -21.6227,
+      14.76,
+      0.1765
+     ],
+     "span_m": 0.42,
+     "root_chord_m": 1.767,
+     "tip_chord_m": 0.6,
+     "sweep_deg": 40.0,
+     "dihedral_deg": 75.0,
+     "root_incidence_deg": -3.0,
+     "tip_incidence_deg": -3.0,
+     "strips": 3
     }
    ]
   },
@@ -335,6 +357,7 @@
     "flat_plate_cd": 1.9
    },
    "span_efficiency": 0.85,
+   "trimmable_stabilizer": true,
    "downwash": {
     "source": 0
    },
@@ -843,6 +866,8 @@
   "flaps_electric": false,
   "flap_motor_current_a": 0,
   "elevator_trim_range_deg": 14,
+  "stabilizer_trim_nose_up_deg": 10,
+  "stabilizer_trim_nose_down_deg": 3,
   "elevator_trim_rate": 0.12,
   "rigging_aileron": 0.0,
   "rigging_rudder": 0.0,
@@ -891,6 +916,7 @@
   "present": true,
   "surface": 0,
   "strip": 7,
+  "computed": true,
   "alpha_margin_deg": 1.2,
   "pusher_margin_deg": 0.2,
   "pusher_elevator": -0.7

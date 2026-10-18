@@ -387,12 +387,7 @@ void placeTrimmed(Vec3 posNed, Real altMsl, Real track, Real kias, int flapDeten
     // before the downwash and the instruments are initialised from them.
     g->ac->prepareContext(tr.input, *g->ground, *g->weather);
     g->ac->settleDownwash();
-    Real elevUp = 0.4;
-    for (const auto& sd : g->def.surfaces)
-        for (const auto& pd : sd.panels)
-            for (const auto& c : pd.controls)
-                if (c.channel == ControlChannel::Elevator) elevUp = c.maxNegative;
-    g->ac->setElevatorTrim(tr.elevator * elevUp / g->def.controls.elevatorTrimRange);
+    g->ac->setElevatorTrim(tr.trim);
     g->trimThrottle = tr.input.throttle;
     g->trimMixture = tr.input.mixture;
 }

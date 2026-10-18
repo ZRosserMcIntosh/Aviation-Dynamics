@@ -115,6 +115,11 @@ struct LiftingSurfaceDef {
     // aerodynamics are a separate model (Milestone 7).
     Real thicknessRatio = 0.12;
     Real kornFactor = 0.87;           // 0.87 conventional, ~0.95 supercritical
+    // Span loading from a nonlinear lifting line (horseshoe vortices solved
+    // together, ground images) instead of independent strips with the
+    // Helmbold slope: tip stall, swept-wing pitch-up, winglets, roll damping.
+    bool liftingLine = false;
+    bool trimmableStabilizer = false;  // its incidence follows the stabiliser trim
 };
 
 // Slender-body fuselage: Munk moment (destabilising pitch/yaw) and crossflow
@@ -333,6 +338,11 @@ struct FlightControlsDef {
     bool flapsElectric = true;
     Real flapMotorCurrent = 10;       // A
     Real elevatorTrimRange = 0.2;     // rad of equivalent elevator offset at full trim
+    // Trimmable horizontal stabiliser (jets): the trim moves the whole
+    // tailplane's incidence instead of offsetting the elevator, rad of travel
+    // each way (0: elevator-offset trim). The tailplane surface is marked
+    // trimmable_stabilizer.
+    Real stabilizerNoseUp = 0, stabilizerNoseDown = 0;
     Real elevatorTrimRate = 0.1;      // trim fraction per second (manual wheel)
     // Fixed rigging (ground-adjustable tabs, aileron rigging), as pilot-sense
     // control offsets -1..1. Light aircraft are rigged to fly hands-off near
@@ -363,6 +373,10 @@ struct StallWarningDef {
     bool present = true;
     int surface = 0;                  // lifting surface carrying the vane/reed
     int strip = -1;                   // strip index (-1 = middle)
+    // An angle-of-attack computer (jets) calibrated to the wing's real stall:
+    // it protects the strip closest to its stall anywhere on the surface,
+    // not one vane's strip (a swept wing stalls outboard first).
+    bool computed = false;
     Real alphaMargin = 0.07;          // rad below the strip's stall angle
     // Stick pusher (T-tail jets: keeps the airplane out of a locked-in deep
     // stall): airborne, at this margin below the vane strip's stall angle the

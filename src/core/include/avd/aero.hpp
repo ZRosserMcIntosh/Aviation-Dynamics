@@ -60,6 +60,7 @@ struct ControlDeflections {
     Real rudder = 0;    // + yaw right
     Real flap = 0;      // rad, trailing edge down
     Real spoiler = 0;   // fraction of main-wing lift spoiled (speedbrake / lift dump)
+    Real stabilizer = 0;  // rad, trimmable horizontal stabiliser, + nose up (leading edge down)
 };
 
 // Propeller slipstream as seen by downstream surfaces.
@@ -82,6 +83,7 @@ struct AeroInputs {
     Vec3 cg;                   // structural frame
     ControlDeflections controls;
     Real heightAboveGround = 1e9;  // of the wing reference (m)
+    Vec3 groundUpBody;             // unit normal of the ground (up), body axes; zero: no ground images
     const SlipstreamState* slipstreams = nullptr;
     int slipstreamCount = 0;
     const Real* downwashLagged = nullptr;  // per surface, rad (size = surfaces)
@@ -105,6 +107,7 @@ struct StripTelemetry {
     Vec3 flowPerp;             // strip velocity relative to air, spanwise part removed (body)
     bool stalled = false;
     Real attached = 1;         // attached-flow weight of the section polar (tufts, buffet)
+    Real gamma = 0;            // bound circulation (m^2/s; lifting-line surfaces)
 };
 
 struct AeroOutputs {
@@ -116,6 +119,17 @@ struct AeroOutputs {
     Real dynamicPressure = 0;
     std::array<SurfaceOutput, 8> surfaces{};
     std::vector<StripTelemetry> strips;  // sized at construction; no allocation per step
+    // Lifting-line working storage (sized by prepare()).
+    std::vector<Vec3> llFlow, llInduced;   // per strip: free flow, induced air velocity
+    std::vector<Vec3> llInfluence;         // per surface, n x n: air velocity at i per unit circulation of j
+    std::vector<Real> llJacobian, llResidual, llGamma, llSeparated;
+    std::vector<Vec3> llGrad;
+    // Per strip: zero-lift shift, clmax increment / slope, cm, cd, chord extension.
+    std::vector<std::array<Real, 5>> llControl;
+    std::array<Vec3, 8> llDir{};           // flow direction the influence was built for
+    std::array<Real, 8> llHeight{};
+    std::array<bool, 8> llValid{};
+    int llIterations = 0;                  // Newton iterations of the last solve (diagnostics)
 };
 
 class AeroModel {
@@ -124,7 +138,7 @@ public:
 
     // Hot path: no allocation (outputs.strips must be sized via prepare()).
     void evaluate(const AeroInputs& in, AeroOutputs& out) const;
-    void prepare(AeroOutputs& out) const { out.strips.assign(strips_.size(), {}); }
+    void prepare(AeroOutputs& out) const;
 
     int surfaceCount() const { return static_cast<int>(surfaces_.size()); }
     int stripCount() const { return static_cast<int>(strips_.size()); }
@@ -178,6 +192,8 @@ private:
         // and normal axes in it, and the cosine of the local sweep.
         Vec3 chordNormal, normalNormal;
         Real cosSweep = 1;
+        Vec3 boundA, boundB;    // bound vortex ends at the quarter chord (A -> B along the lift axis)
+        int neighbourA = -1, neighbourB = -1;  // strips sharing the A / B edge (same surface)
         Real area, chord;
         Real width;             // length along spanAxis
         bool attached = true;
@@ -192,12 +208,25 @@ private:
         Real downwashGradient = 0;
         Vec3 centroid;
         bool horizontal = true;
+        // Lifting line: spanwise smoothing of the control effects (n x n,
+        // rows summing to 1). A flap's lift carries past its end over about
+        // half a chord; a step at a strip edge would put a line vortex half a
+        // strip from the neighbouring control point.
+        std::vector<Real> controlSmoothing;
     };
 
     void addPanel(int surfaceIndex, const PanelDef& panel, int side);
     Real controlDeflection(const StripControl& c, const ControlDeflections& d) const;
+    std::array<Real, 5> controlEffects(const Strip& st, const ControlDeflections& d) const;
     Vec3 localFlow(const Surface& S, const Strip& st, const Vec3& r, const AeroInputs& in) const;
     Vec3 slipstreamAt(const Vec3& position, const AeroInputs& in) const;
+    // Nonlinear lifting line (Phillips & Snyder 2000) over strips [n0, n0+n)
+    // of surface si: fills out.llInduced. gammaOf(k, v, attached) is the
+    // circulation the section of strip k carries at strip velocity v (and its
+    // attached-flow weight).
+    template <class GammaOf>
+    void solveLiftingLine(int si, int n0, int n, const AeroInputs& in, AeroOutputs& out, GammaOf&& gammaOf) const;
+    std::array<int, 9> llOffset_{};  // start of each surface's influence block
 
     std::vector<Surface> surfaces_;
     std::vector<Strip> strips_;

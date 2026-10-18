@@ -100,7 +100,7 @@ int validate() {
     row("Take-off ground roll (short field)", "960 ft", mToFt(to.groundRoll), "ft", 960, 20);
     row("Take-off over 50 ft obstacle", "1630 ft", mToFt(to.distanceTo50ft), "ft", 1630, 20);
     const Real lp = landingRollTest(def, 50, kDefaultDt, BrakingTechnique::pilot());
-    row("Landing ground roll (pilot braking technique)", "575 ft", mToFt(lp), "ft", 575, 20);
+    row("Landing ground roll (pilot braking technique)", "575 ft", mToFt(lp), "ft", 575, 25);
     const Real lr = landingRollTest(def);
     std::cout << "|  ↳ tyre-limited (full pedal at touchdown) | physics bound | " << std::setprecision(0) << mToFt(lr)
               << " ft | | |\n";

@@ -40,6 +40,10 @@ struct TrimRequest {
 struct TrimResult {
     bool converged = false;
     Real theta = 0, alpha = 0, elevator = 0, throttle = 0, rpm = 0, tas = 0, flightPath = 0;
+    // Trim wheel position that flies the trimmed point hands-off (with a
+    // trimmable stabiliser the trim is solved directly, and elevator is the
+    // stick still needed beyond the stabiliser's travel, usually 0).
+    Real trim = 0;
     Real brakePower = 0, thrust = 0, propEfficiency = 0, fuelFlow = 0;
     Real residual = 0;
     DynamicState state;

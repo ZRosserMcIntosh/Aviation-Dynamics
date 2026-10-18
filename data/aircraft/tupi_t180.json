@@ -26,7 +26,7 @@
     {"field": "mass.cg_aft_limit", "kind": "published", "source": "POH", "note": "47.3 in at all weights (normal category)."},
     {"field": "reference", "kind": "published", "source": "POH", "note": "Wing area 174 sq ft, span 36 ft 1 in, MAC ~58.8 in."},
     {"field": "surfaces[0].panels", "kind": "estimated", "source": "EST", "note": "Two-panel planform (constant-chord inboard, tapered outboard) matching span and area; incidence +1.5 root / -1.5 tip, dihedral 1.73 deg."},
-    {"field": "surfaces[0].section", "kind": "calibrated", "source": "ABBOTT", "note": "NACA 2412 2-D slope and zero-lift angle; cl_max calibrated to POH stall speeds (53 KCAS flaps up, 48 KCAS flaps 30)."},
+    {"field": "surfaces[0].section", "kind": "published", "source": "ABBOTT", "note": "NACA 2412 2-D slope, zero-lift angle and smooth-section cl_max 1.60 at Re ~3e6 (Abbott & von Doenhoff); with the lifting line the clean stall speed follows without calibration. Flap dclmax/dcl (0.55) calibrated to the flaps-30 stall."},
     {"field": "surfaces[0].panels[*].controls", "kind": "published", "source": "TCDS", "note": "Aileron 20 up / 15 down; flaps 0-30 deg. Flap effectiveness and drag: calibrated/estimated."},
     {"field": "surfaces[1]", "kind": "estimated", "source": "EST", "note": "Horizontal tail span 11 ft 4 in (POH), area/chords estimated; elevator 28 up / 23 down (TCDS); incidence and slipstream exposure calibrated so the elevator is near neutral in cruise and the nose wheel lifts near 50 KIAS on the take-off roll."},
     {"field": "surfaces[2]", "kind": "estimated", "source": "EST", "note": "Vertical tail geometry estimated; rudder travel 17.7 deg each way (TCDS 17 deg 44 min)."},
@@ -87,11 +87,12 @@
       "name": "wing",
       "section": {
         "lift_slope_per_rad": 6.0, "zero_lift_alpha_deg": -2.0,
-        "cl_max": 1.48, "cl_min": -1.1,
+        "cl_max": 1.60, "cl_min": -1.1,
         "cd_min": 0.0068, "cd_quadratic": 0.0075, "cl_at_cd_min": 0.15, "cm0": -0.047,
         "stall_width_deg": 3.0, "post_stall_cl_drop": 0.22, "flat_plate_cd": 1.9
       },
       "span_efficiency": 0.86,
+      "lifting_line": true,
       "thickness_ratio": 0.12,
       "panels": [
         {
@@ -102,7 +103,7 @@
             {"name": "flap", "channel": "flap", "span_start": 0.15, "span_end": 1.0, "chord_fraction": 0.30,
              "max_positive_deg": 30, "max_negative_deg": 0,
              "effectiveness": {"deflection_deg": [0, 10, 20, 30], "eta": [1.0, 0.95, 0.78, 0.62]},
-             "clmax_increment_ratio": 0.70, "profile_drag_per_rad2": 0.55}
+             "clmax_increment_ratio": 0.55, "profile_drag_per_rad2": 0.55}
           ]
         },
         {
@@ -113,7 +114,7 @@
             {"name": "flap", "channel": "flap", "span_start": 0.0, "span_end": 0.2, "chord_fraction": 0.30,
              "max_positive_deg": 30, "max_negative_deg": 0,
              "effectiveness": {"deflection_deg": [0, 10, 20, 30], "eta": [1.0, 0.95, 0.78, 0.62]},
-             "clmax_increment_ratio": 0.70, "profile_drag_per_rad2": 0.55},
+             "clmax_increment_ratio": 0.55, "profile_drag_per_rad2": 0.55},
             {"name": "aileron", "channel": "aileron", "span_start": 0.2, "span_end": 1.0, "chord_fraction": 0.25,
              "max_positive_deg": 15, "max_negative_deg": 20, "antisymmetric": true,
              "effectiveness": {"deflection_deg": [0, 10, 20], "eta": [1.0, 0.95, 0.80]},

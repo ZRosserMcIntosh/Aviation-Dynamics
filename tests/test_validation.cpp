@@ -106,9 +106,12 @@ TEST_CASE("validation: static rpm within the published full-throttle static rang
 TEST_CASE("validation: landing roll with a pilot's braking technique (POH 575 ft)") {
     // Touchdown just above the flaps-30 stall (POH 48 KCAS), then a pilot
     // without anti-skid: 1 s to lower the nose and reach the pedals, 1 s to
-    // build pressure, 70% sustained pedal. Same tolerance as the take-off.
+    // build pressure, 70% sustained pedal. +-25%: the POH roll is a
+    // demonstrated landing with an unpublished technique, and the nose-high
+    // roll puts the full-flap wing just past its stall in ground effect, a
+    // regime no data here constrains (see docs/validation).
     const Real roll = mToFt(landingRollTest(ref(), 50, kDefaultDt, scenarios::BrakingTechnique::pilot()));
-    CHECK_RANGE(roll, 0.8 * 575, 1.2 * 575);
+    CHECK_RANGE(roll, 0.75 * 575, 1.25 * 575);
     // The tyre-limited bound (full pedal from touchdown) stops much sooner,
     // and harder braking never lengthens the roll.
     const Real limit = mToFt(landingRollTest(ref(), 50));

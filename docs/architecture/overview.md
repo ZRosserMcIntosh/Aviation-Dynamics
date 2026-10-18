@@ -63,8 +63,10 @@ costs about 30 µs natively (`avdemo bench`).
   gradient. The gradient gives the strip theory spatially varying gusts.
 - **Lifting surfaces.** Each panel is split into strips. Section lift and drag
   come from a full ±180° polar: the published linear range, Viterna-Corrigan
-  post-stall and reversed flow. The Helmbold 3D slope and a strip-local induced
-  angle give the span loading. Flaps change the zero-lift angle and clmax
+  post-stall and reversed flow. Wings use a nonlinear lifting line
+  (horseshoe vortices solved together, ground images, artificial viscosity
+  after the stall) for the span loading; tails use the Helmbold 3D slope with
+  a strip-local induced angle. Flaps change the zero-lift angle and clmax
   through τ. Compressibility uses Korn/Lock drag rise. Downwash at the tail is
   lagged by the transport time. Ground effect reduces induced angle near the
   ground.

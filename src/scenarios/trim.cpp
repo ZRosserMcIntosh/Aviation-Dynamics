@@ -64,6 +64,7 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
     // Piston + propeller: the shaft speed is a fourth unknown (shaft
     // acceleration = 0). Turbofans are held at their commanded fan speed.
     const bool piston = ac.engineCount() > 0;
+    const bool ths = ac.hasTrimmableStabilizer();
     ac.setTurbofansSteady(!piston);
     const int n = piston ? 4 : 3;
 
@@ -82,7 +83,16 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
         s.body.attitude = Quat::fromEuler(0, t.v[Theta], 0);
         s.shaftOmega[0] = t.v[Omega];
         in = PilotInput{};
-        in.pitch = t.v[Elevator];
+        // A trimmable stabiliser is trimmed stick free, and beyond its travel
+        // the stick does the rest (one continuous unknown, -2..2); otherwise
+        // the elevator is solved and the trim wheel set to it afterwards.
+        if (ths) {
+            const Real trimPart = clamp(t.v[Elevator], -1.0, 1.0);
+            ac.setElevatorTrim(trimPart);
+            in.pitch = t.v[Elevator] - trimPart;
+        } else {
+            in.pitch = t.v[Elevator];
+        }
         in.throttle = t.v[Throttle];
         in.mixture = mixture;
     };
@@ -127,7 +137,7 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
                 const int u = unknown[j];
                 xt.v[u] += clamp(lambda * dx[j], -maxStep[u], maxStep[u]);
             }
-            xt.v[Elevator] = clamp(xt.v[Elevator], -1.0, 1.0);
+            xt.v[Elevator] = clamp(xt.v[Elevator], ths ? -2.0 : -1.0, ths ? 2.0 : 1.0);
             xt.v[Throttle] = clamp(xt.v[Throttle], 0.0, 1.0);
             xt.v[Omega] = std::max(xt.v[Omega], 20.0);
             xt.v[Tas] = std::max(xt.v[Tas], 10.0);
@@ -164,7 +174,8 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
     res.theta = x.v[Theta];
     res.flightPath = x.v[Gamma];
     res.alpha = x.v[Theta] - x.v[Gamma];
-    res.elevator = x.v[Elevator];
+    res.elevator = ths ? x.v[Elevator] - clamp(x.v[Elevator], -1.0, 1.0) : x.v[Elevator];
+    res.trim = ths ? clamp(x.v[Elevator], -1.0, 1.0) : ac.trimForElevator(x.v[Elevator]);
     res.throttle = x.v[Throttle];
     res.rpm = piston ? x.v[Omega] * 60 / kTwoPi : 0.0;
     res.tas = x.v[Tas];
@@ -217,12 +228,7 @@ void startTrimmedFlight(Aircraft& ac, const FlightSetup& fs, const AtmosphereFie
         pilot->lateral = TestPilot::Lateral::WingsLevel;
     }
     // Put the trimmed elevator into the trim wheel so the pilot starts hands-off.
-    Real elevUp = 0.4;
-    for (const auto& s : ac.definition().surfaces)
-        for (const auto& p : s.panels)
-            for (const auto& c : p.controls)
-                if (c.channel == ControlChannel::Elevator) elevUp = c.maxNegative;
-    ac.setElevatorTrim(tr.elevator * elevUp / ac.definition().controls.elevatorTrimRange);
+    ac.setElevatorTrim(tr.trim);
     ac.resetInstrumentsToTruth();
 }
 

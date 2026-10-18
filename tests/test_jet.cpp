@@ -285,10 +285,13 @@ TEST_CASE("top g: the stick pusher keeps a full-aft-stick idle stall out of the 
         const AircraftTelemetry& t = ac.telemetry();
         if (warnIas > 0 && pullStart < 0) pullStart = i;
         if (warnIas == 0) {
-            // Idle, held level: a slow 1-g deceleration to the warning.
+            // Idle, held level: a slow 1-g deceleration to the warning, the
+            // pilot trimming the stick force away as the speed falls.
             const Real thetaCmd = t.alpha + clamp(0.01 * (h0 - t.altitudeMsl), -0.08, 0.08);
             in.pitch = clamp(tr.elevator + 2.5 * (thetaCmd - t.pitch) - 0.8 * t.omega.y, -1.0, 1.0);
+            in.trimRate = clamp(4 * in.pitch, -1.0, 1.0);
         } else {
+            in.trimRate = 0;
             in.pitch = 1;  // then held fully back
         }
         // Wings held level with the ailerons.
@@ -359,12 +362,7 @@ TEST_CASE("top g: auto-trim holds FL410 after a pitch input, and near the stall 
         ac.setState(tr.state);
         ac.prepareContext(tr.input, ground, atm);
         ac.settleDownwash();
-        Real elevUp = 0.4;
-        for (const auto& s : ac.definition().surfaces)
-            for (const auto& p : s.panels)
-                for (const auto& c : p.controls)
-                    if (c.channel == ControlChannel::Elevator) elevUp = c.maxNegative;
-        ac.setElevatorTrim(tr.elevator * elevUp / ac.definition().controls.elevatorTrimRange);
+        ac.setElevatorTrim(tr.trim);
         return tr;
     };
     AssistConfig cfg = makePreset(AssistPreset::Simulation);

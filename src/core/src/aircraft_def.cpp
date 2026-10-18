@@ -153,7 +153,7 @@ std::vector<std::string> AircraftDefinition::validate() const {
             c.positive(pp + ".rootChord", P.rootChord);
             c.positive(pp + ".tipChord", P.tipChord);
             c.range(pp + ".sweep", P.sweep, -1.2, 1.2);
-            c.range(pp + ".dihedral", P.dihedral, -0.8, 0.8);
+            c.range(pp + ".dihedral", P.dihedral, -1.5, 1.5);  // to ~86 deg: canted winglets
             c.range(pp + ".rootIncidence", P.rootIncidence, -0.5, 0.5);
             c.range(pp + ".tipIncidence", P.tipIncidence, -0.5, 0.5);
             c.range(pp + ".strips", P.strips, 1, 64);
@@ -314,6 +314,8 @@ std::vector<std::string> AircraftDefinition::validate() const {
     c.positive("controls.flapRate", controls.flapRate);
     c.nonNegative("controls.flapMotorCurrent", controls.flapMotorCurrent);
     c.range("controls.elevatorTrimRange", controls.elevatorTrimRange, 0, 0.6);
+    c.range("controls.stabilizerNoseUp", controls.stabilizerNoseUp, 0, 0.35);
+    c.range("controls.stabilizerNoseDown", controls.stabilizerNoseDown, 0, 0.35);
     c.positive("controls.elevatorTrimRate", controls.elevatorTrimRate);
     c.range("controls.riggingAileron", controls.riggingAileron, -0.3, 0.3);
     c.range("controls.riggingRudder", controls.riggingRudder, -0.3, 0.3);

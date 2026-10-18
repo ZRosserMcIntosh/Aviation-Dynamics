@@ -181,6 +181,11 @@ public:
     const MassProperties& massProperties() const { return mass_; }
     const AeroOutputs& aero() const { return aeroOut_; }
     const AeroModel& aeroModel() const { return *aeroModel_; }
+    bool hasTrimmableStabilizer() const { return def_.controls.stabilizerNoseUp > 0 || def_.controls.stabilizerNoseDown > 0; }
+    // Trim wheel position (-1..1) that gives the same pitching control as an
+    // elevator (stick) input e: the elevator offset, or for a trimmable
+    // stabiliser the tailplane angle making the same tail lift.
+    Real trimForElevator(Real e) const;
     AeroModel& aeroModel() { return *aeroModel_; }
     const InstrumentPanel& instruments() const { return instruments_; }
     InstrumentPanel& instruments() { return instruments_; }
@@ -265,6 +270,7 @@ private:
         std::array<GroundPlane, kMaxGear> gearGround{};
         std::array<GroundPlane, kMaxContacts> contactGround{};
         Real wingHeightAgl = 1e9;
+        Vec3 groundUpBody;  // ground normal (up) in body axes; zero without ground
         ControlDeflections controls;
         std::array<PistonEngineInputs, kMaxEngines> engineIn{};
         std::array<TurbofanInputs, kMaxEngines> turboIn{};

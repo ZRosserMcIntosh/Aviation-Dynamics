@@ -419,6 +419,7 @@ void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, con
         const Vec3 w = pos + q.rotate(aeroModel_->surfaceCentroid(0) - mass_.cg);
         const GroundPlane gp = plane(w);
         c.wingHeightAgl = gp.valid ? dot(w - gp.point, gp.normal) : 1e9;
+        c.groundUpBody = gp.valid ? q.inverseRotate(gp.normal) : Vec3{};
     }
 
     // Flight controls. Trim acts as an equivalent elevator offset (the
@@ -429,7 +430,13 @@ void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, con
             for (const auto& cs : p.controls)
                 if (cs.channel == ControlChannel::Elevator) elevUp = cs.maxNegative;
     c.controls.aileron = clamp(in.roll + def_.controls.riggingAileron, -1.0, 1.0);
-    c.controls.elevator = clamp(in.pitch + trim_ * def_.controls.elevatorTrimRange / elevUp, -1.0, 1.0);
+    if (hasTrimmableStabilizer()) {
+        // The trim moves the tailplane; the stick keeps the whole elevator.
+        c.controls.stabilizer = trim_ * (trim_ > 0 ? def_.controls.stabilizerNoseUp : def_.controls.stabilizerNoseDown);
+        c.controls.elevator = clamp(in.pitch, -1.0, 1.0);
+    } else {
+        c.controls.elevator = clamp(in.pitch + trim_ * def_.controls.elevatorTrimRange / elevUp, -1.0, 1.0);
+    }
     if (pusher_) c.controls.elevator = std::min(c.controls.elevator, def_.stallWarning.pusherElevator);
     c.controls.rudder = clamp(in.yaw + def_.controls.riggingRudder, -1.0, 1.0);
     if (def_.controls.rudderLimiterIas > 0) {
@@ -579,6 +586,7 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
     ai.cg = cg;
     ai.controls = c.controls;
     ai.heightAboveGround = c.wingHeightAgl;
+    ai.groundUpBody = c.groundUpBody;
     ai.slipstreams = slip_.data();
     ai.slipstreamCount = engineCount();
     ai.downwashLagged = quasiSteadyDownwash_ ? nullptr : downwashLag_.data();
@@ -696,6 +704,23 @@ DynamicState advance(const DynamicState& s, const Aircraft::Derivatives& d, Real
     return r;
 }
 }  // namespace
+
+Real Aircraft::trimForElevator(Real e) const {
+    Real elevUp = 0.4, elevDown = 0.4, tau = 0.5;
+    for (const auto& s : def_.surfaces)
+        for (const auto& p : s.panels)
+            for (const auto& c : p.controls)
+                if (c.channel == ControlChannel::Elevator) {
+                    elevUp = c.maxNegative;
+                    elevDown = c.maxPositive;
+                    tau = flapEffectiveness(c.chordFraction);
+                }
+    if (!hasTrimmableStabilizer()) return clamp(e * elevUp / std::max(def_.controls.elevatorTrimRange, 1e-6), -1.0, 1.0);
+    // Same tail lift: stabiliser angle = elevator angle x its effectiveness.
+    const Real angle = tau * e * (e > 0 ? elevUp : elevDown);
+    const Real range = angle > 0 ? def_.controls.stabilizerNoseUp : def_.controls.stabilizerNoseDown;
+    return clamp(angle / std::max(range, 1e-6), -1.0, 1.0);
+}
 
 void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, const AtmosphereField& atm) {
     if (!(dt > 0) || faulted_) return;
@@ -839,7 +864,17 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
     if (def_.stallWarning.present && aeroModel_->surfaceCount() > def_.stallWarning.surface) {
         const int first = aeroModel_->firstStrip(def_.stallWarning.surface);
         const int end = aeroModel_->endStrip(def_.stallWarning.surface);
-        const int idx = def_.stallWarning.strip >= 0 ? first + def_.stallWarning.strip : (first + end) / 2;
+        int idx = def_.stallWarning.strip >= 0 ? first + def_.stallWarning.strip : (first + end) / 2;
+        if (def_.stallWarning.computed) {
+            Real least = 1e9;
+            for (int i = first; i < end; ++i) {
+                const StripTelemetry& s = aeroOut_.strips[i];
+                if (s.q > 30 && s.stallAlpha - s.alpha < least) {
+                    least = s.stallAlpha - s.alpha;
+                    idx = i;
+                }
+            }
+        }
         if (idx < end) {
             const StripTelemetry& st = aeroOut_.strips[idx];
             vane = st.q > 30 && st.alpha > st.stallAlpha - def_.stallWarning.alphaMargin;

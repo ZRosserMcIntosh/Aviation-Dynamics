@@ -427,6 +427,8 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
             ss.num("exposure", s.slipstreamExposure, 1, true);
         }
         o.boolean("ground_effect", s.groundEffect);
+        o.boolean("lifting_line", s.liftingLine);
+        o.boolean("trimmable_stabilizer", s.trimmableStabilizer);
         o.num("thickness_ratio", s.thicknessRatio);
         o.num("korn_factor", s.kornFactor);
         o.each("panels", [&](Obj& po, std::size_t) {
@@ -652,6 +654,8 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         c.boolean("flaps_electric", d.controls.flapsElectric);
         c.num("flap_motor_current_a", d.controls.flapMotorCurrent);
         c.num("elevator_trim_range_deg", d.controls.elevatorTrimRange, kDeg);
+        c.num("stabilizer_trim_nose_up_deg", d.controls.stabilizerNoseUp, kDeg);
+        c.num("stabilizer_trim_nose_down_deg", d.controls.stabilizerNoseDown, kDeg);
         c.num("elevator_trim_rate", d.controls.elevatorTrimRate);
         c.num("rigging_aileron", d.controls.riggingAileron);
         c.num("rigging_rudder", d.controls.riggingRudder);
@@ -684,6 +688,7 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         s.boolean("present", d.stallWarning.present);
         s.integer("surface", d.stallWarning.surface);
         s.integer("strip", d.stallWarning.strip);
+        s.boolean("computed", d.stallWarning.computed);
         s.num("alpha_margin_deg", d.stallWarning.alphaMargin, kDeg);
         s.num("pusher_margin_deg", d.stallWarning.pusherMargin, kDeg);
         s.num("pusher_elevator", d.stallWarning.pusherElevator);
