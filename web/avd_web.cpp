@@ -871,14 +871,20 @@ AVD_EXPORT double* avd_wind_grid(double hx, double hy, double hz, int nx, int ny
     const Quat& q = ac.state().body.attitude;
     const Vec3 c = ac.state().body.position;
     const Real alt = ac.altitudeMsl(), t = ac.time();
-    const Vec3 w0 = g->weather->sample(c, alt, t).wind;
+    // Each value is averaged over the grid spacing: eddies smaller than the
+    // grid would alias into kinks between the nodes.
+    const Real extent = std::min({2 * hx / (nx - 1), 2 * hy / (ny - 1), 2 * hz / (nz - 1)});
+    const Vec3 w0 = g->weather->sample(c, alt, t, extent).wind;
     double* o = g_windGrid;
     for (int k = 0; k < nz; ++k)
         for (int j = 0; j < ny; ++j)
             for (int i = 0; i < nx; ++i) {
                 const Vec3 b{hx * (2.0 * i / (nx - 1) - 1), hy * (2.0 * j / (ny - 1) - 1), hz * (2.0 * k / (nz - 1) - 1)};
-                const Vec3 p = c + q.rotate(b);
-                const Vec3 d = q.inverseRotate(g->weather->sample(p, alt - (p.z - c.z), t).wind - w0);
+                Vec3 p = c + q.rotate(b);
+                // Below the (flat) airfield: the air just above the surface.
+                const Real lift = g->airport.elevation + 1 - (alt - (p.z - c.z));
+                if (lift > 0) p.z -= lift;
+                const Vec3 d = q.inverseRotate(g->weather->sample(p, alt - (p.z - c.z), t, extent).wind - w0);
                 *o++ = d.x;
                 *o++ = d.y;
                 *o++ = d.z;
@@ -943,7 +949,9 @@ AVD_EXPORT double* avd_wind_box(double cE, double cN, double cU, double hE, doub
         for (int j = 0; j < ny; ++j)
             for (int i = 0; i < nx; ++i) {
                 const Vec3 enu{cE + hE * (2.0 * i / (nx - 1) - 1), cN + hN * (2.0 * j / (ny - 1) - 1), cU + hU * (2.0 * k / (nz - 1) - 1)};
-                const Vec3 p = world::nedFromEnu(enu);
+                Vec3 p = world::nedFromEnu(enu);
+                const Real lift = g->airport.elevation + 1 - (msl0 - p.z);
+                if (lift > 0) p.z -= lift;  // below the airfield: the air just above it
                 const Vec3 w = world::enuFromNed(g->weather->sample(p, msl0 - p.z, t, extent).wind);
                 *o++ = w.x;
                 *o++ = w.y;
