@@ -65,6 +65,14 @@ struct BoundaryLayerParams {
 // Von Kármán constant.
 inline constexpr Real kKarman = 0.4;
 
+// The surface wind at a place: the report at the reference height and the
+// local roughness (which may differ from the boundary layer's reference).
+struct SurfaceWind {
+    Real speed = 0;
+    Real fromDirection = 0;
+    Real roughness = 0.03;
+};
+
 class BoundaryLayer {
 public:
     BoundaryLayer() = default;
@@ -73,16 +81,24 @@ public:
     // Mean horizontal air velocity (NED, m/s) at a height above the local
     // ground and the corresponding altitude MSL (winds aloft are by MSL).
     Vec3 wind(Real heightAgl, Real altitudeMsl) const;
+    // Same, for a local surface wind. The report is taken over the reference
+    // roughness; over a different local roughness (log law) the profile is
+    // re-matched to the same wind at the boundary-layer top: a city has
+    // weaker low-level wind and stronger turbulence than an airfield under
+    // the same gradient wind.
+    Vec3 wind(Real heightAgl, Real altitudeMsl, const SurfaceWind& s) const;
+    SurfaceWind reference() const { return {p_.windSpeed, p_.windFromDirection, p_.surfaceRoughness}; }
     // d(wind)/d(height) (1/s), central difference.
     Vec3 shear(Real heightAgl, Real altitudeMsl) const;
     // Surface friction velocity u* (m/s) implied by the surface wind and
     // roughness (neutral log law), used for the mechanical turbulence.
     Real frictionVelocity() const;
+    Real frictionVelocity(const SurfaceWind& s) const;
     // Heading (rad) the surface wind blows TOWARD (turbulence u axis).
     Real surfaceFlowHeading() const { return p_.windFromDirection + kPi; }
 
 private:
-    Real speedFactor(Real heightAgl) const;
+    Real speedFactor(Real heightAgl, Real roughness) const;
     BoundaryLayerParams p_;
     std::vector<WindLevel> aloft_;  // sorted by altitude
 };
@@ -152,18 +168,30 @@ struct TurbulenceStatistics {
     Vec3 length;
 };
 
+// Local inputs to the turbulence statistics where the wind varies in space.
+struct TurbulenceLocal {
+    Real frictionVelocity = 0;  // m/s, local u*
+    Real extraSigma = 0;        // m/s, isotropic (obstacle wakes), RSS
+};
+
 class AtmosphericTurbulence {
 public:
     AtmosphericTurbulence() = default;
     // `flowHeading`: direction (rad) the surface wind blows toward, the u
-    // axis. `frictionVelocity`: surface u* (m/s) for the mechanical part.
+    // axis. `frictionVelocity`: representative surface u* (m/s) for the
+    // mechanical part (> 0 enables it; local values may be passed below).
     AtmosphericTurbulence(const TurbulenceParams& p, Real flowHeading, Real frictionVelocity);
     bool active() const { return active_; }
     const TurbulenceParams& params() const { return p_; }
     TurbulenceStatistics statistics(Real heightAgl, Real altitudeMsl) const;
+    TurbulenceStatistics statistics(Real heightAgl, Real altitudeMsl, const TurbulenceLocal& local) const;
     // Velocity (NED) and its gradient at `xFrozen` (position already shifted
     // into the frozen frame), whose height is heightAgl / altitudeMsl.
     void evaluate(const Vec3& xFrozen, Real heightAgl, Real altitudeMsl, Vec3& velocity, Mat3& gradient) const;
+    // With spatially varying statistics: `local[0]` at the point, then at
+    // +-step along north, east and down (7 entries), for the gradient.
+    void evaluate(const Vec3& xFrozen, Real heightAgl, Real altitudeMsl, const TurbulenceLocal local[7], Real step,
+                  Vec3& velocity, Mat3& gradient) const;
 
     // Bank of unit-intensity fields at integral scales kScale0 * 2^i.
     static constexpr int kScales = 10;
@@ -172,7 +200,8 @@ public:
 private:
     // Weight of each scale for a length, energy-preserving (cos/sin blend
     // of the two neighbouring scales).
-    void coefficients(Real heightAgl, Real altitudeMsl, std::array<std::array<Real, kScales>, 3>& c) const;
+    void coefficients(Real heightAgl, Real altitudeMsl, const TurbulenceLocal& local,
+                      std::array<std::array<Real, kScales>, 3>& c) const;
     TurbulenceParams p_;
     Real frictionVelocity_ = 0;
     Mat3 axes_;  // columns: u, v, w axes in NED
@@ -306,6 +335,72 @@ struct Ridge {
     // Air velocity (NED) at x / altitude, given the horizontal wind at
     // crest height (NED).
     Vec3 velocity(const Vec3& x, Real altitudeMsl, const Vec3& crestWind) const;
+};
+
+// ------------------------------------------------------ spatial variation --
+
+// A patch of different surface roughness (city, forest, lake), circular
+// with a smooth edge. Patches apply in order: a later one overrides an
+// earlier one where they overlap (e.g. a city with an airfield inside).
+struct RoughnessPatch {
+    Real north = 0, east = 0;
+    Real radius = 1000;           // m
+    Real transition = 300;        // m, edge blend width
+    Real roughness = 1.0;         // z0, m
+};
+
+// A surface wind report with its own position and history (an airport
+// METAR, an anemometer). With stations, the surface wind is interpolated
+// in time per station and in space between them (weights 1 / (d^2 + L^2)).
+struct WindStation {
+    Real north = 0, east = 0;
+    std::vector<Real> times;           // s, increasing; one entry: steady
+    std::vector<Real> speeds;          // m/s at the reference height
+    std::vector<Real> fromDirections;  // rad
+    // Speed and direction at time t (linear in time, direction the short way).
+    void at(Real t, Real& speed, Real& fromDirection) const;
+};
+
+// A moving wind shift: a cold front, sea-breeze front or the gust front of
+// a thunderstorm outflow. Behind the front the surface wind is the new one,
+// through a layer `depth` deep; the change happens across `width`. A gust
+// front's head lifts the air along its leading edge (`noseUpdraft`).
+struct WindShift {
+    Real north = 0, east = 0;     // a point on the front at startTime
+    Real heading = 0;             // rad, direction the front moves
+    Real speed = 8;               // m/s
+    Real startTime = 0;           // s
+    Real width = 300;             // m
+    Real newSpeed = 15;           // m/s, surface wind behind
+    Real newFromDirection = 0;    // rad
+    Real depth = 1000;            // m AGL of the new airmass
+    Real noseUpdraft = 0;         // m/s at the leading edge
+    // 0 ahead of the front, 1 behind it (at a height AGL).
+    Real behind(const Vec3& x, Real heightAgl, Real t) const;
+    Real updraft(const Vec3& x, Real heightAgl, Real t) const;  // m/s, + up
+};
+
+// A building, hangar or tree line: a velocity deficit and extra turbulence
+// in its wake. Behind the leeward face a recirculation cavity (~2 H long)
+// takes about the full approach wind; beyond it the deficit decays as
+// x^-3/2 (3-D wake, Counihan, Hunt & Jackson 1974), over a Gaussian
+// cross-section that widens downstream.
+// Estimated: no upwind displacement, horseshoe vortex or roof separation.
+struct Obstacle {
+    Real north = 0, east = 0;     // centre of the footprint
+    Real width = 30;              // m, equivalent width (any wind direction)
+    Real height = 15;             // m
+    Real baseElevation = 0;       // m MSL
+    // From a footprint polygon (ENU pairs, as in avd-world-tile/1) and its
+    // base/roof heights; width is the area-equivalent diameter.
+    static Obstacle fromFootprint(const std::vector<std::pair<Real, Real>>& footprintEnu, Real base, Real top);
+    // Deficit fraction (0..1) of the wind at roof height, at a point with
+    // `along` metres downwind and `across` metres to the side, height z
+    // above the base.
+    Real wakeFactor(Real along, Real across, Real z) const;
+    // Velocity added at x (NED) given the horizontal wind at roof height,
+    // and the extra turbulence RMS there.
+    Vec3 velocity(const Vec3& x, Real altitudeMsl, const Vec3& roofWind, Real& extraSigma) const;
 };
 
 // FAA/TDWR wind-shear hazard index along a flight path:

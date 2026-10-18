@@ -219,17 +219,105 @@ to the south).
 Not modelled yet: trapped lee waves and rotors, which need a two-layer
 Scorer-parameter solution. Also absent is cloud suck under cumulus.
 
+## Spatial and temporal variation
+
+The low-level wind varies from place to place and with time. When any of
+these sources is present, the sampled gradient and the turbulence statistics
+are computed from seven local evaluations: the point, and ±2 cm along each
+axis. Gusts therefore stay consistent across the airframe even where the mean
+wind changes.
+
+**Roughness patches** (`roughnessPatches`). These are circles with a smooth
+edge, applied in order so a later patch overrides an earlier one: a city with
+an airfield inside it. The wind report refers to the reference roughness
+(`surfaceRoughness`, the anemometer site). Where the local roughness differs,
+the log profile is re-matched to the same wind at the top of the boundary
+layer. Under the same gradient wind, the city therefore has a weaker
+low-level wind (about 0.6× at 10 m for z0 = 1 m against 0.03 m) and a larger
+u*. Its mechanical turbulence is accordingly stronger. Not modelled: the
+internal boundary layer that grows downwind of a roughness change.
+
+**Wind stations** (`stations`). Reports with positions and time histories.
+In time each station is interpolated linearly in speed and the short way in
+direction. In space the reports are averaged as vectors with weights
+1/(d² + L²) (`stationInfluence`).
+
+**Wind shifts and gust fronts** (`windShifts`). A straight front moving at a
+given speed. Behind it the surface wind is the new one, through the depth of
+the new airmass (`depth`). The change happens across `width` (tanh). The
+head of a thunderstorm outflow lifts the air just ahead of the front
+(`noseUpdraft`; estimated shape, not continuity-exact). The stronger
+post-frontal wind raises u* and so the mechanical turbulence. Temperature
+and pressure do not change across the front yet.
+
+**Obstacle wakes** (`obstacles`). Buildings, hangars and tree lines; see
+`Obstacle::fromFootprint` for the `avd-world-tile/1` building footprints.
+Behind the leeward face is a recirculation cavity about 2 H long that takes
+nearly the full approach wind. Beyond it the deficit decays as x^-3/2 (3-D
+wake, Counihan, Hunt & Jackson 1974) over a Gaussian cross-section that widens
+downstream. Wake turbulence adds σ ≈ 0.3 × the deficit. This is an estimate:
+it has no upwind displacement, horseshoe vortex or roof separation bubble.
+
+**Campo de Marte** (`scenarios::addSaoPauloWindEnvironment`):
+
+- the city (z0 = 1 m, 30 km) around the airfield (z0 = 0.03 m, 1.2 km), with
+  the wind reported at the airfield;
+- −20° of southern-hemisphere backing through the boundary layer;
+- the Serra da Cantareira 10 km north as a ridge (crest about 1100 m MSL,
+  running roughly east–west).
+
+The geometry is estimated and is for the wind only. The browser cockpit
+uses it.
+
+## In the browser
+
+The weather card sets:
+
+- the surface wind;
+- the turbulence class;
+- an extra turbulence RMS;
+- thermals (w*);
+- a wind hazard: a microburst 2 km before runway 12, or a gust front from
+  the south-west.
+
+`web/smoke_test.mjs` flies a hands-off approach into the microburst. The
+calibrated airspeed falls to about 50 kt and the sink reaches about
+1000 fpm.
+
+## Cost
+
+Measured with a 240 Hz step of the reference airplane, in a native optimised
+build:
+
+| Weather | Cost per step |
+|---|---|
+| Calm | 29 µs |
+| Wind (mechanical turbulence) | 31 µs |
+| Everything at once (severity, thermals, microburst, ridge, roughness patches, wind shift, 20 obstacles) | 57 µs |
+
 ## Tests
 
-`tests/test_wind.cpp` checks:
+`tests/test_wind.cpp` covers:
 
-- the log-law ratios, roughness and friction velocity;
-- the veer and the short-way interpolation of winds aloft;
-- the shear gradient;
-- the MIL-HDBK-1797 σ and L values by height, severity and convection;
-- the realised RMS and the anisotropic autocorrelation of the field;
-- gradient consistency;
-- Taylor advection.
+- the boundary layer: log-law ratios, roughness and friction velocity, veer,
+  winds aloft and the shear gradient;
+- turbulence: the MIL-HDBK-1797 σ and L values by height, severity and
+  convection, the realised RMS and anisotropic autocorrelation, gradient
+  consistency, and Taylor advection;
+- discrete events: gust shapes, and the microburst peak outflow, continuity,
+  life cycle and F-factor;
+- thermals: Allen's mean updraft, mass balance, continuity, and the random
+  field's cores, net flux, life cycle and drift;
+- ridges: surface lift equal to U dh/dx, the wavelength, the inversion and
+  tilt, continuity, fades and blocking;
+- spatial variation: roughness patches, stations, a gust front, a hangar's
+  wake, and the SBMT surroundings.
 
-`tests/test_flight.cpp` checks that a 15 kt wind is bumpy at 500 ft and smooth
-at 5000 ft.
+`tests/test_flight.cpp` flies the airplane through the air:
+
+- a 15 kt wind is bumpy at 500 ft and smooth at 5000 ft;
+- crossing a microburst gives a small gain, then a large loss of speed and
+  height;
+- a 1-cosine gust gives a load factor within the range set by Pratt's
+  formula;
+- a thermal carries the airplane up.

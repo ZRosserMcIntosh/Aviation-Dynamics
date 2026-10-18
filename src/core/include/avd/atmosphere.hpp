@@ -124,6 +124,12 @@ struct SimpleWeatherParams {
     // them) when thermals.convectiveVelocity > 0.
     ThermalParams thermals;
     std::vector<Ridge> ridges;       // ridge lift and mountain waves
+    // Spatial and temporal variation of the low-level wind.
+    std::vector<RoughnessPatch> roughnessPatches;  // in order; later ones win
+    std::vector<WindStation> stations;  // replace windSpeed/windFromDirection when present
+    Real stationInfluence = 5000;    // m, softening length of the station interpolation
+    std::vector<WindShift> windShifts;  // fronts and gust fronts
+    std::vector<Obstacle> obstacles;    // building / hangar wakes
     // One stratiform cloud layer (m MSL) with its liquid water content
     // (g/m^3; stratus ~0.1-0.5, cumulus up to ~1-2). Supercooled where the
     // air is below 0 C: an icing layer. cloudTop <= cloudBase: no cloud.
@@ -141,13 +147,24 @@ public:
     const Params& params() const { return p_; }
     const StandardAtmosphere& atmosphere() const { return atm_; }
     AirSample sample(const Vec3& positionNed, Real altitudeMsl, Real time) const override;
+    // Mean wind (no turbulence or events) at a height over the reference
+    // site, and at a place and time with the spatial variation.
     Vec3 meanWindAt(Real heightAgl) const;
+    Vec3 meanWindAt(const Vec3& positionNed, Real altitudeMsl, Real time) const;
+    Real roughnessAt(Real north, Real east) const;
+    SurfaceWind surfaceWindAt(Real north, Real east, Real time) const;
     const BoundaryLayer& boundaryLayer() const { return boundaryLayer_; }
     const AtmosphericTurbulence& turbulence() const { return turbulence_; }
     const ThermalField& thermals() const { return thermals_; }
 
 private:
+    struct LocalWind {
+        Vec3 wind;
+        TurbulenceLocal turbulence;
+    };
+    LocalWind localWind(const Vec3& positionNed, Real heightAgl, Real altitudeMsl, Real time) const;
     Params p_;
+    bool spatial_ = false;
     StandardAtmosphere atm_;
     BoundaryLayer boundaryLayer_;
     AtmosphericTurbulence turbulence_;

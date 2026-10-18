@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "avd/atmosphere.hpp"
 #include "avd/geodesy.hpp"
 #include "avd/ground.hpp"
 #include "avd/navigation.hpp"
@@ -48,5 +49,13 @@ const NavEnvironment& saoPauloNavEnvironment();
 
 // Point at `along` metres down runway `r` and `across` metres right of the centreline (NED).
 Vec3 runwayPoint(const RunwayDef& r, Real along, Real across = 0);
+
+// The wind surroundings of Campo de Marte for SimpleWeather: the city of
+// São Paulo (z0 ~ 1 m) around the open airfield (z0 0.03 m, where the wind
+// is reported), southern-hemisphere backing of the wind with height (-20
+// deg through the boundary layer), and the Serra da Cantareira ridge
+// ~10 km north (crest ~1100 m MSL, running roughly east-west). ESTIMATED
+// geometry, for wind physics only (the ground model does not include it).
+void addSaoPauloWindEnvironment(SimpleWeatherParams& p, const Airport& a);
 
 }  // namespace avd::scenarios

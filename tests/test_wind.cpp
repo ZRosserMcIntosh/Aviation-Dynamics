@@ -1,6 +1,7 @@
 // Aviation Dynamics — wind and turbulence tests: boundary layer, MIL-HDBK-1797
 // turbulence statistics, field consistency.
 // SPDX-License-Identifier: MIT
+#include "airports.hpp"
 #include "avd/atmosphere.hpp"
 #include "avd/units.hpp"
 #include "avd/wind.hpp"
@@ -430,4 +431,142 @@ TEST_CASE("ridge: slope lift at the surface, lee sink, mountain wave aloft") {
     Ridge b = r;
     b.stability = 0.03;
     CHECK(std::abs(r.velocity({-1000, 0, 0}, 0, {4, 0, 0}).z) > std::abs(b.velocity({-1000, 0, 0}, 0, {4, 0, 0}).z));
+}
+
+// ========================================================= spatial variation ==
+
+TEST_CASE("spatial: a city around the airfield -- weaker low wind, stronger turbulence, same wind aloft") {
+    SimpleWeather::Params p;
+    p.windSpeed = 10;                      // reported at the airfield
+    p.surfaceRoughness = 0.03;
+    p.roughnessPatches.push_back({0, 0, 20000, 500, 1.0});   // city
+    p.roughnessPatches.push_back({0, 0, 800, 200, 0.03});    // the airfield inside it
+    const SimpleWeather w(p);
+    CHECK_NEAR(w.roughnessAt(0, 0), 0.03, 1e-12);
+    CHECK_NEAR(w.roughnessAt(5000, 0), 1.0, 1e-9);
+    const Real airfield10 = speedOf(w.meanWindAt({0, 0, -10}, 10, 0));
+    const Real city10 = speedOf(w.meanWindAt({5000, 0, -10}, 10, 0));
+    CHECK_NEAR(airfield10, 10, 1e-9);
+    // Same wind at the top of the layer, log profiles below it.
+    const Real expected = std::log(600 / 0.03) / std::log(10 / 0.03) * std::log(10 / 1.0) / std::log(600 / 1.0) * 10;
+    CHECK_NEAR(city10, expected, 1e-9);
+    CHECK_NEAR(speedOf(w.meanWindAt({5000, 0, -600}, 600, 0)), speedOf(w.meanWindAt({0, 0, -600}, 600, 0)), 1e-9);
+    // City friction velocity -- and so the mechanical turbulence -- is larger.
+    const BoundaryLayer& bl = w.boundaryLayer();
+    CHECK(bl.frictionVelocity({10, 0, 1.0}) > 1.4 * bl.frictionVelocity({10, 0, 0.03}));
+    Real s2City = 0, s2Field = 0;
+    for (int i = 0; i < 4000; ++i) {
+        const Vec3 c{5000 + i * 3.1, i * 1.7, -40}, f{i * 0.1, i * 0.13, -40};
+        s2City += sq(w.sample(c, 40, 0).wind.z - w.meanWindAt(c, 40, 0).z);
+        s2Field += sq(w.sample(f, 40, 0).wind.z - w.meanWindAt(f, 40, 0).z);
+    }
+    CHECK(s2City > 1.5 * s2Field);
+    CHECK(gradientError(w, {700, 30, -25}, 0, 0) < 3e-3);  // across the airfield edge
+}
+
+TEST_CASE("spatial: wind stations interpolate in space and time") {
+    SimpleWeather::Params p;
+    p.turbulence.mechanical = false;
+    p.profile = WindProfile::Uniform;
+    p.stationInfluence = 1000;
+    WindStation a{0, 0, {0, 600}, {5, 15}, {degToRad(350), degToRad(20)}};
+    WindStation b{20000, 0, {0}, {10}, {degToRad(180)}};
+    p.stations = {a, b};
+    const SimpleWeather w(p);
+    // At a station its own report dominates.
+    const SurfaceWind s0 = w.surfaceWindAt(0, 0, 0);
+    CHECK_NEAR(s0.speed, 5, 0.5);
+    // Time: halfway through, 10 m/s from 005 (through north).
+    Real sp, from;
+    a.at(300, sp, from);
+    CHECK_NEAR(sp, 10, 1e-9);
+    CHECK_NEAR(radToDeg(wrapPi(from)), 5, 1e-9);
+    a.at(1e6, sp, from);
+    CHECK_NEAR(sp, 15, 1e-9);
+    // Space: near b the southerly wins.
+    CHECK_NEAR(radToDeg(wrapPi(w.surfaceWindAt(20000, 0, 0).fromDirection - kPi)), 0, 3);
+    // Smooth in between: gradient consistent.
+    CHECK(gradientError(w, {9000, 400, -50}, 0, 200) < 1e-4);
+}
+
+TEST_CASE("spatial: a gust front passes -- wind shift, depth, nose updraft") {
+    SimpleWeather::Params p;
+    p.turbulence.mechanical = false;
+    p.windSpeed = 4;
+    p.windFromDirection = degToRad(90);   // light easterly ahead of it
+    WindShift f;
+    f.north = -5000;                      // 5 km south at t = 0, moving north at 10 m/s
+    f.heading = 0;
+    f.speed = 10;
+    f.newSpeed = 18;
+    f.newFromDirection = degToRad(200);
+    f.depth = 800;
+    f.noseUpdraft = 3;
+    p.windShifts.push_back(f);
+    const SimpleWeather w(p);
+    const Vec3 site{0, 0, -10};
+    CHECK_NEAR(speedOf(w.meanWindAt(site, 10, 0)), 4, 0.01);         // before
+    CHECK_NEAR(speedOf(w.meanWindAt(site, 10, 1000)), 18, 0.05);     // after (passes at 500 s)
+    CHECK_NEAR(radToDeg(fromDirection(w.meanWindAt(site, 10, 1000))) + 360, 200, 1);
+    // Above the outflow the old wind continues.
+    CHECK_NEAR(fromDirection(w.meanWindAt({0, 0, -1500}, 1500, 1000)), degToRad(90), 1e-6);
+    // The head lifts the air just ahead of the front.
+    Real maxUp = 0;
+    for (Real t = 400; t < 600; t += 2) maxUp = std::max(maxUp, -w.meanWindAt({0, 0, -400}, 400, t).z);
+    CHECK_RANGE(maxUp, 2.5, 3.01);
+    // Stronger wind behind it: more mechanical turbulence there (u*).
+    SimpleWeather::Params q = p;
+    q.turbulence.mechanical = true;
+    const SimpleWeather wq(q);
+    CHECK(wq.turbulence().active());
+    CHECK(gradientError(w, {200, 30, -60}, 0, 495) < 1e-3);
+}
+
+TEST_CASE("spatial: a hangar's wake -- deficit and turbulence downwind only") {
+    // 20 x 40 m hangar, 12 m tall, 10 m/s westerly (air moves east).
+    const Obstacle h = Obstacle::fromFootprint({{-20, -10}, {20, -10}, {20, 10}, {-20, 10}}, 0, 12);
+    CHECK_NEAR(h.east, 0, 1e-9);
+    CHECK_NEAR(h.north, 0, 1e-9);
+    CHECK_NEAR(h.width, 2 * std::sqrt(800 / kPi), 1e-9);
+    CHECK_NEAR(h.height, 12, 1e-12);
+    SimpleWeather::Params p;
+    p.windSpeed = 10;
+    p.windFromDirection = degToRad(270);
+    p.turbulence.mechanical = false;
+    SimpleWeather::Params q = p;
+    q.obstacles.push_back(h);
+    const SimpleWeather open(p), withHangar(q);
+    auto east = [&](const SimpleWeather& w, Real e, Real n, Real z) { return w.meanWindAt({n, e, -z}, z, 0).y; };
+    const Real free6 = east(open, 30, 0, 6);
+    CHECK(east(withHangar, 30, 0, 6) < 0.3 * free6);           // in the cavity behind it
+    CHECK_NEAR(east(withHangar, -60, 0, 6), free6, 1e-9);       // upwind: untouched
+    CHECK_NEAR(east(withHangar, 30, 80, 6), free6, 0.02 * free6);  // to the side: almost untouched
+    CHECK(east(withHangar, 240, 0, 6) > 0.85 * free6);         // 20 H: recovered
+    CHECK(east(withHangar, 30, 0, 6) < east(withHangar, 90, 0, 6));
+    Real extra;
+    h.velocity({0, 30, 0}, 6, {0, 10, 0}, extra);
+    CHECK(extra > 1.0);  // gusty in the wake
+    CHECK(gradientError(withHangar, {3, 40, -5}, 0, 0) < 1e-3);
+}
+
+TEST_CASE("spatial: Campo de Marte -- airfield report, city around it, Cantareira lift in a southerly") {
+    const LocalFrame frame = scenarios::saoPauloWorldFrame();
+    const scenarios::Airport sbmt = scenarios::campoDeMarte(frame);
+    SimpleWeather::Params p;
+    scenarios::addSaoPauloWindEnvironment(p, sbmt);
+    p.windSpeed = 8;
+    p.windFromDirection = kPi;  // southerly: onto the ridge's south face
+    p.turbulence.mechanical = false;
+    const SimpleWeather w(p);
+    const RunwayDef& rw = sbmt.runways[0];
+    const Vec3 field = scenarios::runwayPoint(rw, 0.5 * rw.length);
+    const Real e = sbmt.elevation;
+    auto at = [&](const Vec3& c, Real agl) { return w.meanWindAt({c.x, c.y, field.z - agl}, e + agl, 0); };
+    CHECK_NEAR(speedOf(at(field, 10)), 8, 1e-6);                                   // the report
+    CHECK(speedOf(at(field + Vec3{0, 6000, 0}, 10)) < 0.7 * 8);                  // the city, 6 km east
+    // South face of the Cantareira (crest 10 km north): lift near the slope.
+    const Real crestMsl = e + 30 + 350;
+    const Vec3 slope = field + Vec3{10000 - 1500, 0, 0};
+    const Real up = -w.sample({slope.x, slope.y, -(crestMsl - 150)}, crestMsl - 150, 0).wind.z;
+    CHECK(up > 0.4);
 }

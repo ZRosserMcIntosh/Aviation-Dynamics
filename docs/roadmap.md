@@ -9,7 +9,7 @@ done badly.
 | 1 | Single-engine piston foundation: 6-DoF, atmosphere, mass, fuel, engine, propeller, systems, ground, the Tupi T-180, validation, headless demo | ✅ |
 | 2a | Analog cockpit instrumentation, navigation receivers, 2D browser cockpit | ✅ |
 | 2b | Close the Milestone 1 gaps; world integration | **next** |
-| 3 | Weather and environment: spatial weather, thermals, wake turbulence, icing | ⛔ |
+| 3 | Weather and environment: spatial weather, thermals, wake turbulence, icing | 🟡 wind done early ([architecture/wind.md](architecture/wind.md)): boundary layer, MIL-HDBK-1797 turbulence, gusts, microbursts, thermals, ridge/mountain waves, spatial and moving wind. Open: aircraft wake vortices, airframe icing, pressure/temperature fields |
 | 4 | Turboprop and multi-engine: constant-speed propeller, feathering, Vmc | ⛔ |
 | 5 | Jets: turbofan model, transonic and supersonic aerodynamics | ⛔ |
 | 6 | Helicopters: blade-element rotor, ground resonance, vortex ring state | ⛔ |

@@ -170,16 +170,88 @@ TurbulenceParams turbulenceParams(const SimpleWeatherParams& p) {
 }
 }  // namespace
 
+// Representative surface u* (enables the mechanical turbulence): the
+// strongest surface wind any source can produce over the reference surface.
+Real representativeFrictionVelocity(const SimpleWeatherParams& p, const BoundaryLayer& bl) {
+    Real v = p.stations.empty() ? p.windSpeed : 0.0;
+    for (const WindStation& s : p.stations)
+        for (Real sp : s.speeds) v = std::max(v, sp);
+    for (const WindShift& w : p.windShifts) v = std::max(v, w.newSpeed);
+    Real zMax = p.surfaceRoughness;
+    for (const RoughnessPatch& r : p.roughnessPatches) zMax = std::max(zMax, r.roughness);
+    return bl.frictionVelocity({v, 0, zMax});
+}
+
 SimpleWeather::SimpleWeather(const Params& p)
     : p_(p),
+      spatial_(!p.roughnessPatches.empty() || !p.stations.empty() || !p.windShifts.empty() || !p.obstacles.empty()),
       atm_(p.conditions),
       boundaryLayer_(boundaryLayerParams(p)),
-      turbulence_(turbulenceParams(p), boundaryLayer_.surfaceFlowHeading(), boundaryLayer_.frictionVelocity()),
+      turbulence_(turbulenceParams(p), boundaryLayer_.surfaceFlowHeading(),
+                  representativeFrictionVelocity(p, BoundaryLayer(boundaryLayerParams(p)))),
       // Thermals drift with the mean wind in the middle of the convective layer.
       thermals_(p.thermals, boundaryLayer_.wind(0.5 * p.thermals.depth, p.groundElevation + 0.5 * p.thermals.depth)) {}
 
 Vec3 SimpleWeather::meanWindAt(Real agl) const {
     return boundaryLayer_.wind(agl, p_.groundElevation + agl) + Vec3{0, 0, -p_.updraft};
+}
+
+Vec3 SimpleWeather::meanWindAt(const Vec3& positionNed, Real altitudeMsl, Real time) const {
+    return localWind(positionNed, altitudeMsl - p_.groundElevation, altitudeMsl, time).wind;
+}
+
+Real SimpleWeather::roughnessAt(Real north, Real east) const {
+    Real lz = std::log(std::max(p_.surfaceRoughness, 1e-5));
+    for (const RoughnessPatch& r : p_.roughnessPatches) {
+        const Real d = std::hypot(north - r.north, east - r.east);
+        const Real half = 0.5 * std::max(r.transition, 1e-3);
+        const Real w = 1 - smoothstep(r.radius - half, r.radius + half, d);
+        lz = lerp(lz, std::log(std::max(r.roughness, 1e-5)), w);
+    }
+    return std::exp(lz);
+}
+
+SurfaceWind SimpleWeather::surfaceWindAt(Real north, Real east, Real time) const {
+    SurfaceWind sw{p_.windSpeed, p_.windFromDirection, roughnessAt(north, east)};
+    if (p_.stations.empty()) return sw;
+    // Average the reports as vectors, weighted 1 / (d^2 + L^2).
+    Real sn = 0, se = 0, sumW = 0;
+    const Real l2 = sq(std::max(p_.stationInfluence, 1.0));
+    for (const WindStation& st : p_.stations) {
+        Real sp, from;
+        st.at(time, sp, from);
+        const Real w = 1 / (sq(north - st.north) + sq(east - st.east) + l2);
+        sn += w * sp * std::cos(from);
+        se += w * sp * std::sin(from);
+        sumW += w;
+    }
+    sw.speed = std::hypot(sn, se) / sumW;
+    sw.fromDirection = sw.speed > 1e-9 ? std::atan2(se, sn) : p_.windFromDirection;
+    return sw;
+}
+
+SimpleWeather::LocalWind SimpleWeather::localWind(const Vec3& pos, Real agl, Real msl, Real time) const {
+    LocalWind lw;
+    const SurfaceWind sw = surfaceWindAt(pos.x, pos.y, time);
+    lw.wind = boundaryLayer_.wind(agl, msl, sw);
+    Real uStar = boundaryLayer_.frictionVelocity(sw);
+    for (const WindShift& f : p_.windShifts) {
+        const Real b = f.behind(pos, agl, time);
+        const SurfaceWind nw{f.newSpeed, f.newFromDirection, sw.roughness};
+        if (b > 0) lw.wind = lw.wind + (boundaryLayer_.wind(agl, msl, nw) - lw.wind) * b;
+        uStar = lerp(uStar, boundaryLayer_.frictionVelocity(nw), f.behind(pos, 0, time));
+        lw.wind.z -= f.updraft(pos, agl, time);
+    }
+    Real extra2 = 0;
+    for (const Obstacle& o : p_.obstacles) {
+        const Real roof = o.baseElevation + o.height;
+        Real extra;
+        lw.wind += o.velocity(pos, msl, boundaryLayer_.wind(roof - p_.groundElevation, roof, sw), extra);
+        extra2 += extra * extra;
+    }
+    lw.wind.z -= p_.updraft;
+    lw.turbulence = {uStar, std::sqrt(extra2)};
+    return lw;
 }
 
 AirSample SimpleWeather::sample(const Vec3& positionNed, Real altitudeMsl, Real time) const {
@@ -188,24 +260,51 @@ AirSample SimpleWeather::sample(const Vec3& positionNed, Real altitudeMsl, Real 
     if (p_.cloudTop > p_.cloudBase && altitudeMsl >= p_.cloudBase && altitudeMsl <= p_.cloudTop)
         s.liquidWaterContent = p_.cloudLiquidWater;
     const Real agl = altitudeMsl - p_.groundElevation;
-    s.wind = boundaryLayer_.wind(agl, altitudeMsl) + Vec3{0, 0, -p_.updraft};
-    // Vertical shear: d(wind)/d(down) = -d(wind)/d(height).
-    const Vec3 dvdh = boundaryLayer_.shear(agl, altitudeMsl);
-    s.windGradient.m[0][2] = -dvdh.x;
-    s.windGradient.m[1][2] = -dvdh.y;
-    if (turbulence_.active()) {
-        // Frozen turbulence advected with the reference-height mean wind.
-        const Vec3 adv = boundaryLayer_.wind(p_.referenceHeight, p_.groundElevation + p_.referenceHeight);
-        Vec3 u;
-        Mat3 g;
-        turbulence_.evaluate(positionNed - adv * time, agl, altitudeMsl, u, g);
-        s.wind += u;
-        s.windGradient = s.windGradient + g;
+    // Frozen turbulence is advected with the reference-height mean wind.
+    const Vec3 adv = boundaryLayer_.wind(p_.referenceHeight, p_.groundElevation + p_.referenceHeight);
+    if (!spatial_) {
+        s.wind = boundaryLayer_.wind(agl, altitudeMsl) + Vec3{0, 0, -p_.updraft};
+        // Vertical shear: d(wind)/d(down) = -d(wind)/d(height).
+        const Vec3 dvdh = boundaryLayer_.shear(agl, altitudeMsl);
+        s.windGradient.m[0][2] = -dvdh.x;
+        s.windGradient.m[1][2] = -dvdh.y;
+        if (turbulence_.active()) {
+            Vec3 u;
+            Mat3 g;
+            turbulence_.evaluate(positionNed - adv * time, agl, altitudeMsl, u, g);
+            s.wind += u;
+            s.windGradient = s.windGradient + g;
+        }
+    } else {
+        // The mean wind and the turbulence statistics vary in space: both
+        // gradients from the same seven local evaluations (point, +-step on
+        // each axis; down = minus height).
+        const Real d = 0.02;
+        const Vec3 off[7] = {{0, 0, 0}, {d, 0, 0}, {-d, 0, 0}, {0, d, 0}, {0, -d, 0}, {0, 0, d}, {0, 0, -d}};
+        LocalWind lw[7];
+        TurbulenceLocal tl[7];
+        for (int k = 0; k < 7; ++k) {
+            lw[k] = localWind(positionNed + off[k], agl - off[k].z, altitudeMsl - off[k].z, time);
+            tl[k] = lw[k].turbulence;
+        }
+        s.wind = lw[0].wind;
+        for (int j = 0; j < 3; ++j) {
+            const Vec3 dv = (lw[2 * j + 1].wind - lw[2 * j + 2].wind) / (2 * d);
+            s.windGradient.m[0][j] = dv.x;
+            s.windGradient.m[1][j] = dv.y;
+            s.windGradient.m[2][j] = dv.z;
+        }
+        if (turbulence_.active()) {
+            Vec3 u;
+            Mat3 g;
+            turbulence_.evaluate(positionNed - adv * time, agl, altitudeMsl, tl, d, u, g);
+            s.wind += u;
+            s.windGradient = s.windGradient + g;
+        }
     }
     // Discrete events, thermals and ridges: analytic fields, gradient by
     // central differences.
     if (!p_.gusts.empty() || !p_.microbursts.empty() || thermals_.active() || !p_.ridges.empty()) {
-        const Vec3 adv = boundaryLayer_.wind(p_.referenceHeight, p_.groundElevation + p_.referenceHeight);
         auto events = [&](const Vec3& x) {
             const Real dz = x.z - positionNed.z;
             const Real h = agl - dz;

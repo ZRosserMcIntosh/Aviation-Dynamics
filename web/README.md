@@ -31,7 +31,9 @@ call is clamped to 0.25 s. It returns the number of steps run.
 | Function | Meaning |
 |---|---|
 | `avd_reset(mode)` | Reset scenario: 0 cold and dark on runway 12, 1 engine running on runway 12, 2 on final for runway 12 (3 km), 3 cruising over the city. Sets NAV 1 to 110.30 active and 113.70 standby, OBS and bug 122, COM standby 132.80, transponder ALT |
-| `avd_set_weather(windMs, windFromDeg, turbulenceMs, isaDevC, humidity)` | Weather (rebuilds the field) |
+| `avd_set_weather(windMs, windFromDeg, turbulenceMs, isaDevC, humidity)` | Weather (rebuilds the field). The wind is the airfield report; it brings its own mechanical turbulence, weaker wind and stronger gusts over the city around SBMT, backing with height, and Cantareira ridge lift. `turbulenceMs` is an extra RMS on top |
+| `avd_set_wind_detail(severity, wStarMs, ziM)` | Turbulence class (0 none, 1 light, 2 moderate, 3 severe; MIL-HDBK-1797) and thermals (w*, convective-layer depth m AGL; w* 0 = none) |
+| `avd_set_wind_hazard(kind)` | 0 none, 1 microburst 2 km before runway 12 (12 m/s outflow), 2 gust front from the SW reaching the field in ~5 min; placed at the current sim time |
 | `avd_set_input(pitch, roll, yaw, throttle, mixture, brakeL, brakeR, trimRate, starter)` | Raw pilot input in −1..1 or 0..1. Starter is held while 1 |
 | `avd_set_assist(p)` | 0 Arcade, 1 Sport, 2 Simulation |
 | `avd_quick_start()` / `avd_procedure_status()` | Run the Quick Start checklist through the cockpit. Status: 0 idle, 1 running, 2 done, 3 failed; the message is in the text buffer |

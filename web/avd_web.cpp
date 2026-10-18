@@ -4,6 +4,7 @@
 // A thin C ABI over avd::Aircraft so a web page can fly the real core. The page
 // only renders and reads input. World positions are returned in the São Paulo
 // World frame (ENU metres from MASP); see web/README.md for the buffer layout.
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -38,6 +39,15 @@ struct Sim {
     std::unique_ptr<AirfieldGround> ground;
     std::unique_ptr<SimpleWeather> weather;
     SimpleWeatherParams weatherParams;
+    // Weather controls; the field is rebuilt from them (rebuildWeather).
+    struct {
+        double windSpeed = 0, windFromDeg = 120, turbulence = 0, tempDev = 0, humidity = 0.6;
+        double cloudBase = 0, cloudTop = 0, cloudLiquidWater = 0;
+        int severity = 0;
+        double convectiveVelocity = 0, convectiveDepth = 1500;
+        int hazard = 0;
+        double hazardTime = 0;
+    } wx;
     std::unique_ptr<Aircraft> ac;
     Real trimThrottle = 0, trimMixture = 1;  // controls of the last trimmed spawn
     FlightAssist assist{makePreset(AssistPreset::Sport)};
@@ -103,6 +113,54 @@ void collectEvents() {
     if (g->events.size() > 4096) g->events.erase(0, g->events.size() - 4096);
 }
 
+// The São Paulo wind surroundings plus the page's settings and hazard.
+void rebuildWeather() {
+    const auto& w = g->wx;
+    SimpleWeather::Params wp;
+    scenarios::addSaoPauloWindEnvironment(wp, g->airport);
+    wp.windSpeed = w.windSpeed;
+    wp.windFromDirection = degToRad(w.windFromDeg);
+    wp.turbulence.intensity = w.turbulence;
+    wp.turbulence.severity = static_cast<TurbulenceSeverity>(std::clamp(w.severity, 0, 3));
+    wp.conditions.temperatureDeviation = w.tempDev;
+    wp.conditions.relativeHumidity = w.humidity;
+    wp.cloudBase = w.cloudBase;
+    wp.cloudTop = w.cloudTop;
+    wp.cloudLiquidWater = w.cloudLiquidWater;
+    wp.thermals.convectiveVelocity = w.convectiveVelocity;
+    wp.thermals.depth = w.convectiveDepth;
+    const RunwayDef& rw = g->airport.runways[0];
+    if (w.hazard == 1) {
+        // Mature microburst 2 km before the runway 12 threshold, on final.
+        Microburst m;
+        const Vec3 c = scenarios::runwayPoint(rw, -2000);
+        m.north = c.x;
+        m.east = c.y;
+        m.peakOutflow = 12;
+        m.startTime = w.hazardTime - 200;
+        m.growthTime = 60;
+        m.matureTime = 900;
+        m.decayTime = 300;
+        wp.microbursts.push_back(m);
+    } else if (w.hazard == 2) {
+        // Thunderstorm gust front from the south-west, over the field in ~5 min.
+        WindShift f;
+        const Vec3 c = scenarios::runwayPoint(rw, 0.5 * rw.length);
+        f.heading = degToRad(45);
+        f.north = c.x - 3000 * std::cos(f.heading);
+        f.east = c.y - 3000 * std::sin(f.heading);
+        f.speed = 10;
+        f.startTime = w.hazardTime;
+        f.newSpeed = 14;
+        f.newFromDirection = degToRad(225);
+        f.depth = 1000;
+        f.noseUpdraft = 2;
+        wp.windShifts.push_back(f);
+    }
+    g->weatherParams = wp;
+    g->weather = std::make_unique<SimpleWeather>(wp);
+}
+
 }  // namespace
 
 // Text buffer shared with JavaScript (UTF-8, NUL-terminated).
@@ -122,9 +180,7 @@ AVD_EXPORT int avd_load(int length) {
     g->def = r.definition;
     g->airport = scenarios::campoDeMarte(g->frame);
     g->ground = scenarios::makeAirfieldGround(g->airport, g->frame);
-    SimpleWeather::Params wp;
-    wp.groundElevation = g->airport.elevation;
-    g->weather = std::make_unique<SimpleWeather>(wp);
+    rebuildWeather();
     g->ac = std::make_unique<Aircraft>(g->def, g->frame);
     g->ac->setNavEnvironment(&scenarios::saoPauloNavEnvironment());
     return 0;
@@ -134,30 +190,46 @@ AVD_EXPORT int avd_error_text(int i) {
     return i >= 0 && i < static_cast<int>(g_errors.size()) ? putText(g_errors[static_cast<std::size_t>(i)]) : 0;
 }
 
+// Surface wind (m/s, from deg true), extra turbulence RMS (m/s), ISA
+// deviation (K), humidity (0..1). The wind brings its own mechanical
+// turbulence (rougher over the city than over the airfield).
 AVD_EXPORT void avd_set_weather(double windSpeed, double windFromDeg, double turbulence, double tempDev, double humidity) {
     if (!g) return;
-    SimpleWeather::Params wp;
-    wp.groundElevation = g->airport.elevation;
-    wp.windSpeed = windSpeed;
-    wp.windFromDirection = degToRad(windFromDeg);
-    wp.turbulence.intensity = turbulence;
-    wp.conditions.temperatureDeviation = tempDev;
-    wp.conditions.relativeHumidity = humidity;
-    wp.cloudBase = g->weatherParams.cloudBase;
-    wp.cloudTop = g->weatherParams.cloudTop;
-    wp.cloudLiquidWater = g->weatherParams.cloudLiquidWater;
-    g->weatherParams = wp;
-    g->weather = std::make_unique<SimpleWeather>(wp);
+    g->wx.windSpeed = windSpeed;
+    g->wx.windFromDeg = windFromDeg;
+    g->wx.turbulence = turbulence;
+    g->wx.tempDev = tempDev;
+    g->wx.humidity = humidity;
+    rebuildWeather();
 }
 
 // One cloud layer (m MSL) with its liquid water content (g/m^3); top <= base
 // clears it. Supercooled (an icing layer) where the air is below 0 C.
 AVD_EXPORT void avd_set_cloud(double baseMsl, double topMsl, double liquidWater) {
     if (!g) return;
-    g->weatherParams.cloudBase = baseMsl;
-    g->weatherParams.cloudTop = topMsl;
-    g->weatherParams.cloudLiquidWater = liquidWater;
-    g->weather = std::make_unique<SimpleWeather>(g->weatherParams);
+    g->wx.cloudBase = baseMsl;
+    g->wx.cloudTop = topMsl;
+    g->wx.cloudLiquidWater = liquidWater;
+    rebuildWeather();
+}
+
+// Turbulence class (0 none, 1 light, 2 moderate, 3 severe; MIL-HDBK-1797)
+// and convection: thermals with w* (m/s, 0 none) in a layer zi deep (m AGL).
+AVD_EXPORT void avd_set_wind_detail(int severity, double convectiveVelocity, double convectiveDepth) {
+    if (!g) return;
+    g->wx.severity = severity;
+    g->wx.convectiveVelocity = convectiveVelocity;
+    g->wx.convectiveDepth = convectiveDepth;
+    rebuildWeather();
+}
+
+// Wind hazard: 0 none, 1 microburst on final runway 12, 2 gust front from
+// the south-west. Placed relative to the current simulation time.
+AVD_EXPORT void avd_set_wind_hazard(int kind) {
+    if (!g) return;
+    g->wx.hazard = kind;
+    g->wx.hazardTime = g->ac ? g->ac->telemetry().time : 0.0;
+    rebuildWeather();
 }
 
 // 0 cold and dark on runway 12, 1 engine running on runway 12, 2 on final
@@ -165,6 +237,11 @@ AVD_EXPORT void avd_set_cloud(double baseMsl, double topMsl, double liquidWater)
 AVD_EXPORT void avd_reset(int mode) {
     if (!g) return;
     g->ac = std::make_unique<Aircraft>(g->def, g->frame);
+    // The new aircraft's clock starts at zero: re-anchor a hazard to it.
+    if (g->wx.hazard != 0) {
+        g->wx.hazardTime = 0;
+        rebuildWeather();
+    }
     g->ac->setNavEnvironment(&scenarios::saoPauloNavEnvironment());
     g->procedure = ProcedureRunner{};
     g->accumulator = 0;
@@ -190,7 +267,12 @@ AVD_EXPORT void avd_reset(int mode) {
         const Real alt = g->airport.elevation + (final ? (-dist + 300.0) * std::tan(-path) : 850.0);
         SimpleWeatherParams calm = g->weatherParams;
         calm.windSpeed = 0;
-        calm.turbulence.intensity = 0;
+        calm.turbulence = TurbulenceParams{};
+        calm.turbulence.mechanical = false;
+        calm.thermals.convectiveVelocity = 0;
+        calm.microbursts.clear();
+        calm.windShifts.clear();
+        calm.gusts.clear();
         const SimpleWeather trimAir(calm);
         scenarios::TrimRequest req;
         req.altitude = alt;

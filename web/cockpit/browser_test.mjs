@@ -73,6 +73,14 @@ try {
   check(rotor < 99.5 && rotor > 50, `vacuum failure spins the attitude gyro down (${rotor}%)`);
   check((await page.$$eval('#log li', (l) => l.map((x) => x.textContent))).some((x) => /Vacuum pump: failed/.test(x)), 'failure is logged');
 
+  // Wind controls reach the model: a gust-front hazard is announced, and the
+  // thermals slider reports its setting.
+  await page.selectOption('#hazard', '2');
+  check((await page.$$eval('#log li', (l) => l.map((x) => x.textContent))).some((x) => /Gust front/.test(x)), 'wind hazard is set and logged');
+  await page.selectOption('#hazard', '0');
+  await page.$eval('#thermals', (e) => { e.value = '2'; e.dispatchEvent(new Event('input')); });
+  check((await page.textContent('#thermals-v')).includes('2.00'), 'thermals slider applies');
+
   // Final approach: localizer and glideslope are received on NAV 1.
   await page.selectOption('#scenario', '2');
   await page.waitForTimeout(1500);

@@ -113,4 +113,25 @@ Vec3 runwayPoint(const RunwayDef& r, Real along, Real across) {
             r.threshold.z - r.slope * along};
 }
 
+void addSaoPauloWindEnvironment(SimpleWeatherParams& p, const Airport& a) {
+    p.groundElevation = a.elevation;
+    p.profile = WindProfile::LogLaw;
+    p.surfaceRoughness = 0.03;  // the report: the airfield anemometer
+    p.veer = units::degToRad(-20);
+    if (a.runways.empty()) return;
+    const RunwayDef& rw = a.runways[0];
+    const Vec3 field = runwayPoint(rw, 0.5 * rw.length);
+    p.roughnessPatches.push_back({field.x, field.y, 30000, 3000, 1.0});  // the city
+    p.roughnessPatches.push_back({field.x, field.y, 1200, 400, 0.03});   // the airfield inside it
+    Ridge cantareira;
+    cantareira.north = field.x + 10000;
+    cantareira.east = field.y;
+    cantareira.axis = units::degToRad(80);
+    cantareira.length = 25000;
+    cantareira.height = 350;
+    cantareira.halfWidth = 2500;
+    cantareira.baseElevation = a.elevation + 30;
+    p.ridges.push_back(cantareira);
+}
+
 }  // namespace avd::scenarios

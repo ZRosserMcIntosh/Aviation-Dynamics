@@ -77,7 +77,7 @@ BoundaryLayer::BoundaryLayer(const BoundaryLayerParams& p) : p_(p), aloft_(p.alo
               [](const WindLevel& a, const WindLevel& b) { return a.altitudeMsl < b.altitudeMsl; });
 }
 
-Real BoundaryLayer::speedFactor(Real h) const {
+Real BoundaryLayer::speedFactor(Real h, Real z0Local) const {
     h = std::min(h, p_.top);
     switch (p_.profile) {
         case WindProfile::Uniform:
@@ -88,25 +88,31 @@ Real BoundaryLayer::speedFactor(Real h) const {
             // Below a couple of roughness lengths the log law has no meaning
             // (the flow is among the roughness elements): hold it there.
             const Real z0 = p_.surfaceRoughness;
-            const Real zMin = std::max(0.5, 2 * z0);
-            const Real zRef = std::max(p_.referenceHeight, 1.01 * zMin);
-            return std::log(std::max(h, zMin) / z0) / std::log(zRef / z0);
+            const Real zRef = std::max(p_.referenceHeight, 1.01 * std::max(0.5, 2 * z0));
+            const Real zl = std::max(z0Local, 1e-5);
+            const Real hl = std::max(h, std::max(0.5, 2 * zl));
+            if (std::abs(zl - z0) <= 1e-12 * z0) return std::log(hl / z0) / std::log(zRef / z0);
+            // Different local roughness: same wind at the top of the layer.
+            const Real top = std::max(p_.top, 1.01 * std::max(0.5, 2 * zl));
+            return std::log(top / z0) / std::log(zRef / z0) * std::log(hl / zl) / std::log(top / zl);
         }
     }
     return 1.0;
 }
 
-Vec3 BoundaryLayer::wind(Real h, Real altitudeMsl) const {
+Vec3 BoundaryLayer::wind(Real h, Real altitudeMsl) const { return wind(h, altitudeMsl, reference()); }
+
+Vec3 BoundaryLayer::wind(Real h, Real altitudeMsl, const SurfaceWind& sw) const {
     // Ekman turning: most of it in the lower part of the layer, none above.
     auto direction = [&](Real hh) {
         const Real zeta = clamp(hh / p_.top, 0.0, 1.0);
-        return p_.windFromDirection + p_.veer * (1 - sq(1 - zeta));
+        return sw.fromDirection + p_.veer * (1 - sq(1 - zeta));
     };
-    if (h <= p_.top || aloft_.empty()) return flowVector(p_.windSpeed * speedFactor(h), direction(h));
+    if (h <= p_.top || aloft_.empty()) return flowVector(sw.speed * speedFactor(h, sw.roughness), direction(h));
     // Above the boundary layer: from its top wind to the reported levels,
     // interpolating speed and direction (shortest turn) by altitude.
     const Real topMsl = altitudeMsl - h + p_.top;
-    WindLevel lo{topMsl, p_.windSpeed * speedFactor(p_.top), direction(p_.top)};
+    WindLevel lo{topMsl, sw.speed * speedFactor(p_.top, sw.roughness), direction(p_.top)};
     for (const WindLevel& hi : aloft_) {
         if (hi.altitudeMsl <= topMsl) continue;
         if (altitudeMsl <= hi.altitudeMsl) {
@@ -126,9 +132,16 @@ Vec3 BoundaryLayer::shear(Real h, Real altitudeMsl) const {
     return (wind(hi, altitudeMsl + (hi - h)) - wind(lo, altitudeMsl + (lo - h))) / (hi - lo);
 }
 
-Real BoundaryLayer::frictionVelocity() const {
-    const Real z0 = p_.surfaceRoughness;
-    return kKarman * p_.windSpeed / std::log(std::max(p_.referenceHeight, 2 * z0) / z0);
+Real BoundaryLayer::frictionVelocity() const { return frictionVelocity(reference()); }
+
+Real BoundaryLayer::frictionVelocity(const SurfaceWind& sw) const {
+    const Real zl = std::max(sw.roughness, 1e-5);
+    if (p_.profile == WindProfile::LogLaw) {
+        // From the wind at the top of the layer, which the local profile shares.
+        const Real top = std::max(p_.top, 1.01 * std::max(0.5, 2 * zl));
+        return kKarman * sw.speed * speedFactor(p_.top, zl) / std::log(top / zl);
+    }
+    return kKarman * sw.speed / std::log(std::max(p_.referenceHeight, 2 * zl) / zl);
 }
 
 // =============================================================== turbulence ==
@@ -201,13 +214,18 @@ AtmosphericTurbulence::AtmosphericTurbulence(const TurbulenceParams& p, Real flo
 }
 
 TurbulenceStatistics AtmosphericTurbulence::statistics(Real agl, Real altitudeMsl) const {
+    return statistics(agl, altitudeMsl, {frictionVelocity_, 0});
+}
+
+TurbulenceStatistics AtmosphericTurbulence::statistics(Real agl, Real altitudeMsl, const TurbulenceLocal& local) const {
     TurbulenceStatistics st;
     if (!active_) return st;
+    const Real uStar = p_.mechanical ? std::max(local.frictionVelocity, 0.0) : 0.0;
     const Real h = std::max(agl / kFt, 10.0);  // ft; MIL-HDBK-1797 lower bound
     const Real w20 = p_.severity == TurbulenceSeverity::None ? 0.0 : 15.0 * static_cast<int>(p_.severity) * kKt;
     // Low-altitude model (vertical RMS sets the level; the horizontal
     // components grow toward the ground and their scales shrink).
-    const Real sigmaWLow = std::sqrt(sq(1.25 * frictionVelocity_) + sq(0.1 * w20) + sq(p_.intensity));
+    const Real sigmaWLow = std::sqrt(sq(1.25 * uStar) + sq(0.1 * w20) + sq(p_.intensity));
     auto low = [&](Real hf, Vec3& sigma, Vec3& length) {
         const Real a = 0.177 + 0.000823 * hf;
         const Real ratio = 1 / std::pow(a, 0.4);
@@ -238,13 +256,18 @@ TurbulenceStatistics AtmosphericTurbulence::statistics(Real agl, Real altitudeMs
         const Real sh2 = sq(0.6 * ws);
         st.sigma = {std::sqrt(sq(st.sigma.x) + sh2), std::sqrt(sq(st.sigma.y) + sh2), std::sqrt(sq(st.sigma.z) + sw2)};
     }
+    if (local.extraSigma > 0) {
+        const Real e2 = sq(local.extraSigma);
+        st.sigma = {std::sqrt(sq(st.sigma.x) + e2), std::sqrt(sq(st.sigma.y) + e2), std::sqrt(sq(st.sigma.z) + e2)};
+    }
     // The vertical component vanishes at the surface.
     st.sigma.z *= smoothstep(0.0, 3.0, agl);
     return st;
 }
 
-void AtmosphericTurbulence::coefficients(Real agl, Real altitudeMsl, std::array<std::array<Real, kScales>, 3>& c) const {
-    const TurbulenceStatistics st = statistics(agl, altitudeMsl);
+void AtmosphericTurbulence::coefficients(Real agl, Real altitudeMsl, const TurbulenceLocal& local,
+                                         std::array<std::array<Real, kScales>, 3>& c) const {
+    const TurbulenceStatistics st = statistics(agl, altitudeMsl, local);
     const Real sig[3] = {st.sigma.x, st.sigma.y, st.sigma.z}, len[3] = {st.length.x, st.length.y, st.length.z};
     for (int i = 0; i < 3; ++i) {
         c[i].fill(0);
@@ -259,23 +282,29 @@ void AtmosphericTurbulence::coefficients(Real agl, Real altitudeMsl, std::array<
 }
 
 void AtmosphericTurbulence::evaluate(const Vec3& x, Real agl, Real altitudeMsl, Vec3& velocity, Mat3& gradient) const {
+    const TurbulenceLocal l{frictionVelocity_, 0};
+    const TurbulenceLocal local[7] = {l, l, l, l, l, l, l};
+    evaluate(x, agl, altitudeMsl, local, 0.25, velocity, gradient);
+}
+
+void AtmosphericTurbulence::evaluate(const Vec3& x, Real agl, Real altitudeMsl, const TurbulenceLocal local[7], Real d,
+                                     Vec3& velocity, Mat3& gradient) const {
     velocity = {};
     gradient = Mat3::zero();
     if (!active_) return;
-    // Height derivative of the coefficients (intensity and scale change
-    // with height): adds the d/dz column of the gradient.
-    const Real d = 0.25;
-    std::array<std::array<Real, kScales>, 3> c, cp, cm;
-    coefficients(agl, altitudeMsl, c);
-    coefficients(agl + d, altitudeMsl + d, cp);
-    coefficients(agl - d, altitudeMsl - d, cm);
+    // Coefficients at the point and +-d along north, east, down: intensity
+    // and scale vary with height (and with place), which adds to the
+    // gradient. Down is minus height.
+    std::array<std::array<std::array<Real, kScales>, 3>, 7> c;
+    const Real dh[7] = {0, 0, 0, 0, 0, -d, d};
+    for (int p = 0; p < 7; ++p) coefficients(agl + dh[p], altitudeMsl + dh[p], local[p], c[static_cast<std::size_t>(p)]);
     const Mat3 at = axes_.transposed();
-    Vec3 vt;              // velocity in turbulence axes
     Mat3 gt = Mat3::zero();  // rows: turbulence axes, columns: NED derivatives
     Real vtv[3] = {0, 0, 0};
     for (int k = 0; k < kScales; ++k) {
         bool used = false;
-        for (int i = 0; i < 3; ++i) used = used || c[i][k] != 0 || cp[i][k] != 0 || cm[i][k] != 0;
+        for (const auto& cp : c)
+            for (int i = 0; i < 3; ++i) used = used || cp[i][k] != 0;
         if (!used) continue;
         Vec3 f;
         Mat3 g;
@@ -284,14 +313,14 @@ void AtmosphericTurbulence::evaluate(const Vec3& x, Real agl, Real altitudeMsl, 
         const Mat3 ga = at * g;
         const Real av[3] = {a.x, a.y, a.z};
         for (int i = 0; i < 3; ++i) {
-            vtv[i] += c[i][k] * av[i];
-            for (int j = 0; j < 3; ++j) gt.m[i][j] += c[i][k] * ga.m[i][j];
-            // NED z is down: d/dz = -d/dh.
-            gt.m[i][2] -= (cp[i][k] - cm[i][k]) / (2 * d) * av[i];
+            vtv[i] += c[0][i][k] * av[i];
+            for (int j = 0; j < 3; ++j)
+                gt.m[i][j] += c[0][i][k] * ga.m[i][j] +
+                              (c[static_cast<std::size_t>(2 * j + 1)][i][k] - c[static_cast<std::size_t>(2 * j + 2)][i][k]) /
+                                  (2 * d) * av[i];
         }
     }
-    vt = {vtv[0], vtv[1], vtv[2]};
-    velocity = axes_ * vt;
+    velocity = axes_ * Vec3{vtv[0], vtv[1], vtv[2]};
     gradient = axes_ * gt;
 }
 
@@ -481,6 +510,90 @@ Vec3 Ridge::velocity(const Vec3& x, Real altitudeMsl, const Vec3& crestWind) con
     const Real wUp = u * detadx * fade;
     const Real du = -u * detadz * fade;
     return {n.x * du, n.y * du, -wUp};
+}
+
+// ===================================================== spatial variation ==
+
+void WindStation::at(Real t, Real& speed, Real& fromDirection) const {
+    const std::size_t n = std::min({times.size(), speeds.size(), fromDirections.size()});
+    speed = 0;
+    fromDirection = 0;
+    if (n == 0) return;
+    if (n == 1 || t <= times[0]) { speed = speeds[0]; fromDirection = fromDirections[0]; return; }
+    if (t >= times[n - 1]) { speed = speeds[n - 1]; fromDirection = fromDirections[n - 1]; return; }
+    std::size_t i = 1;
+    while (i + 1 < n && times[i] < t) ++i;
+    const Real u = (t - times[i - 1]) / std::max(times[i] - times[i - 1], 1e-9);
+    speed = lerp(speeds[i - 1], speeds[i], u);
+    fromDirection = fromDirections[i - 1] + wrapPi(fromDirections[i] - fromDirections[i - 1]) * u;
+}
+
+Real WindShift::behind(const Vec3& x, Real agl, Real t) const {
+    if (t < startTime || width <= 0) return 0;
+    const Vec3 n{std::cos(heading), std::sin(heading), 0};
+    const Real xi = speed * (t - startTime) - dot(Vec3{x.x - north, x.y - east, 0}, n);  // distance behind
+    const Real f = 0.5 * (1 + std::tanh(2 * xi / width));
+    return f * (1 - smoothstep(0.7 * depth, depth, agl));
+}
+
+Real WindShift::updraft(const Vec3& x, Real agl, Real t) const {
+    if (noseUpdraft == 0 || t < startTime || agl <= 0 || agl >= depth) return 0;
+    const Vec3 n{std::cos(heading), std::sin(heading), 0};
+    const Real xi = speed * (t - startTime) - dot(Vec3{x.x - north, x.y - east, 0}, n);
+    // Just ahead of and over the head of the outflow, strongest mid-depth.
+    return noseUpdraft * std::exp(-sq((xi + 0.5 * width) / width)) * std::sin(kPi * agl / depth);
+}
+
+Obstacle Obstacle::fromFootprint(const std::vector<std::pair<Real, Real>>& fp, Real base, Real top) {
+    Obstacle o;
+    o.baseElevation = base;
+    o.height = std::max(top - base, 0.0);
+    Real area = 0, ce = 0, cn = 0;
+    const std::size_t n = fp.size();
+    for (std::size_t i = 0; i < n; ++i) {
+        const auto& p = fp[i];
+        const auto& q = fp[(i + 1) % n];
+        const Real cr = p.first * q.second - q.first * p.second;
+        area += cr;
+        ce += (p.first + q.first) * cr;
+        cn += (p.second + q.second) * cr;
+    }
+    if (std::abs(area) > 1e-9) {
+        o.east = ce / (3 * area);
+        o.north = cn / (3 * area);
+    } else if (n > 0) {
+        for (const auto& p : fp) { o.east += p.first / static_cast<Real>(n); o.north += p.second / static_cast<Real>(n); }
+    }
+    o.width = 2 * std::sqrt(std::abs(0.5 * area) / kPi);
+    return o;
+}
+
+Real Obstacle::wakeFactor(Real along, Real across, Real z) const {
+    const Real h = height, w = width;
+    // Distance downwind of the leeward face.
+    const Real x = along - 0.5 * w;
+    if (h <= 0 || w <= 0 || z < 0 || x < -w || x > 30 * h) return 0;
+    // Recirculation cavity ~2 H long with about the full deficit, then the
+    // far-wake x^-3/2 decay: (1 + (x / Lc)^6)^-1/4 joins the two smoothly.
+    const Real lc = 2 * h;
+    const Real xd = std::max(x, 0.0);
+    const Real decay = std::pow(1 + std::pow(xd / lc, 6), -0.25);
+    const Real sy = 0.5 * w + 0.1 * xd, sz = 0.7 * h + 0.1 * xd;
+    const Real start = smoothstep(-w, 0.0, x);  // the wake begins at the building
+    return start * decay * std::exp(-0.5 * sq(across / sy)) * std::exp(-0.5 * sq(z / sz));
+}
+
+Vec3 Obstacle::velocity(const Vec3& x, Real altitudeMsl, const Vec3& roofWind, Real& extraSigma) const {
+    extraSigma = 0;
+    const Real u = std::hypot(roofWind.x, roofWind.y);
+    if (u < 1e-6) return {};
+    const Vec3 dir{roofWind.x / u, roofWind.y / u, 0};
+    const Vec3 d{x.x - north, x.y - east, 0};
+    const Real along = dot(d, dir), across = dir.x * d.y - dir.y * d.x;
+    const Real f = wakeFactor(along, across, altitudeMsl - baseElevation);
+    // Wake turbulence ~ 0.3 of the deficit (shear-layer production).
+    extraSigma = 0.3 * u * f;
+    return dir * (-u * f);
 }
 
 Real windShearHazardFactor(Real tailwindRate, Real verticalAirVelocity, Real airspeed) {
