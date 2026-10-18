@@ -47,6 +47,7 @@
       $('status').textContent = 'This browser could not start the WebAssembly flight model: ' + e.message;
       return;
     }
+    A.avd_set_airport(0);  // this panel's scenarios are Campo de Marte runway 12
     const errors = A.load(aircraftJson);
     if (errors.length) { $('status').textContent = 'Aircraft data rejected: ' + errors[0]; return; }
     await (document.fonts?.ready ?? Promise.resolve());

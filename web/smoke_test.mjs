@@ -10,6 +10,7 @@ if (errors.length) { console.error(errors); process.exit(1); }
 let failures = 0;
 const check = (ok, msg) => { console.log((ok ? 'ok   ' : 'FAIL ') + msg); if (!ok) failures++; };
 
+A.avd_set_airport(0);                // Campo de Marte runway 12 (Congonhas is the default; checked below)
 A.avd_reset(1);                      // engine running on runway 12 at Campo de Marte
 A.avd_set_assist(0);            // Arcade: wing leveler holds the torque roll
 A.avd_set_input(0, 0, 0, 1.0, 0.85, 0, 0, 0, 0);
@@ -134,4 +135,17 @@ B.avd_quick_start();
 for (let i = 0; i < 100 * 4; ++i) { B.avd_set_input(0, 0, 0, 0, 1, 0, 0, 0, 0); B.avd_advance(0.25); }
 j = B.jet();
 check(j[13] === 1 && j[21] === 1 && B.procedure().status === 2, `jet Quick Start: both engines running (N2 ${j[9].toFixed(0)} / ${j[17].toFixed(0)} %)`);
+// Load sheet: a planned load (full tanks, full cabin) applies at the next spawn.
+B.avd_set_tank(0, 1e6); B.avd_set_tank(1, 1e6); B.avd_set_station(1, 2200);
+const plan = B.loadsheet(true);
+check(plan.tanks[0].litres === plan.tanks[0].capacity && (plan.flags & 3) === 3, `load sheet: full tanks and cabin plan ${Math.round(plan.gross)} kg, over ramp and MTOW flagged`);
+B.avd_reset(1);
+check(Math.abs(B.state()[40] - plan.gross) < 1 && Math.abs(B.loadsheet(false).gross - plan.gross) < 1, `the next spawn carries it (${Math.round(B.state()[40])} kg)`);
+// The default airport is Congonhas (runway 35L), with its test ILS on NAV 1.
+const ap = B.airport();
+check(ap.icao === 'SBSP' && ap.runway === '35L', `default airport ${ap.icao} runway ${ap.runway}`);
+B.avd_reset(2);
+for (let i = 0; i < 60; ++i) B.avd_advance(1 / 60);
+const cg = B.cockpitState();
+check(cg[32] === 110.5 && cg[37] === 1 && cg[40] === 1 && Math.abs(cg[38]) < 0.1, `Congonhas 35L final: ILS 110.50 received (CDI ${cg[38].toFixed(2)}, GS ${cg[41].toFixed(2)})`);
 process.exit(failures ? 1 : 0);

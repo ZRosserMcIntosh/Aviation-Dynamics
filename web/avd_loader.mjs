@@ -49,6 +49,24 @@ export default async function createAvdModule(wasmBytes) {
   A.flow = () => new Float64Array(memory.buffer, ex.avd_flow(), 16 + 64 * 16 + 40);
   A.jet = () => new Float64Array(memory.buffer, ex.avd_jet(), 64);
   A.runway = () => Array.from(new Float64Array(memory.buffer, ex.avd_runway(), 6));
+  A.airport = () => { const [icao, name, runway, reciprocal] = A.text(ex.avd_airport_text()).split('|'); return { icao, name, runway, reciprocal }; };
+  // Weight and balance: planned (next spawn) or current. Masses in kg, x in
+  // the structural frame (m, forward positive), fuel in litres.
+  A.loadsheet = (planned = true) => {
+    const b = Array.from(new Float64Array(memory.buffer, ex.avd_loadsheet(planned ? 1 : 0), 256));
+    const [sn, tn, gn] = A.text(ex.avd_loadsheet_names()).split('|').map((x) => (x ? x.split(';') : []));
+    let k = 24;
+    const take = (n) => b.slice(k, (k += n));
+    const stations = Array.from({ length: b[17] }, (_, i) => { const [kg, max, x] = take(3); return { name: sn[i], kg, max, x }; });
+    const tanks = Array.from({ length: b[18] }, (_, i) => { const [litres, capacity, unusable, x] = take(4); return { name: tn[i], litres, capacity, unusable, x }; });
+    const groups = Array.from({ length: b[19] }, (_, i) => { const [kg, max] = take(2); return { name: gn[i], kg, max }; });
+    const fwd = Array.from({ length: b[20] }, () => take(2)), aft = Array.from({ length: b[21] }, () => take(2));
+    return {
+      basicEmpty: b[0], basicEmptyX: b[1], payload: b[2], zeroFuel: b[3], zeroFuelX: b[4], fuelTotal: b[5], fuelUsable: b[6],
+      gross: b[7], cgX: b[8], cgFwdLimit: b[9], cgAftLimit: b[10], flags: b[11], trappedFuel: b[22],
+      limits: { ramp: b[12], takeoff: b[13], landing: b[14], zeroFuel: b[15] }, density: b[16], stations, tanks, groups, fwd, aft,
+    };
+  };
   A.events = () => { const n = ex.avd_events(); return n ? A.text(n).split('\n').filter(Boolean) : []; };
   A.cockpit = () => {
     const out = [];

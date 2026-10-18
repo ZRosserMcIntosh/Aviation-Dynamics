@@ -115,7 +115,7 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
             residual(xp, rp);
             for (int i = 0; i < n; ++i) J[i][j] = (rp[i] - r[i]) / step[unknown[j]];
         }
-        Real b[4] = {-r[0], -r[1], -r[2], -r[3]}, dx[4];
+        Real b[4] = {-r[0], -r[1], -r[2], -r[3]}, dx[4] = {};
         if (!solveN(n, J, b, dx)) break;
         // Backtracking line search on the residual norm.
         Real lambda = 1.0;

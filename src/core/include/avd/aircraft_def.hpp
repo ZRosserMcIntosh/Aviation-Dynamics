@@ -395,8 +395,15 @@ struct StructuralLimitsDef {
 struct PayloadStationDef {
     std::string name;
     Vec3 position;
-    Real maxMass = 0;
+    Real maxMass = 0;                 // placard limit (a limit of approval, not a physical stop)
     Real initial = 0;
+};
+
+// A placarded limit on the sum of several stations (e.g. two baggage areas).
+struct StationGroupLimitDef {
+    std::string name;
+    std::vector<int> stations;
+    Real maxMass = 0;
 };
 
 struct AircraftDefinition {
@@ -414,9 +421,16 @@ struct AircraftDefinition {
     Vec3 emptyCg;
     Vec3 emptyInertiaDiag;            // Ixx, Iyy, Izz about the empty CG
     Real emptyIxz = 0;
+    // True when the published empty mass already includes the unusable fuel
+    // (and full oil), as a POH "standard empty weight" does; the tanks carry
+    // that fuel, so the airframe item is reduced by it rather than counting it twice.
+    bool emptyIncludesUnusableFuel = false;
+    Real maxRampMass = 0;             // 0 = not published
     Real maxTakeoffMass = 0;
     Real maxLandingMass = 0;
+    Real maxZeroFuelMass = 0;         // 0 = not published / not applicable
     std::vector<PayloadStationDef> stations;
+    std::vector<StationGroupLimitDef> stationGroupLimits;
     // CG envelope: forward/aft limit (structural x) vs mass.
     Table1D cgForwardLimitVsMass, cgAftLimitVsMass;
 

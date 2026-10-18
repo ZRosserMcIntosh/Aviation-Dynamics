@@ -13,6 +13,7 @@
 #include "scenarios.hpp"
 #include "avd/aircraft_loader.hpp"
 #include "avd/assists.hpp"
+#include "avd/loading.hpp"
 #include "avd/procedures.hpp"
 #include "avd/units.hpp"
 #include "avd/world_frame.hpp"
@@ -51,12 +52,36 @@ struct Sim {
     // Trimmed CLmax cache for the low-speed awareness band and V-speeds.
     std::unique_ptr<AeroModel> clmaxModel;
     Real clmaxKey = -1, clmax = 0, clmaxTakeoff = 0, clmaxLanding = 0;
+    // Planned load (kg per station, m^3 per tank), applied to every new spawn.
+    std::vector<Real> loadStations, loadTanks;
 };
 
 Sim* g = nullptr;
 double g_state[kStateSize];
 double g_cockpit[96];
 double g_jet[64];
+double g_load[256];
+// Airport for spawns: 0 Campo de Marte (SBMT, runway 12), 1 Congonhas (SBSP,
+// runway 35L). Kept across aircraft loads.
+int g_airportId = 1;
+
+scenarios::Airport makeAirport(int id, const LocalFrame& f) {
+    return id == 0 ? scenarios::campoDeMarte(f) : scenarios::congonhas(f);
+}
+
+void buildAirport() {
+    g->airport = makeAirport(g_airportId, g->frame);
+    g->ground = scenarios::makeAirfieldGround(g->airport, g->frame);
+    g->weatherParams.groundElevation = g->airport.elevation;
+    g->weather = std::make_unique<SimpleWeather>(g->weatherParams);
+}
+
+// The planned load onto an aircraft (stations and tanks), mass refreshed.
+void applyLoad(Aircraft& ac) {
+    for (std::size_t i = 0; i < g->loadStations.size(); ++i) ac.setStationMass(static_cast<int>(i), g->loadStations[i]);
+    for (std::size_t i = 0; i < g->loadTanks.size(); ++i) ac.fuel().setTankQuantity(static_cast<int>(i), g->loadTanks[i]);
+    ac.refreshMass();
+}
 constexpr int kFlowStrips = 64, kFlowStride = 16;
 double g_flow[16 + kFlowStrips * kFlowStride + 4 * 10];
 char* g_text = nullptr;
@@ -131,13 +156,12 @@ AVD_EXPORT int avd_load(int length) {
     delete g;
     g = new Sim;
     g->def = r.definition;
-    g->airport = scenarios::campoDeMarte(g->frame);
-    g->ground = scenarios::makeAirfieldGround(g->airport, g->frame);
-    SimpleWeather::Params wp;
-    wp.groundElevation = g->airport.elevation;
-    g->weather = std::make_unique<SimpleWeather>(wp);
+    buildAirport();
+    for (const PayloadStationDef& s : g->def.stations) g->loadStations.push_back(s.initial);
+    for (const FuelTankDef& t : g->def.fuel.tanks) g->loadTanks.push_back(t.initial);
     g->ac = std::make_unique<Aircraft>(g->def, g->frame);
     g->ac->setNavEnvironment(&scenarios::saoPauloNavEnvironment());
+    applyLoad(*g->ac);
     return 0;
 }
 
@@ -171,14 +195,15 @@ AVD_EXPORT void avd_set_cloud(double baseMsl, double topMsl, double liquidWater)
     g->weather = std::make_unique<SimpleWeather>(g->weatherParams);
 }
 
-// 0 cold and dark on runway 12, 1 engine running on runway 12, 2 on final
-// for runway 12 (3 km), 3 cruising at 3500 ft over the city.
+// On the runway in use (avd_set_airport): 0 cold and dark, 1 engine running, 2 on
+// the 3 deg final (3 km; jets 6 km), 3 cruising over the city.
 namespace {
 
 // A fresh aircraft for a reset.
 void newAircraft() {
     g->ac = std::make_unique<Aircraft>(g->def, g->frame);
     g->ac->setNavEnvironment(&scenarios::saoPauloNavEnvironment());
+    applyLoad(*g->ac);
     g->procedure = ProcedureRunner{};
     g->assist.reset();
     g->accumulator = 0;
@@ -240,13 +265,15 @@ void finishReset(bool seedInstruments) {
     g->ac->step(kDt, in, *g->ground, *g->weather);
     g->ac->instruments().setAltimeterSetting(g->weather->atmosphere().conditions().seaLevelPressure);
     if (seedInstruments) g->ac->resetInstrumentsToTruth();
-    // Radios: NAV 1 on the (synthetic) runway 12 localizer, the test VOR in standby.
+    // Radios: NAV 1 on the (synthetic) localizer of the runway in use, the test
+    // VOR in standby; OBS and heading bug on the runway's magnetic course.
     InstrumentPanel& p = g->ac->instruments();
-    p.setNavStandby(0, 110300);
+    p.setNavStandby(0, g->airport.ilsKhz ? g->airport.ilsKhz : 113700);
     p.swapNav(0);
     p.setNavStandby(0, 113700);
-    p.setObs(degToRad(122));
-    p.setHeadingBug(degToRad(122));
+    const Real course = std::round(radToDeg(g->airport.runways[0].headingTrue - g->airport.magneticVariation));
+    p.setObs(degToRad(course));
+    p.setHeadingBug(degToRad(course));
     p.setComStandby(0, 132800);
     p.setTransponderMode(TransponderMode::Altitude);
     g->ac->drainEvents();
@@ -264,7 +291,7 @@ AVD_EXPORT void avd_reset(int mode) {
         g->ac->placeOnGround(p.x, p.y, rw.headingTrue, *g->ground, *g->weather);
         if (mode == 0) g->ac->setColdAndDark();
     } else {
-        // Mode 2: on the 3 deg final for runway 12 (65 KIAS, flaps 20), exactly
+        // Mode 2: on the 3 deg final for the runway in use (65 KIAS, flaps 20), exactly
         // on the glide path, which starts at the glideslope antenna 300 m beyond
         // the paved end (scenarios/airports.cpp). Mode 3: level cruise, 100 KIAS.
         // Jets: final at 125 KIAS (about Vref + 10) with landing flap and the gear down, cruise at 250 KIAS.
@@ -599,7 +626,21 @@ AVD_EXPORT int avd_cockpit_cycle(int i) {
     return g->ac->cycleCockpitControl(g->ac->cockpitControls()[static_cast<std::size_t>(i)].id) ? 1 : 0;
 }
 
-// Runway 12/30 geometry in the world frame: [east, north, elevation, heading_true_deg, length, width].
+// Runway in use, world frame: [east, north, elevation, heading_true_deg, length, width]
+// (east/north of its paved start). Names: avd_airport_text().
+// Choose the spawn airport (0 SBMT, 1 SBSP); takes effect for the next reset.
+AVD_EXPORT void avd_set_airport(int id) {
+    g_airportId = id == 0 ? 0 : 1;
+    if (g) buildAirport();
+}
+
+// "ICAO|name|runway in use|reciprocal" in the text buffer.
+AVD_EXPORT int avd_airport_text() {
+    if (!g) return 0;
+    const scenarios::Airport& a = g->airport;
+    return putText(a.icao + "|" + a.name + "|" + a.runways[0].ident + "|" + (a.runways.size() > 1 ? a.runways[1].ident : ""));
+}
+
 AVD_EXPORT double* avd_runway() {
     if (!g) return g_state;
     const RunwayDef& r = g->airport.runways[0];
@@ -645,6 +686,75 @@ AVD_EXPORT double* avd_state() {
     s[55] = g->assist.report().levelHold; s[56] = g->assist.report().yawOnTiller; s[57] = ac.hasTiller();
     s[58] = g->assist.report().underspeed;
     return s;
+}
+
+// ---- Weight and balance ---------------------------------------------------
+// The planned load is kept across resets and applied to every new spawn; the
+// host restarts to fly it. Placards and limits are reported, never enforced.
+AVD_EXPORT void avd_set_station(int i, double kg) {
+    if (g && i >= 0 && i < static_cast<int>(g->loadStations.size()) && std::isfinite(kg)) g->loadStations[static_cast<std::size_t>(i)] = std::max(kg, 0.0);
+}
+// Litres in tank i (clamped to the tank's capacity: it cannot hold more).
+AVD_EXPORT void avd_set_tank(int i, double litres) {
+    if (g && i >= 0 && i < static_cast<int>(g->loadTanks.size()) && std::isfinite(litres))
+        g->loadTanks[static_cast<std::size_t>(i)] = std::clamp(litres * 1e-3, 0.0, g->def.fuel.tanks[static_cast<std::size_t>(i)].capacity);
+}
+
+// Load sheet (see web/README.md for the layout): planned != 0 for the planned
+// load (what the next spawn carries), 0 for the aircraft as it is now.
+AVD_EXPORT double* avd_loadsheet(int planned) {
+    std::fill(std::begin(g_load), std::end(g_load), 0.0);
+    if (!g) return g_load;
+    std::unique_ptr<Aircraft> tmp;
+    if (planned) {
+        tmp = std::make_unique<Aircraft>(g->def, g->frame);
+        applyLoad(*tmp);
+    }
+    const Aircraft& ac = planned ? *tmp : *g->ac;
+    const AircraftDefinition& d = g->def;
+    const LoadSheet ls = computeLoadSheet(ac);
+    double* o = g_load;
+    o[0] = ls.basicEmptyMass; o[1] = ls.basicEmptyCg.x; o[2] = ls.payload; o[3] = ls.zeroFuelMass; o[4] = ls.zeroFuelCg.x;
+    o[5] = ls.fuelTotal; o[6] = ls.fuelUsable; o[7] = ls.grossMass; o[8] = ls.cg.x;
+    o[9] = ls.cgForwardLimit; o[10] = ls.cgAftLimit; o[11] = ls.flags;
+    o[12] = d.maxRampMass; o[13] = d.maxTakeoffMass; o[14] = d.maxLandingMass; o[15] = d.maxZeroFuelMass;
+    o[16] = d.fuel.density * 1e-3;
+    const int ns = static_cast<int>(d.stations.size()), nt = static_cast<int>(d.fuel.tanks.size());
+    const int ng = static_cast<int>(d.stationGroupLimits.size());
+    const int nf = static_cast<int>(d.cgForwardLimitVsMass.xs().size()), na = static_cast<int>(d.cgAftLimitVsMass.xs().size());
+    o[17] = ns; o[18] = nt; o[19] = ng; o[20] = nf; o[21] = na;
+    o[22] = ls.fuelTotal - ls.fuelUsable;
+    int k = 24;
+    auto put = [&](double v) { if (k < 256) o[k++] = v; };
+    for (int i = 0; i < ns; ++i) {
+        const PayloadStationDef& st = d.stations[static_cast<std::size_t>(i)];
+        put(ac.stationMass(i)); put(st.maxMass); put(st.position.x);
+    }
+    for (int i = 0; i < nt; ++i) {
+        const FuelTankDef& t = d.fuel.tanks[static_cast<std::size_t>(i)];
+        put(ac.fuel().tankQuantity(i) * 1e3); put(t.capacity * 1e3); put(t.unusable * 1e3); put(t.position.x);
+    }
+    for (int i = 0; i < ng; ++i) {
+        const StationGroupLimitDef& gr = d.stationGroupLimits[static_cast<std::size_t>(i)];
+        Real m = 0;
+        for (int s : gr.stations) m += ac.stationMass(s);
+        put(m); put(gr.maxMass);
+    }
+    for (int i = 0; i < nf; ++i) { put(d.cgForwardLimitVsMass.xs()[static_cast<std::size_t>(i)]); put(d.cgForwardLimitVsMass.ys()[static_cast<std::size_t>(i)]); }
+    for (int i = 0; i < na; ++i) { put(d.cgAftLimitVsMass.xs()[static_cast<std::size_t>(i)]); put(d.cgAftLimitVsMass.ys()[static_cast<std::size_t>(i)]); }
+    return o;
+}
+
+// Names for the load sheet in the text buffer: "station;station|tank;tank|group;group".
+AVD_EXPORT int avd_loadsheet_names() {
+    if (!g) return 0;
+    std::string s;
+    for (std::size_t i = 0; i < g->def.stations.size(); ++i) s += (i ? ";" : "") + g->def.stations[i].name;
+    s += "|";
+    for (std::size_t i = 0; i < g->def.fuel.tanks.size(); ++i) s += (i ? ";" : "") + g->def.fuel.tanks[i].name;
+    s += "|";
+    for (std::size_t i = 0; i < g->def.stationGroupLimits.size(); ++i) s += (i ? ";" : "") + g->def.stationGroupLimits[i].name;
+    return putText(s);
 }
 
 // ---- Cockpit instruments (display units) -----------------------------------

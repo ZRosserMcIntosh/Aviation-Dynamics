@@ -39,6 +39,38 @@ Airport campoDeMarte(const LocalFrame& frame) {
     r30.threshold = r12.threshold + dir * r12.length;
     r30.threshold.z = -a.elevation;
     a.runways.push_back(r30);
+    a.ilsKhz = 110300;
+    return a;
+}
+
+Airport congonhas(const LocalFrame& frame) {
+    Airport a;
+    a.icao = "SBSP";
+    a.name = "Congonhas";
+    a.elevation = 802.0;
+    a.magneticVariation = units::degToRad(-21.5);
+    const Vec3 thr35 = frame.nedFromGeodetic(deg(-23.634333, -46.651167, 0));
+    const Vec3 thr17 = frame.nedFromGeodetic(deg(-23.621, -46.6605, 0));
+    const Vec3 d = thr17 - thr35;
+    const Real heading = std::atan2(d.y, d.x);
+    const Vec3 dir{std::cos(heading), std::sin(heading), 0};
+    RunwayDef r35;
+    r35.ident = "35L";
+    r35.headingTrue = heading;
+    r35.length = 1940;
+    r35.width = 45;
+    // Paved end of 35L: 61 m before its displaced threshold.
+    r35.threshold = thr35 - dir * 61.0;
+    r35.threshold.z = -a.elevation;
+    r35.surface = surfaces::kAsphalt;
+    a.runways.push_back(r35);
+    RunwayDef r17 = r35;
+    r17.ident = "17R";
+    r17.headingTrue = wrapPi(heading + kPi);
+    r17.threshold = r35.threshold + dir * r35.length;
+    r17.threshold.z = -a.elevation;
+    a.runways.push_back(r17);
+    a.ilsKhz = 110500;
     return a;
 }
 
@@ -54,7 +86,6 @@ const NavEnvironment& saoPauloNavEnvironment() {
         NavDatabase d;
         const LocalFrame f = saoPauloWorldFrame();
         const Airport a = campoDeMarte(f);
-        const RunwayDef& r = a.runways[0];
         const Real var = units::degToRad(-21.5);
         const std::string src = "synthetic test facility (Aviation Dynamics); not a real-world navaid";
         Navaid vor;
@@ -75,26 +106,33 @@ const NavEnvironment& saoPauloNavEnvironment() {
             g.height = h;
             return g;
         };
-        Navaid loc;
-        loc.type = Navaid::Type::Localizer;
-        loc.ident = "ITMT";
-        loc.name = "Test ILS Campo de Marte RWY 12 (synthetic)";
-        loc.frequencyKhz = 110300;
-        loc.position = geo(runwayPoint(r, r.length + 300), a.elevation + 2);
-        loc.course = r.headingTrue;
-        // Width giving 700 ft (213 m) full-scale span at the threshold.
-        loc.courseWidth = 2 * std::atan2(106.7, r.length + 300);
-        loc.rangeNm = 18;
-        loc.synthetic = true;
-        loc.source = src;
-        d.add(loc);
-        Navaid gs = loc;
-        gs.type = Navaid::Type::Glideslope;
-        gs.ident = "ITMT GS";
-        gs.position = geo(runwayPoint(r, 300, 120), a.elevation + 2);
-        gs.glidepathAngle = units::degToRad(3.0);
-        gs.rangeNm = 10;
-        d.add(gs);
+        // Localizer antenna 300 m beyond the far end; glideslope 300 m in from
+        // the paved end, 120 m right of the centreline; 3 degrees.
+        auto ils = [&](const Airport& ap, const std::string& ident, const std::string& name) {
+            const RunwayDef& rw = ap.runways[0];
+            Navaid loc;
+            loc.type = Navaid::Type::Localizer;
+            loc.ident = ident;
+            loc.name = name;
+            loc.frequencyKhz = ap.ilsKhz;
+            loc.position = geo(runwayPoint(rw, rw.length + 300), ap.elevation + 2);
+            loc.course = rw.headingTrue;
+            // Width giving 700 ft (213 m) full-scale span at the threshold.
+            loc.courseWidth = 2 * std::atan2(106.7, rw.length + 300);
+            loc.rangeNm = 18;
+            loc.synthetic = true;
+            loc.source = src;
+            d.add(loc);
+            Navaid gs = loc;
+            gs.type = Navaid::Type::Glideslope;
+            gs.ident = ident + " GS";
+            gs.position = geo(runwayPoint(rw, 300, 120), ap.elevation + 2);
+            gs.glidepathAngle = units::degToRad(3.0);
+            gs.rangeNm = 10;
+            d.add(gs);
+        };
+        ils(a, "ITMT", "Test ILS Campo de Marte RWY 12 (synthetic)");
+        ils(congonhas(f), "ITCG", "Test ILS Congonhas RWY 35L (synthetic)");
         return d;
     }();
     static NavEnvironment env = [] {

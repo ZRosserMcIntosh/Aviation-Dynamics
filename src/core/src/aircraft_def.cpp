@@ -106,6 +106,17 @@ std::vector<std::string> AircraftDefinition::validate() const {
     c.positive("maxTakeoffMass", maxTakeoffMass);
     if (maxTakeoffMass < emptyMass) c.add("maxTakeoffMass", "must be >= emptyMass");
     c.nonNegative("maxLandingMass", maxLandingMass);
+    c.nonNegative("maxRampMass", maxRampMass);
+    if (maxRampMass > 0 && maxRampMass < maxTakeoffMass) c.add("maxRampMass", "must be >= maxTakeoffMass");
+    c.nonNegative("maxZeroFuelMass", maxZeroFuelMass);
+    if (maxZeroFuelMass > 0 && maxZeroFuelMass < emptyMass) c.add("maxZeroFuelMass", "must be >= emptyMass");
+    for (std::size_t i = 0; i < stationGroupLimits.size(); ++i) {
+        const auto p = idx("stationGroupLimits", i);
+        c.positive(p + ".maxMass", stationGroupLimits[i].maxMass);
+        if (stationGroupLimits[i].stations.empty()) c.add(p + ".stations", "at least one station");
+        for (int s : stationGroupLimits[i].stations)
+            if (s < 0 || s >= static_cast<int>(stations.size())) c.add(p + ".stations", "no station " + std::to_string(s));
+    }
     for (std::size_t i = 0; i < stations.size(); ++i) {
         const auto p = idx("stations", i);
         c.finite(p + ".position", stations[i].position);

@@ -20,6 +20,7 @@ Legend: ✅ implemented and tested · 🟡 partial or simplified · ⛔ not star
 | Turbofan | 🟡 | Two-spool lag, Mattingly thrust lapse, TSFC vs Mach; windmilling below idle (~25 % N1 / 20 % N2 at cruise) with windmill relight; windmill drag neglected | Unit tests; Top G trims vs published G650ER cruise, take-off and approach figures | `tests/test_jet.cpp` |
 | Retractable gear, speedbrakes | 🟡 | Gear transit and drag area; spoiler lift fraction + drag area | Unit tests | |
 | Turboprop / rotor | ⛔ | — | — | Milestones 4–6 |
+| Weight and balance | ✅ | Load sheet from the dynamics' own mass items: published empty mass (unusable fuel not double counted), stations with placards and combined limits, tanks and line fuel; ramp/take-off/landing/zero-fuel limits and CG envelope reported, never enforced | Loading tests | Fuel density fixed (no temperature dependence); empty mass of one documented configuration per type |
 | Fuel system | ✅ | Tanks, selector, shutoff, line volume, starvation, leaks | Scenario A/C tests | No unporting in uncoordinated flight |
 | Electrical | ✅ | Battery OCV/resistance, alternator, named loads and breakers | Depletion, VOLTS annunciator | No bus split, no avionics bus relay |
 | Vacuum | ✅ | Pump suction against rpm | Unit test | No regulator failure modes beyond pump failure |

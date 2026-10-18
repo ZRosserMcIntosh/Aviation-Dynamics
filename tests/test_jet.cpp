@@ -2,6 +2,7 @@
 // (G650ER-class) reference jet.
 // SPDX-License-Identifier: MIT
 #include "avd/assists.hpp"
+#include "avd/loading.hpp"
 #include "avd/units.hpp"
 #include "avd_test.hpp"
 #include "scenarios.hpp"
@@ -412,4 +413,66 @@ TEST_CASE("top g: auto-trim holds FL410 after a pitch input, and near the stall 
         CHECK(ac.telemetry().verticalSpeed < 0);  // descending to keep flying speed
         CHECK(ac.telemetry().altitudeMsl > ftToM(1000));
     }
+}
+
+TEST_CASE("top g: an engine starved with its fuel switch at RUN winds down instead of hanging at idle") {
+    Aircraft ac(jet());
+    SimpleWeather atm;
+    FlatGround ground(0);
+    ac.setEngineRunning(true);
+    ac.placeOnGround(0, 0, 0, ground, atm);
+    for (int t = 0; t < 2; ++t) ac.fuel().setTankQuantity(t, jet().fuel.tanks[t].unusable);  // dry tanks
+    PilotInput idle;
+    for (int i = 0; i < 240 * 120; ++i) ac.step(kDt, idle, ground, atm);
+    const TurbofanState& e = ac.turbofanState(0);
+    CHECK(!e.running);
+    CHECK(!e.starting);                 // the no-light-off start was aborted
+    CHECK(e.n2 < 0.3);                  // run down to the starter's speed at most
+    CHECK(e.thrust == 0);
+    CHECK(e.itt < atm.atmosphere().at(0).temperature + 60);
+    // Fuel back, and the battery recharged (as ground power would): the starter
+    // waits until the fuel switch is cycled, then starts it.
+    for (int t = 0; t < 2; ++t) ac.fuel().setTankQuantity(t, 0.5 * jet().fuel.tanks[t].capacity);
+    ac.electrical().setBatteryCharge(1.0);
+    for (int i = 0; i < 240 * 10; ++i) ac.step(kDt, idle, ground, atm);
+    CHECK(!ac.turbofanState(0).running);
+    ac.setCockpitControl("engine1.fuel", 0);
+    ac.step(kDt, idle, ground, atm);
+    ac.setCockpitControl("engine1.fuel", 1);
+    for (int i = 0; i < 240 * 60 && !ac.turbofanState(0).running; ++i) ac.step(kDt, idle, ground, atm);
+    CHECK(ac.turbofanState(0).running);
+}
+
+TEST_CASE("top g: the gear handle is locked down while the weight is on the wheels") {
+    Aircraft ac(jet());
+    SimpleWeather atm;
+    FlatGround ground(0);
+    ac.setEngineRunning(true);
+    ac.placeOnGround(0, 0, 0, ground, atm);
+    PilotInput idle;
+    ac.step(kDt, idle, ground, atm);
+    CHECK(!ac.setCockpitControl("gear.lever", 0));
+    for (int i = 0; i < 240 * 5; ++i) ac.step(kDt, idle, ground, atm);
+    CHECK_NEAR(ac.gearPosition(), 1.0, 1e-12);
+    CHECK(ac.cockpitControl("gear.lever") == 1);
+}
+
+TEST_CASE("top g: the load sheet checks the zero-fuel, landing and ramp weights") {
+    Aircraft ac(jet());
+    LoadSheet ls = computeLoadSheet(ac);
+    CHECK(ls.flags == 0);
+    CHECK_NEAR(ac.massProperties().mass, ls.grossMass, 1e-6);
+    // Full cabin and baggage: past the maximum zero-fuel weight (60,500 lb).
+    ac.setStationMass(1, 2200);
+    ac.setStationMass(2, 1134);
+    ls = computeLoadSheet(ac);
+    CHECK((ls.flags & kOverMaxZeroFuel) != 0);
+    // Full tanks on top: over the ramp and take-off weights, and the landing weight.
+    for (int t = 0; t < 2; ++t) ac.fuel().setTankQuantity(t, jet().fuel.tanks[t].capacity);
+    ac.refreshMass();
+    ls = computeLoadSheet(ac);
+    CHECK((ls.flags & kOverMaxRamp) != 0);
+    CHECK((ls.flags & kOverMaxTakeoff) != 0);
+    CHECK((ls.flags & kOverMaxLanding) != 0);
+    CHECK_NEAR(ls.fuelUsable, 2 * (13664.0 - 40.0) * 1e-3 * jet().fuel.density, 1e-6);
 }

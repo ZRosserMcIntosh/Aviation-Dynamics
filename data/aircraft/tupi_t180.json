@@ -18,6 +18,9 @@
     {"field": "mass.empty_cg_m", "kind": "estimated", "source": "EST", "note": "Typical delivered C172S empty CG ~39.6 in aft of datum; height estimated."},
     {"field": "mass.empty_inertia_kgm2", "kind": "estimated", "source": "ROSKAM", "note": "Chosen so the gross-weight totals fall near the commonly quoted C172 values (Ixx~1285, Iyy~1825, Izz~2667 kg m^2); no manufacturer source."},
     {"field": "mass.max_takeoff_kg", "kind": "published", "source": "POH", "note": "2550 lb normal category."},
+    {"field": "mass.max_ramp_kg", "kind": "published", "source": "POH", "note": "Maximum ramp weight 2558 lb, normal category, in the POH revision that gives 2550 lb take-off (EASA TCDS: later revisions without kit MK172-72-01 give 2457 lb ramp / 2450 lb take-off)."},
+    {"field": "mass.empty_includes_unusable_fuel", "kind": "published", "source": "POH", "note": "Standard empty weight includes unusable fuel (3 gal) and full oil; the tanks hold the unusable fuel, so it is not counted twice."},
+    {"field": "mass.combined_limits", "kind": "published", "source": "POH", "note": "Baggage area 1 (sta. 82-108) 120 lb, area 2 (sta. 108-142) 50 lb; maximum combined weight for areas 1 and 2 is 120 lb."},
     {"field": "mass.stations", "kind": "published", "source": "POH", "note": "Arms: front seats 37 in, rear seats 73 in, baggage A 95 in, baggage B 123 in."},
     {"field": "mass.cg_forward_limit", "kind": "published", "source": "POH", "note": "35.0 in at 1950 lb and below, 41.0 in at 2550 lb (normal category)."},
     {"field": "mass.cg_aft_limit", "kind": "published", "source": "POH", "note": "47.3 in at all weights (normal category)."},
@@ -61,6 +64,8 @@
     "empty_kg": 754.3,
     "empty_cg_m": [-1.006, 0.0, -0.20],
     "empty_inertia_kgm2": {"ixx": 820, "iyy": 1500, "izz": 2150, "ixz": 0},
+    "empty_includes_unusable_fuel": true,
+    "max_ramp_kg": 1160.3,
     "max_takeoff_kg": 1156.7,
     "max_landing_kg": 1156.7,
     "stations": [
@@ -69,6 +74,7 @@
       {"name": "baggage A", "position_m": [-2.413, 0.0, 0.15], "max_kg": 54.4, "initial_kg": 0},
       {"name": "baggage B", "position_m": [-3.124, 0.0, 0.10], "max_kg": 22.7, "initial_kg": 0}
     ],
+    "combined_limits": [{"name": "baggage areas 1 and 2", "stations": [2, 3], "max_kg": 54.4}],
     "cg_forward_limit": {"mass_kg": [600, 884.5, 1156.7], "x_m": [-0.889, -0.889, -1.041]},
     "cg_aft_limit": {"mass_kg": [600, 1156.7], "x_m": [-1.201, -1.201]}
   },

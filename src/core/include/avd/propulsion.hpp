@@ -119,6 +119,8 @@ struct TurbofanState {
     Real n1 = 0, n2 = 0;          // fan and core speed, fraction of take-off
     bool running = false;         // lit and at or above idle
     bool starting = false;        // start sequence in progress
+    Real startTimer = 0;          // s since the start sequence began
+    bool startAborted = false;    // no light-off: the starter waits for the fuel switch to be cycled
     Real thrust = 0;              // N, net, along the thrust axis
     Real thrustFraction = 0;      // of the available take-off thrust
     Real fuelFlow = 0;            // kg/s

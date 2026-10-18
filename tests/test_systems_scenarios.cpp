@@ -7,6 +7,7 @@
 
 #include "airports.hpp"
 #include "avd/assists.hpp"
+#include "avd/loading.hpp"
 #include "avd/procedures.hpp"
 #include "avd/telemetry.hpp"
 #include "avd/units.hpp"
@@ -556,6 +557,52 @@ TEST_CASE("assists: the yaw input steers the tiller only below 5 kt") {
     CHECK(!sim.report().yawOnTiller);
     CHECK(out.yaw == 1);
     CHECK(out.tiller == 0);
+}
+
+// ------------------------------------------------------------- loading ----
+
+TEST_CASE("loading: the POH empty weight's unusable fuel is not counted twice") {
+    Aircraft ac(ref());
+    const LoadSheet ls = computeLoadSheet(ac);
+    // Standard empty weight (unusable fuel and oil included) + payload + usable fuel.
+    const Real usable = 2 * (106.0 - 5.68) * 1e-3 * ref().fuel.density;
+    CHECK_NEAR(ls.basicEmptyMass, 754.3, 1e-9);
+    const Real line = ref().fuel.lineVolume * ref().fuel.density;  // primed lines
+    CHECK_NEAR(ls.grossMass, 754.3 + 77 + usable + line, 1e-6);
+    CHECK_NEAR(ac.massProperties().mass, ls.grossMass, 1e-6);   // the dynamics carry the same mass
+    CHECK_NEAR(ac.massProperties().cg.x, ls.cg.x, 1e-9);
+    CHECK_NEAR(ls.fuelTotal - ls.fuelUsable, 2 * 5.68e-3 * ref().fuel.density + line, 1e-9);
+    CHECK_NEAR(ls.zeroFuelMass, 754.3 + 77, 1e-9);
+    CHECK(ls.flags == 0);
+}
+
+TEST_CASE("loading: placards, combined limits, weights and the CG envelope are all checked") {
+    Aircraft ac(ref());
+    // 120 lb combined in the two baggage areas, 50 lb in area 2.
+    ac.setStationMass(2, 40);
+    ac.setStationMass(3, 20);
+    LoadSheet ls = computeLoadSheet(ac);
+    CHECK((ls.flags & kGroupOverPlacard) != 0);          // 60 kg > 54.4 kg combined
+    CHECK((ls.flags & kStationOverPlacard) == 0);
+    ac.setStationMass(3, 30);                             // > 22.7 kg in area 2
+    ls = computeLoadSheet(ac);
+    CHECK((ls.flags & kStationOverPlacard) != 0);
+    CHECK(ls.stationsOverPlacard.size() == 1 && ls.stationsOverPlacard[0] == 3);
+    // The placard is not a physical stop: the mass is carried and shifts the CG aft.
+    CHECK_NEAR(ac.stationMass(3), 30, 1e-12);
+    CHECK((ls.flags & kCgAftOfLimit) == 0);
+    ac.setStationMass(1, 200);                            // full rear seats: heavy and aft
+    ls = computeLoadSheet(ac);
+    CHECK((ls.flags & kOverMaxTakeoff) != 0);
+    CHECK((ls.flags & kOverMaxRamp) != 0);
+    CHECK((ls.flags & kCgAftOfLimit) != 0);
+    // Light, pilot only, empty baggage: inside the envelope.
+    ac.setStationMass(1, 0);
+    ac.setStationMass(2, 0);
+    ac.setStationMass(3, 0);
+    ls = computeLoadSheet(ac);
+    CHECK(ls.flags == 0);
+    CHECK(ls.cg.x < ls.cgForwardLimit && ls.cg.x > ls.cgAftLimit);
 }
 
 // -------------------------------------------------------- environment ----

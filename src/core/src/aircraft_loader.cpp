@@ -376,8 +376,11 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         in.num("iyy", d.emptyInertiaDiag.y, 1, true);
         in.num("izz", d.emptyInertiaDiag.z, 1, true);
         in.num("ixz", d.emptyIxz);
+        m.boolean("empty_includes_unusable_fuel", d.emptyIncludesUnusableFuel);
+        m.num("max_ramp_kg", d.maxRampMass);
         m.num("max_takeoff_kg", d.maxTakeoffMass, 1, true);
         m.num("max_landing_kg", d.maxLandingMass);
+        m.num("max_zero_fuel_kg", d.maxZeroFuelMass);
         m.each("stations", [&](Obj& o, std::size_t) {
             PayloadStationDef s;
             o.str("name", s.name, true);
@@ -385,6 +388,15 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
             o.num("max_kg", s.maxMass, 1, true);
             o.num("initial_kg", s.initial);
             d.stations.push_back(s);
+        });
+        m.each("combined_limits", [&](Obj& o, std::size_t) {
+            StationGroupLimitDef g;
+            std::vector<Real> st;
+            o.str("name", g.name, true);
+            o.numbers("stations", st, 1, true);
+            for (Real s : st) g.stations.push_back(static_cast<int>(s));
+            o.num("max_kg", g.maxMass, 1, true);
+            d.stationGroupLimits.push_back(g);
         });
         m.table("cg_forward_limit", "mass_kg", "x_m", d.cgForwardLimitVsMass);
         m.table("cg_aft_limit", "mass_kg", "x_m", d.cgAftLimitVsMass);

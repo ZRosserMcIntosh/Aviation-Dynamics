@@ -7,6 +7,10 @@
  "description": "Twin-turbofan, swept-wing, T-tail business jet. Simulation reference: G650ER, from public specifications only; the public name is fictional. Structural frame: origin at the nose tip, x forward, y right, z down (metres); the fuselage centreline is z = 0.",
  "sources": [
   {
+   "id": "DEALER",
+   "citation": "Aircraft dealer specification sheets for in-service G650ER airframes (e.g. Guardian Jet, S/N 6230; Jetcraft G650ER overview, 2021), which transcribe the AFM weight limits; not the AFM itself."
+  },
+  {
    "id": "SPEC",
    "citation": "Manufacturer's published G650ER specifications (dimensions, weights, fuel capacity, range, Mmo, ceiling) and EASA/FAA type certificate data sheet T00015AT (G650 series: Vmo 340 KCAS, Mmo 0.925, flap and gear speeds)."
   },
@@ -39,6 +43,24 @@
    "kind": "published",
    "source": "SPEC",
    "note": "MTOW 103,600 lb; MLW 83,500 lb; max fuel 48,200 lb."
+  },
+  {
+   "field": "mass.max_ramp_kg",
+   "kind": "published",
+   "source": "DEALER",
+   "note": "Maximum ramp weight 104,000 lb (dealer specification sheets; consistent across serial numbers)."
+  },
+  {
+   "field": "mass.max_zero_fuel_kg",
+   "kind": "published",
+   "source": "DEALER",
+   "note": "Maximum zero fuel weight 60,500 lb (dealer specification sheets)."
+  },
+  {
+   "field": "mass.empty_includes_unusable_fuel",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "The empty mass is derived from a basic operating weight, which includes unusable fuel and oil."
   },
   {
    "field": "mass.empty_kg",
@@ -108,8 +130,11 @@
    "izz": 1080000,
    "ixz": 0
   },
+  "empty_includes_unusable_fuel": true,
+  "max_ramp_kg": 47174,
   "max_takeoff_kg": 46992,
   "max_landing_kg": 37875,
+  "max_zero_fuel_kg": 27442,
   "stations": [
    {
     "name": "flight deck crew",

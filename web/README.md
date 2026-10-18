@@ -35,6 +35,9 @@ call is clamped to 0.25 s. It returns the number of steps run.
 | `avd_set_weather(windMs, windFromDeg, turbulenceMs, isaDevC, humidity)` | Weather (rebuilds the field) |
 | `avd_set_input(pitch, roll, yaw, throttle, mixture, brakeL, brakeR, trimRate, starter)` | Raw pilot input in −1..1 or 0..1. Starter is held while 1. On an aircraft with a tiller, yaw turns the tiller on the ground below 5 kt |
 | `avd_set_assist(p)` | 0 Arcade, 1 Sport, 2 Simulation |
+| `avd_set_airport(id)` / `avd_airport_text()` | Spawn airport: 0 Campo de Marte (SBMT, runway 12), 1 Congonhas (SBSP, runway 35L, the default). Kept across aircraft loads; takes effect at the next reset. Text: `ICAO\|name\|runway\|reciprocal`. `avd_runway()` describes the runway in use |
+| `avd_set_station(i, kg)` / `avd_set_tank(i, litres)` | Planned load, applied to every new spawn (trimmed spawns trim at that weight). No upper limit on stations (placards are reported, not enforced); tanks hold at most their capacity |
+| `avd_loadsheet(planned)` / `avd_loadsheet_names()` | Weight and balance of the planned load (1) or the aircraft now (0); layout below. `A.loadsheet(planned)` returns it as an object |
 | `avd_set_level_hold(on)` | Straight-and-level hold (auto-trim that keeps the airplane straight and level with the stick released), with any preset; kept when the preset changes |
 | `avd_quick_start()` / `avd_procedure_status()` | Run the Quick Start checklist through the cockpit (turbofan aircraft: power up, then each engine's fuel control switch to RUN in turn). Status: 0 idle, 1 running, 2 done, 3 failed; the message is in the text buffer |
 | `avd_cockpit_count()` / `avd_cockpit_text(i)` / `avd_cockpit_cycle(i)` | Switch registry: `id\|label\|pos0;pos1…\|current` |
@@ -94,6 +97,26 @@ Indices and fields:
 | 56 | yaw input on the nose-wheel tiller (below 5 kt on the ground) |
 | 57 | aircraft has a tiller |
 | 58 | straight-and-level hold in underspeed protection (descending to keep flying speed) |
+
+## `avd_loadsheet(planned)`: 256 doubles
+
+Masses in kg, x in the structural frame (m, forward positive; the 172's POH
+arm in inches is −x / 0.0254).
+
+| Index | Field | Index | Field |
+|---|---|---|---|
+| 0 | basic empty mass (as published) | 12–15 | limits: max ramp, take-off, landing, zero fuel (0 = not published) |
+| 1 | basic empty CG x | 16 | fuel density (kg/L) |
+| 2 | payload | 17–19 | number of stations, tanks, combined limits |
+| 3, 4 | zero-fuel mass, CG x | 20, 21 | points in the forward and aft CG limit tables |
+| 5, 6 | fuel on board (tanks and lines), usable fuel | 22 | trapped fuel (unusable and lines) |
+| 7, 8 | gross mass, CG x | | |
+| 9, 10 | forward and aft CG limits at the gross mass | | |
+| 11 | flags: 1 over ramp, 2 over take-off, 4 over landing, 8 over zero fuel, 16 CG forward of limit, 32 CG aft of limit, 64 a station over its placard, 128 a combined limit exceeded, 256 a tank over capacity | | |
+
+From index 24: per station (kg, placard kg, x), per tank (litres, capacity,
+unusable, x), per combined limit (kg, limit kg), then the forward and aft CG
+limit tables as (mass, x) pairs.
 
 ## `avd_cockpit()`: 96 doubles
 

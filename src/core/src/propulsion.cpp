@@ -419,7 +419,11 @@ void TurbofanEngine::step(TurbofanState& s, const TurbofanInputs& in, Real dt) c
     // Start: the starter cranks the core, or in flight a fast enough windmilling
     // core (>= 12 % N2) relights on its own.
     const bool windmillStart = s.n2 >= 0.12 && windmillN2 >= 0.12;
-    if (!s.running && in.fuelOn && !s.starting && (in.starterPowered || windmillStart) && s.n2 < def_.idleN2) s.starting = true;
+    if (!in.fuelOn) s.startAborted = false;  // fuel switch cycled: the starter may try again
+    if (!s.running && in.fuelOn && !s.starting && ((in.starterPowered && !s.startAborted) || windmillStart) && s.n2 < def_.idleN2) {
+        s.starting = true;
+        s.startTimer = 0;
+    }
     if (s.starting && !in.fuelOn) s.starting = false;
     if (s.running) {
         const Real cmd = commandedN1(in.throttle);
@@ -429,17 +433,32 @@ void TurbofanEngine::step(TurbofanState& s, const TurbofanInputs& in, Real dt) c
     } else if (s.starting) {
         // Starter cranks the core to ~25 %, light-off from 20 % with fuel,
         // then the lit core accelerates to idle.
+        // Without fire the core is only turned by the starter (to ~25 %) or the
+        // ram air, so above that it runs down and the turbine cools; a start
+        // that has not lit within the start time is aborted (FADEC no-light-off
+        // protection), which also ends a "start" on an engine with no fuel.
         const Real crank = 0.25 / (0.35 * def_.startTime);
         const bool litNow = (s.n2 >= 0.2 || windmillStart) && fuel;
-        const Real accel = litNow ? (def_.idleN2 - 0.2) / (0.65 * def_.startTime) : (in.starterPowered ? crank : 0.0);
-        if (litNow || (in.starterPowered && s.n2 < 0.25)) s.n2 = std::min(s.n2 + accel * dt, def_.idleN2);
+        s.startTimer += dt;
+        if (litNow) {
+            s.n2 = std::min(s.n2 + (def_.idleN2 - 0.2) / (0.65 * def_.startTime) * dt, def_.idleN2);
+        } else if (in.starterPowered && s.n2 < 0.25) {
+            s.n2 = std::min(s.n2 + crank * dt, 0.25);
+        } else {
+            const Real turned = std::max(in.starterPowered ? 0.25 : 0.0, windmillN2);
+            s.n2 += (std::min(turned, s.n2) - s.n2) * std::min(dt / 6.0, 1.0);
+            s.itt += (in.ambientTemperature - s.itt) * std::min(dt / 12.0, 1.0);
+        }
         s.n1 = n1FromN2(s.n2);
         if (s.n2 >= def_.idleN2 - 1e-6) {
             s.running = true;
             s.starting = false;
             s.n1 = def_.idleN1;
         }
-        if (!in.starterPowered && !litNow) s.starting = false;
+        if (!litNow && (!in.starterPowered || s.startTimer > def_.startTime)) {
+            s.starting = false;
+            s.startAborted = true;  // no automatic retry: cycle the fuel switch
+        }
     } else {
         // Spooling down toward windmill speed; ITT falls quickly once the fire is out.
         s.n1 += (windmillN1 - s.n1) * std::min(dt / 6.0, 1.0);
@@ -452,6 +471,7 @@ void TurbofanEngine::step(TurbofanState& s, const TurbofanInputs& in, Real dt) c
 void TurbofanEngine::setSteady(TurbofanState& s, const TurbofanInputs& in) const {
     s.running = true;
     s.starting = false;
+    s.startAborted = false;
     s.n1 = commandedN1(in.throttle);
     s.n2 = n2FromN1(s.n1);
     evaluate(s, in);

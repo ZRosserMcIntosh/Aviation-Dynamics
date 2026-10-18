@@ -88,6 +88,16 @@ void Aircraft::refreshMass() {
     empty.name = "empty airframe";
     empty.mass = def_.emptyMass;
     empty.position = def_.emptyCg;
+    if (def_.emptyIncludesUnusableFuel) {
+        // The tanks hold the unusable fuel; take it out of the airframe item.
+        Vec3 moment = empty.position * empty.mass;
+        for (const FuelTankDef& t : def_.fuel.tanks) {
+            const Real m = t.unusable * def_.fuel.density;
+            empty.mass -= m;
+            moment = moment - t.position * m;
+        }
+        empty.position = moment * (1.0 / empty.mass);
+    }
     empty.inertia = inertiaTensor(def_.emptyInertiaDiag.x, def_.emptyInertiaDiag.y, def_.emptyInertiaDiag.z, def_.emptyIxz);
     massItems_.push_back(empty);
     for (std::size_t i = 0; i < def_.stations.size(); ++i) {
@@ -108,7 +118,9 @@ void Aircraft::refreshMass() {
 }
 
 void Aircraft::setStationMass(int station, Real kg) {
-    stationMass_[station] = clamp(kg, 0.0, def_.stations[station].maxMass);
+    // No upper clamp: the placard is a limit of approval, not physics. An
+    // overloaded station is flagged by the load sheet (avd/loading.hpp).
+    stationMass_[station] = std::isfinite(kg) ? std::max(kg, 0.0) : 0.0;
     refreshMass();
 }
 
@@ -201,6 +213,8 @@ bool Aircraft::setCockpitControl(const std::string& id, int position) {
     const int idx = cockpitControlIndex(id);
     if (idx < 0 || position < 0 || position >= static_cast<int>(cockpit_[idx].positions.size())) return false;
     if (cockpitControl(id) == position) return true;  // already there: no change, no event
+    // Weight on wheels: a solenoid locks the gear handle down on the ground.
+    if (id == "gear.lever" && position == 0 && tel_.onGround) return false;
     if (id == "electrical.battery") electrical_.setBatterySwitch(position == 1);
     else if (id == "electrical.alternator") electrical_.setAlternatorSwitch(position == 1);
     else if (id == "electrical.avionics") electrical_.setAvionicsSwitch(position == 1);

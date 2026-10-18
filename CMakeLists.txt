@@ -38,6 +38,7 @@ add_library(avd_core
   src/core/src/aircraft_loader.cpp
   src/core/src/aircraft.cpp
   src/core/src/assists.cpp
+  src/core/src/loading.cpp
   src/core/src/procedures.cpp
   src/core/src/telemetry.cpp
   src/core/src/navigation.cpp
