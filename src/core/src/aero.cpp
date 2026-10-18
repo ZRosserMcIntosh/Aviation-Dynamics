@@ -347,13 +347,19 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             SectionResult sec = evaluateSection(S.def.section, alpha, a3, dAlpha0, dClMax);
             sec.cm += dCm;
             sec.cd += dCd;
-            // Compressibility drag rise (Korn + Lock).
-            const Real m = std::sqrt(vp2) / in.speedOfSound;
+            // Spoilers / lift dump on the main wing: a fraction of the
+            // section lift is spoiled (the drag is carried by a drag area).
+            if (si == 0 && in.controls.spoiler > 0) sec.cl *= 1 - in.controls.spoiler;
+            // Compressibility drag rise (Korn + Lock). The strip sees the flow
+            // normal to its swept span axis (simple sweep theory); Korn's
+            // equation is written for the free-stream Mach number and the
+            // streamwise lift coefficient (cl_streamwise = cl_normal cos^2),
+            // and Lock's increment is streamwise (normal: divide by cos^2).
             const Real cs = std::cos(S.sweep);
-            const Real mdd = S.def.kornFactor / cs - S.def.thicknessRatio / (cs * cs) -
-                             std::abs(sec.cl) / (10 * cs * cs * cs);
+            const Real m = std::sqrt(vp2) / in.speedOfSound / cs;
+            const Real mdd = S.def.kornFactor / cs - S.def.thicknessRatio / (cs * cs) - std::abs(sec.cl) / (10 * cs);
             const Real mcrit = mdd - 0.1077;  // (0.1/80)^(1/3)
-            if (m > mcrit) sec.cd += 20 * std::pow(m - mcrit, 4);
+            if (m > mcrit) sec.cd += 20 * std::pow(m - mcrit, 4) / (cs * cs);
 
             const Real q = 0.5 * rho * vp2;
             tel.alpha = alpha;
@@ -385,12 +391,16 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             if (!st.attached || tel.q <= 0) continue;
             const Vec3 r = st.position - in.cg;
             Vec3 dragDir = normalized(-tel.flowPerp);
+            // Lift is normal to both the strip's (spanwise-free) flow and its
+            // swept span axis; the unswept lateral axis would tilt it forward
+            // by ~sin(alpha) sin^2(sweep) and cancel induced drag.
+            const Vec3 la = dot(st.spanAxis, st.liftAxis) >= 0 ? st.spanAxis : -st.spanAxis;
             if (S.horizontal && eps != 0) {
-                // Downwash tilts the local flow (rotate about the lift axis).
-                const Vec3 n = normalized(cross(st.liftAxis, dragDir));
+                // Downwash tilts the local flow (rotate about the span axis).
+                const Vec3 n = normalized(cross(la, dragDir));
                 dragDir = normalized(dragDir * std::cos(eps) + n * std::sin(eps));
             }
-            const Vec3 liftDir = normalized(cross(dragDir, st.liftAxis));
+            const Vec3 liftDir = normalized(cross(dragDir, la));
             const Real ai = tel.cl * inducedPerCl;
             const Real qa = tel.q * st.area;
             const Vec3 f = liftDir * (qa * tel.cl) + dragDir * (qa * (tel.cd + tel.cl * ai));
@@ -422,10 +432,57 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
         const Vec3 r = d.position - in.cg;
         Vec3 v = in.velocityBody + cross(in.omegaBody, r) - (in.windBody + in.windGradientBody * r);
         v += slipstreamAt(d.position, in);
-        const Vec3 f = v * (-0.5 * rho * d.dragArea * length(v));
+        Real area = d.dragArea;
+        if (d.criticalMach > 0) {
+            const Real m = std::min(length(v) / in.speedOfSound, 1.3);
+            if (m > d.criticalMach) area *= 1 + 60 * sq(m - d.criticalMach);
+        }
+        const Vec3 f = v * (-0.5 * rho * area * length(v));
         out.force += f;
         out.moment += cross(r, f);
     }
+}
+
+Real trimmedMaxLiftCoefficient(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach) {
+    const Real a = 340.3, v = std::max(mach, 0.15) * a;
+    AeroInputs in;
+    in.density = 1.225;
+    in.speedOfSound = a;
+    in.cg = cg;
+    in.controls.flap = flap;
+    AeroOutputs out;
+    model.prepare(out);
+    const Real q = 0.5 * in.density * v * v;
+    // Lift and pitching moment at alpha with the elevator at e (-1..1).
+    auto eval = [&](Real alpha, Real e, Real& lift) {
+        in.velocityBody = {v * std::cos(alpha), 0, v * std::sin(alpha)};
+        in.controls.elevator = e;
+        model.evaluate(in, out);
+        lift = out.force.x * std::sin(alpha) - out.force.z * std::cos(alpha);
+        return out.moment.y;
+    };
+    Real best = 0;
+    for (Real alphaDeg = 0; alphaDeg <= 30.0; alphaDeg += 0.25) {
+        const Real alpha = alphaDeg * kTwoPi / 360.0;
+        Real lift = 0, liftLo = 0, liftHi = 0;
+        const Real mLo = eval(alpha, -1, liftLo), mHi = eval(alpha, 1, liftHi);
+        if ((mLo > 0) == (mHi > 0)) {
+            // Cannot trim here: the elevator is out of authority (nose-up) or the
+            // pitch-down limit is reached; stop once the stick is fully back.
+            if (mHi < 0) break;
+            continue;
+        }
+        Real lo = -1, hi = 1, mlo = mLo;
+        for (int k = 0; k < 30; ++k) {
+            const Real mid = 0.5 * (lo + hi), m = eval(alpha, mid, lift);
+            if ((m > 0) == (mlo > 0)) { lo = mid; mlo = m; } else hi = mid;
+        }
+        eval(alpha, 0.5 * (lo + hi), lift);
+        const Real cl = lift / (q * refArea);
+        if (cl > best) best = cl;
+        else if (cl < best - 0.15) break;  // well past the peak
+    }
+    return best;
 }
 
 }  // namespace avd

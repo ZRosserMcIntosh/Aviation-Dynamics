@@ -5,7 +5,7 @@ exceptions or RTTI, and the WASI imports are stubs because the core does no
 I/O. The C ABI is in `avd_web.cpp`.
 
 ```sh
-WASI_SDK=/path/to/wasi-sdk web/build_wasi.sh   # → web/dist/avd.wasm, avd.mjs, tupi_t180.json
+WASI_SDK=/path/to/wasi-sdk web/build_wasi.sh   # → web/dist/avd.wasm, avd.mjs, tupi_t180.json, top_g.json
 node web/smoke_test.mjs                        # take-off, Quick Start, ILS reception, instruments
 node web/cockpit/build_page.mjs                # → web/dist/cockpit.html (one self-contained file)
 node web/cockpit/browser_test.mjs              # headless Chromium check of the bundled page (needs playwright)
@@ -31,11 +31,12 @@ call is clamped to 0.25 s. It returns the number of steps run.
 | Function | Meaning |
 |---|---|
 | `avd_reset(mode)` | Reset scenario: 0 cold and dark on runway 12, 1 engine running on runway 12, 2 on final for runway 12 (3 km), 3 cruising over the city. Sets NAV 1 to 110.30 active and 113.70 standby, OBS and bug 122, COM standby 132.80, transponder ALT |
+| `avd_reset_air(east, north, heightAboveField, headingDeg, kias, flap)` | Trimmed, level, hands-off spawn anywhere in the world (ENU metres from the world anchor, height in m above the field elevation, true heading, 55–350 KIAS, flap detent 0–3). Read the levers with `avd_trim_throttle()` / `avd_trim_mixture()` |
 | `avd_set_weather(windMs, windFromDeg, turbulenceMs, isaDevC, humidity)` | Weather (rebuilds the field) |
 | `avd_set_input(pitch, roll, yaw, throttle, mixture, brakeL, brakeR, trimRate, starter)` | Raw pilot input in −1..1 or 0..1. Starter is held while 1. On an aircraft with a tiller, yaw turns the tiller on the ground below 5 kt |
 | `avd_set_assist(p)` | 0 Arcade, 1 Sport, 2 Simulation |
 | `avd_set_level_hold(on)` | Straight-and-level hold (auto-trim that keeps the airplane straight and level with the stick released), with any preset; kept when the preset changes |
-| `avd_quick_start()` / `avd_procedure_status()` | Run the Quick Start checklist through the cockpit. Status: 0 idle, 1 running, 2 done, 3 failed; the message is in the text buffer |
+| `avd_quick_start()` / `avd_procedure_status()` | Run the Quick Start checklist through the cockpit (turbofan aircraft: power up, then each engine's fuel control switch to RUN in turn). Status: 0 idle, 1 running, 2 done, 3 failed; the message is in the text buffer |
 | `avd_cockpit_count()` / `avd_cockpit_text(i)` / `avd_cockpit_cycle(i)` | Switch registry: `id\|label\|pos0;pos1…\|current` |
 | `avd_altimeter_adjust(hundredthsInHg)` | Kollsman knob |
 | `avd_dg_adjust(deg)` / `avd_dg_sync()` / `avd_heading_bug(deg)` | Heading indicator knobs |
@@ -48,6 +49,9 @@ call is clamped to 0.25 s. It returns the number of steps run.
 | `avd_trim_throttle()` / `avd_trim_mixture()` | Lever positions of the last trimmed spawn (modes 2 and 3), so the host starts hands-off |
 | `avd_compass_card()` | 12 doubles: compass reading (deg) on magnetic headings 0, 30, … 330 from a compass swing (the FOR/STEER card) |
 | `avd_events()` | Event lines since the last call (text buffer) |
+| `avd_ai_cage()` | Attitude indicator caging knob: squares the gyro to the case and clears a tumble (use wings level) |
+| `avd_jet()` | 64 doubles for turbofan aircraft: [0] engines, [1] gear position, [2] gear lever, [3] speedbrake position, [4] speedbrake detent, [5] Mach, [6] fuel kg, [7] fuel flow kg/h; per engine at 8 + 8i: N1 %, N2 %, ITT °C, fuel flow kg/h, thrust kN, running, starting, fuel switch; [24] MMO, [25] VMO kt, [26] TAS kt, [27] flap deg, [28] trim, [29] weight on wheels, [30–31] oil psi; [32] 1-g stall CAS kt (current flap, weight and Mach, from the trimmed CLmax), [33] the same at take-off flap, [34] at landing flap, [35] gross mass kg, [36] flight-path angle deg, [37] track true deg, [38] wind from true deg, [39] wind kt, [40] radio altitude ft, [41] SAT °C, [42] load factor, [43] α deg, [44] generators online, [45] bus volts, [46] stall warning, [47] VFE kt for the current flap (0 flaps up), [48] VLE kt, [49] take-off flap deg, [50] landing flap deg, [51] stick pusher active |
+| `avd_flow()` | Airflow-visualisation snapshot (1,080 doubles): header [0] strips, [1] engines, [2] TAS m/s, [3] α, [4] β, [5] ρ, [6–8] CG (FRD), [9] speed of sound; per lifting strip at 16 + 16i (up to 64): quarter-chord position, span axis, normal (FRD body), chord, area, cl, local α, dynamic pressure, stall α, surface index; per engine at 1040 + 10k: position, thrust axis, disc/nozzle radius, slipstream velocity increment, thrust N, kind (0 propeller, 1 turbofan) |
 
 ## `avd_state()`: 64 doubles
 

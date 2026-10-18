@@ -42,6 +42,8 @@ const char* eventText(FlightEventType t) {
         case FlightEventType::AlternatorOffline: return "alternator OFFLINE";
         case FlightEventType::AlternatorOnline: return "alternator online";
         case FlightEventType::CockpitControlChanged: return "";
+        case FlightEventType::MachOverspeed: return "OVERSPEED (MMO exceeded)";
+        case FlightEventType::GearOverspeed: return "gear extended above VLE";
     }
     return "?";
 }

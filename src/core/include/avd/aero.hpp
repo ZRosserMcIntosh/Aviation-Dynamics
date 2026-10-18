@@ -53,6 +53,7 @@ struct ControlDeflections {
     Real elevator = 0;  // + nose up (stick aft); includes trim offset in rad-equivalent
     Real rudder = 0;    // + yaw right
     Real flap = 0;      // rad, trailing edge down
+    Real spoiler = 0;   // fraction of main-wing lift spoiled (speedbrake / lift dump)
 };
 
 // Propeller slipstream as seen by downstream surfaces.
@@ -127,6 +128,16 @@ public:
     Real downwashGradient(int s) const { return surfaces_[s].downwashGradient; }
     int downwashSource(int s) const { return surfaces_[s].def.downwashSource; }
     Vec3 surfaceCentroid(int s) const { return surfaces_[s].centroid; }
+    // Strip geometry for visualisation and analysis (structural frame).
+    struct StripGeometry {
+        int surface = 0, side = 1;
+        Vec3 position, chordAxis, normalAxis, spanAxis;
+        Real area = 0, chord = 0;
+    };
+    StripGeometry stripGeometry(int i) const {
+        const Strip& s = strips_[static_cast<std::size_t>(i)];
+        return {s.surface, s.side, s.position, s.chordAxis, s.normalAxis, s.spanAxis, s.area, s.chord};
+    }
 
     // Detach (or re-attach) every strip of a surface on one side (+1 right, -1
     // left, 0 both). Used by the damage system and tests.
@@ -176,5 +187,11 @@ private:
     std::vector<FuselageDef> fuselages_;
     std::vector<DragItemDef> dragItems_;
 };
+
+// Highest lift coefficient (on refArea) the airframe reaches in steady 1-g
+// flight with the elevator trimming the pitching moment about cg, for a flap
+// angle (rad) and Mach number: the basis of stall and V-speeds. Sweeps alpha
+// out of ground effect with no slipstream; elevator saturating limits it.
+Real trimmedMaxLiftCoefficient(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach);
 
 }  // namespace avd

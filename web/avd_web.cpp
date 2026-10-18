@@ -4,6 +4,7 @@
 // A thin C ABI over avd::Aircraft so a web page can fly the real core. The page
 // only renders and reads input. World positions are returned in the São Paulo
 // World frame (ENU metres from MASP); see web/README.md for the buffer layout.
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -46,11 +47,18 @@ struct Sim {
     PilotInput raw;
     Real accumulator = 0;
     std::string events;
+    int jetStart = 0;  // jet Quick Start: 0 idle, 1 starting engine 1, 2 engine 2, 3 done
+    // Trimmed CLmax cache for the low-speed awareness band and V-speeds.
+    std::unique_ptr<AeroModel> clmaxModel;
+    Real clmaxKey = -1, clmax = 0, clmaxTakeoff = 0, clmaxLanding = 0;
 };
 
 Sim* g = nullptr;
 double g_state[kStateSize];
 double g_cockpit[96];
+double g_jet[64];
+constexpr int kFlowStrips = 64, kFlowStride = 16;
+double g_flow[16 + kFlowStrips * kFlowStride + 4 * 10];
 char* g_text = nullptr;
 int g_textCap = 0;
 std::vector<std::string> g_errors;
@@ -75,14 +83,16 @@ const char* eventText(FlightEventType t) {
         case FlightEventType::StallWarningOff: return "";
         case FlightEventType::Touchdown: return "Touchdown";
         case FlightEventType::Liftoff: return "Lift-off";
-        case FlightEventType::Overspeed: return "OVERSPEED: above VNE";
+        case FlightEventType::Overspeed: return g && !g->def.turbofans.empty() ? "OVERSPEED: above VMO" : "OVERSPEED: above VNE";
+        case FlightEventType::MachOverspeed: return "OVERSPEED: above MMO";
+        case FlightEventType::GearOverspeed: return "Gear extended above VLE";
         case FlightEventType::OverG: return "LIMIT LOAD EXCEEDED";
         case FlightEventType::FlapOverspeed: return "Flaps above VFE";
         case FlightEventType::PropStrike: return "PROPELLER STRIKE";
         case FlightEventType::HardPointContact: return "Airframe ground contact";
         case FlightEventType::BatteryDepleted: return "Battery depleted";
-        case FlightEventType::AlternatorOffline: return "Alternator offline";
-        case FlightEventType::AlternatorOnline: return "Alternator online";
+        case FlightEventType::AlternatorOffline: return g && !g->def.turbofans.empty() ? "Generators offline" : "Alternator offline";
+        case FlightEventType::AlternatorOnline: return g && !g->def.turbofans.empty() ? "Generators online" : "Alternator online";
         case FlightEventType::CockpitControlChanged: return "";
     }
     return "";
@@ -163,70 +173,73 @@ AVD_EXPORT void avd_set_cloud(double baseMsl, double topMsl, double liquidWater)
 
 // 0 cold and dark on runway 12, 1 engine running on runway 12, 2 on final
 // for runway 12 (3 km), 3 cruising at 3500 ft over the city.
-AVD_EXPORT void avd_reset(int mode) {
-    if (!g) return;
+namespace {
+
+// A fresh aircraft for a reset.
+void newAircraft() {
     g->ac = std::make_unique<Aircraft>(g->def, g->frame);
     g->ac->setNavEnvironment(&scenarios::saoPauloNavEnvironment());
     g->procedure = ProcedureRunner{};
     g->assist.reset();
     g->accumulator = 0;
     g->events.clear();
-    const RunwayDef& rw = g->airport.runways[0];
-    if (mode <= 1) {
-        const Vec3 p = scenarios::runwayPoint(rw, 30);
-        if (mode == 1) g->ac->setEngineRunning(true, 1000);
-        g->ac->placeOnGround(p.x, p.y, rw.headingTrue, *g->ground, *g->weather);
-        if (mode == 0) g->ac->setColdAndDark();
-    } else {
-        // Trimmed spawns: solve the free-air trim (calm air at the spawn
-        // altitude), then place the trimmed state on the 3 deg final for
-        // runway 12 (65 KIAS, flaps 20, throttle solved) or in level cruise
-        // over the city (100 KIAS, throttle solved). Hands-off on arrival.
-        const bool final = mode == 2;
-        g->ac->setEngineRunning(true, 2000);
-        const Real dist = final ? -3000.0 : -8000.0;
-        const Real path = final ? degToRad(-3.0) : 0.0;
-        Vec3 p = scenarios::runwayPoint(rw, dist);
-        // On final: exactly on the glide path, which starts at the glideslope
-        // antenna 300 m beyond the paved end (scenarios/airports.cpp).
-        const Real alt = g->airport.elevation + (final ? (-dist + 300.0) * std::tan(-path) : 850.0);
-        SimpleWeatherParams calm = g->weatherParams;
-        calm.windSpeed = 0;
-        calm.turbulence.intensity = 0;
-        const SimpleWeather trimAir(calm);
-        scenarios::TrimRequest req;
-        req.altitude = alt;
-        req.flapDetent = final ? 2 : 0;
-        req.tas = scenarios::tasFromCas(ktToMs(final ? 65.0 : 100.0), trimAir.atmosphere().at(alt).density);
-        req.flightPath = path;
-        const scenarios::TrimResult tr = scenarios::trim(*g->ac, req, trimAir);
-        // Rotate the trimmed (north-heading) state onto the runway heading and
-        // move it to the spawn point; the air-relative velocity gets the wind.
-        DynamicState s = tr.state;
-        const Quat toHeading = Quat::fromEuler(0, 0, rw.headingTrue);
-        s.body.attitude = toHeading * s.body.attitude;
-        s.body.attitude.normalize();
-        p.z = -alt;
-        s.body.position = p;
-        s.body.velocity = toHeading.rotate(s.body.velocity) + g->weather->sample(p, alt, 0).wind;
-        g->ac->setState(s);
-        g->ac->setCockpitControl("brakes.parking", 0);
-        // The air sample and ground planes must describe the new position
-        // before the downwash and the instruments are initialised from them.
-        g->ac->prepareContext(tr.input, *g->ground, *g->weather);
-        g->ac->settleDownwash();
-        // The trimmed elevator goes into the trim wheel: neutral stick holds it.
-        Real elevUp = 0.4;
-        for (const auto& sd : g->def.surfaces)
-            for (const auto& pd : sd.panels)
-                for (const auto& c : pd.controls)
-                    if (c.channel == ControlChannel::Elevator) elevUp = c.maxNegative;
-        g->ac->setElevatorTrim(tr.elevator * elevUp / g->def.controls.elevatorTrimRange);
-        g->trimThrottle = tr.input.throttle;
-        g->trimMixture = tr.input.mixture;
-    }
+    g->jetStart = 0;
+    g->trimThrottle = 0;
+    g->trimMixture = 1;
+}
+
+// Trimmed airborne spawn: solve the free-air trim in calm air at the spawn
+// altitude (throttle solved for the flight path), rotate the trimmed
+// north-heading state onto `heading` and place it at `posNed` / `altMsl`;
+// the air-relative velocity gets the wind. Hands-off on arrival: the trimmed
+// elevator goes into the trim wheel.
+void placeTrimmed(Vec3 posNed, Real altMsl, Real heading, Real kias, int flapDetent, Real path) {
+    g->ac->setEngineRunning(true, 2000);
+    // Retractable gear: down on the approach (landing flap), up otherwise.
+    g->ac->setGearImmediately(flapDetent >= 2);
+    SimpleWeatherParams calm = g->weatherParams;
+    calm.windSpeed = 0;
+    calm.turbulence.intensity = 0;
+    const SimpleWeather trimAir(calm);
+    scenarios::TrimRequest req;
+    req.altitude = altMsl;
+    req.flapDetent = flapDetent;
+    req.tas = scenarios::tasFromCas(ktToMs(kias), trimAir.atmosphere().at(altMsl));
+    req.flightPath = path;
+    const scenarios::TrimResult tr = scenarios::trim(*g->ac, req, trimAir);
+    DynamicState s = tr.state;
+    const Quat toHeading = Quat::fromEuler(0, 0, heading);
+    s.body.attitude = toHeading * s.body.attitude;
+    s.body.attitude.normalize();
+    posNed.z = -altMsl;
+    s.body.position = posNed;
+    s.body.velocity = toHeading.rotate(s.body.velocity) + g->weather->sample(posNed, altMsl, 0).wind;
+    g->ac->setState(s);
+    g->ac->setCockpitControl("brakes.parking", 0);
+    // The air sample and ground planes must describe the new position
+    // before the downwash and the instruments are initialised from them.
+    g->ac->prepareContext(tr.input, *g->ground, *g->weather);
+    g->ac->settleDownwash();
+    Real elevUp = 0.4;
+    for (const auto& sd : g->def.surfaces)
+        for (const auto& pd : sd.panels)
+            for (const auto& c : pd.controls)
+                if (c.channel == ControlChannel::Elevator) elevUp = c.maxNegative;
+    g->ac->setElevatorTrim(tr.elevator * elevUp / g->def.controls.elevatorTrimRange);
+    g->trimThrottle = tr.input.throttle;
+    g->trimMixture = tr.input.mixture;
+}
+
+// Instruments and radios after any reset.
+void finishReset(bool seedInstruments) {
+    // One step (1/240 s) at the trimmed controls so telemetry, the air sample
+    // and every derived value describe the new state before the host reads it.
+    PilotInput in;
+    in.throttle = g->trimThrottle;
+    in.mixture = g->trimMixture;
+    g->ac->step(kDt, in, *g->ground, *g->weather);
     g->ac->instruments().setAltimeterSetting(g->weather->atmosphere().conditions().seaLevelPressure);
-    if (mode >= 1) g->ac->resetInstrumentsToTruth();
+    if (seedInstruments) g->ac->resetInstrumentsToTruth();
     // Radios: NAV 1 on the (synthetic) runway 12 localizer, the test VOR in standby.
     InstrumentPanel& p = g->ac->instruments();
     p.setNavStandby(0, 110300);
@@ -239,6 +252,73 @@ AVD_EXPORT void avd_reset(int mode) {
     g->ac->drainEvents();
 }
 
+}  // namespace
+
+AVD_EXPORT void avd_reset(int mode) {
+    if (!g) return;
+    newAircraft();
+    const RunwayDef& rw = g->airport.runways[0];
+    if (mode <= 1) {
+        const Vec3 p = scenarios::runwayPoint(rw, 30);
+        if (mode == 1) g->ac->setEngineRunning(true, 1000);
+        g->ac->placeOnGround(p.x, p.y, rw.headingTrue, *g->ground, *g->weather);
+        if (mode == 0) g->ac->setColdAndDark();
+    } else {
+        // Mode 2: on the 3 deg final for runway 12 (65 KIAS, flaps 20), exactly
+        // on the glide path, which starts at the glideslope antenna 300 m beyond
+        // the paved end (scenarios/airports.cpp). Mode 3: level cruise, 100 KIAS.
+        // Jets: final at 125 KIAS (about Vref + 10) with landing flap and the gear down, cruise at 250 KIAS.
+        const bool final = mode == 2;
+        const bool jet = g->ac->turbofanCount() > 0;
+        const int landingFlap = jet ? static_cast<int>(g->def.controls.flapDetents.size()) - 1 : 2;
+        const Real dist = final ? (jet ? -6000.0 : -3000.0) : -8000.0;
+        const Real path = final ? degToRad(-3.0) : 0.0;
+        const Real alt = g->airport.elevation + (final ? (-dist + 300.0) * std::tan(-path) : (jet ? 1500.0 : 850.0));
+        const Real kias = final ? (jet ? 125.0 : 65.0) : (jet ? 250.0 : 100.0);
+        placeTrimmed(scenarios::runwayPoint(rw, dist), alt, rw.headingTrue, kias, final ? landingFlap : 0, path);
+    }
+    finishReset(mode >= 1);
+}
+
+// Trimmed, level, hands-off spawn anywhere in the world: world ENU position
+// (m east and north of the world anchor), height above the field elevation
+// (m), true heading (deg), indicated airspeed (kt) and flap detent.
+AVD_EXPORT void avd_reset_air(double east, double north, double heightAboveField, double headingDeg, double kias,
+                              int flapDetent) {
+    if (!g) return;
+    newAircraft();
+    const Vec3 ned = world::nedFromEnu({east, north, 0});
+    const AircraftDefinition& d = g->def;
+    const bool jet = !d.turbofans.empty();
+    // Keep the request flyable: below the type's ceiling, no faster than Vmo
+    // (or Mmo at height), flaps no further than the speed allows, and at least
+    // 1.25 Vs for that configuration and weight.
+    const Real height = std::clamp(heightAboveField, 30.0, jet ? 14500.0 : 4500.0);
+    const Real altMsl = g->airport.elevation + height;
+    const std::vector<Real>& det = d.controls.flapDetents;
+    int flap = std::clamp(flapDetent, 0, static_cast<int>(det.size()) - 1);
+    Real v = std::clamp(kias, 55.0, d.limits.neverExceedIas > 0 ? msToKt(d.limits.neverExceedIas) : 350.0);
+    const AirState air = StandardAtmosphere().at(altMsl);
+    while (d.limits.maxOperatingMach > 0 && v > 60 &&
+           scenarios::tasFromCas(ktToMs(v), air) / air.speedOfSound > d.limits.maxOperatingMach - 0.03)
+        v -= 1;
+    auto vfe = [&](int k) {
+        if (det[static_cast<std::size_t>(k)] <= 0) return 1e9;
+        const Real ms = !d.limits.flapExtendedIasVsFlap.empty() ? d.limits.flapExtendedIasVsFlap(det[static_cast<std::size_t>(k)])
+                                                                 : d.limits.flapExtendedIas;
+        return ms > 0 ? msToKt(ms) : 1e9;
+    };
+    while (flap > 0 && v > vfe(flap)) --flap;
+    // Jets at height: no slower than Mach 0.72 (behind the drag curve otherwise).
+    if (jet && altMsl > 9000)
+        while (v < 300 && scenarios::tasFromCas(ktToMs(v), air) / air.speedOfSound < 0.72) v += 1;
+    AeroModel am(d);
+    const Real cl = trimmedMaxLiftCoefficient(am, d.referenceArea, g->ac->massProperties().cg, det[static_cast<std::size_t>(flap)], 0.2);
+    if (cl > 0.1) v = std::max(v, 1.25 * msToKt(std::sqrt(2 * g->ac->massProperties().mass * 9.80665 / (1.225 * d.referenceArea * cl))));
+    placeTrimmed(ned, altMsl, degToRad(headingDeg), v, flap, 0.0);
+    finishReset(true);
+}
+
 // Compass correction card from a compass swing: what the compass reads (deg)
 // on magnetic headings 0, 30, ... 330 ("FOR" -> "STEER").
 AVD_EXPORT double* avd_compass_card() {
@@ -249,7 +329,7 @@ AVD_EXPORT double* avd_compass_card() {
     return g_state;
 }
 
-// Throttle and mixture of the last trimmed spawn (modes 2 and 3), so the
+// Throttle and mixture of the last trimmed spawn (modes 2 and 3, avd_reset_air), so the
 // host's levers start where the trim put them.
 AVD_EXPORT double avd_trim_throttle() { return g ? g->trimThrottle : 0.0; }
 AVD_EXPORT double avd_trim_mixture() { return g ? g->trimMixture : 1.0; }
@@ -288,14 +368,193 @@ AVD_EXPORT void avd_set_level_hold(int on) {
 }
 
 AVD_EXPORT void avd_quick_start() {
-    if (g) g->procedure.start(quickStartPistonSingle(*g->ac));
+    if (!g) return;
+    if (g->ac->turbofanCount() > 0) {
+        // Jet: power up, then the fuel control switches one engine at a time
+        // (each start runs the starter, light-off and spool-up in the core).
+        Aircraft& ac = *g->ac;
+        ac.setCockpitControl("electrical.battery", 1);
+        ac.setCockpitControl("electrical.alternator", 1);
+        ac.setCockpitControl("electrical.avionics", 1);
+        ac.setCockpitControl("fuel.auxpump", 1);
+        ac.setCockpitControl("electrical.load.beacon", 1);
+        ac.setCockpitControl("engine1.fuel", 1);
+        g->jetStart = 1;
+        return;
+    }
+    g->procedure.start(quickStartPistonSingle(*g->ac));
 }
+
+namespace {
+void updateJetStart() {
+    if (!g || g->jetStart == 0 || g->jetStart == 3) return;
+    Aircraft& ac = *g->ac;
+    const int n = ac.turbofanCount();
+    const int i = g->jetStart - 1;
+    if (i < n && ac.turbofanState(i).running) {
+        if (i + 1 < n) {
+            ac.setCockpitControl("engine" + std::to_string(i + 2) + ".fuel", 1);
+            g->jetStart = i + 2;
+        } else {
+            ac.setCockpitControl("electrical.load.nav_lights", 1);
+            ac.setCockpitControl("electrical.load.strobes", 1);
+            g->jetStart = 3;
+        }
+    }
+}
+}  // namespace
 
 // Procedure status: 0 idle, 1 running, 2 done, 3 failed; message in the text buffer.
 AVD_EXPORT int avd_procedure_status() {
     if (!g) return 0;
+    if (g->jetStart > 0) {
+        const int i = std::min(g->jetStart, g->ac->turbofanCount()) - 1;
+        putText(g->jetStart == 3 ? "Both engines running." : "Starting engine " + std::to_string(i + 1) + "...");
+        return g->jetStart == 3 ? 2 : 1;
+    }
     putText(g->procedure.message());
     return static_cast<int>(g->procedure.status());
+}
+
+// Airflow (for the flow visualisation): what the strip aerodynamics computed
+// this step. Header: [0] strips, [1] engines, [2] TAS m/s, [3] alpha, [4] beta
+// (rad), [5] density, [6..8] CG (structural frame), [9] speed of sound.
+// Strips from 16, 16 doubles each: quarter-chord position xyz, span axis xyz,
+// normal (lift side) axis xyz, chord, area, cl, alpha, q, stall alpha, surface.
+// Engines after the strips, 10 doubles each: position xyz, thrust axis xyz,
+// radius, slipstream / jet velocity increment (m/s), thrust (N), kind (0
+// propeller, 1 turbofan). Structural frame: x forward, y right, z down.
+AVD_EXPORT double* avd_flow() {
+    for (double& v : g_flow) v = 0;
+    if (!g) return g_flow;
+    const Aircraft& ac = *g->ac;
+    const AeroModel& am = ac.aeroModel();
+    const AeroOutputs& ao = ac.aero();
+    const int n = std::min(am.stripCount(), kFlowStrips);
+    g_flow[0] = n;
+    g_flow[2] = ao.airspeed; g_flow[3] = ao.alpha; g_flow[4] = ao.beta;
+    g_flow[5] = ac.telemetry().air.state.density;
+    const Vec3 cg = ac.massProperties().cg;
+    g_flow[6] = cg.x; g_flow[7] = cg.y; g_flow[8] = cg.z;
+    g_flow[9] = ac.telemetry().air.state.speedOfSound;
+    for (int i = 0; i < n; ++i) {
+        const AeroModel::StripGeometry sg = am.stripGeometry(i);
+        const StripTelemetry& t = ao.strips[static_cast<std::size_t>(i)];
+        double* o = g_flow + 16 + i * kFlowStride;
+        o[0] = sg.position.x; o[1] = sg.position.y; o[2] = sg.position.z;
+        o[3] = sg.spanAxis.x; o[4] = sg.spanAxis.y; o[5] = sg.spanAxis.z;
+        o[6] = sg.normalAxis.x; o[7] = sg.normalAxis.y; o[8] = sg.normalAxis.z;
+        o[9] = sg.chord; o[10] = sg.area; o[11] = t.cl; o[12] = t.alpha; o[13] = t.q; o[14] = t.stallAlpha;
+        o[15] = sg.surface;
+    }
+    double* e = g_flow + 16 + kFlowStrips * kFlowStride;
+    int ne = 0;
+    for (int i = 0; i < ac.engineCount() && ne < 4; ++i, ++ne) {
+        const SlipstreamState& ss = ac.slipstream(i);
+        double* o = e + ne * 10;
+        o[0] = ss.discCentre.x; o[1] = ss.discCentre.y; o[2] = ss.discCentre.z;
+        o[3] = ss.axis.x; o[4] = ss.axis.y; o[5] = ss.axis.z;
+        o[6] = ss.radius; o[7] = ss.axialIncrement; o[8] = ac.telemetry().engines[static_cast<std::size_t>(i)].prop.thrust; o[9] = 0;
+    }
+    for (int i = 0; i < ac.turbofanCount() && ne < 4; ++i, ++ne) {
+        const TurbofanDef& d = g->def.turbofans[static_cast<std::size_t>(i)];
+        const TurbofanState& ts = ac.turbofanState(i);
+        double* o = e + ne * 10;
+        const Real rNozzle = 0.45;
+        const Real rho = std::max(ac.telemetry().air.state.density, 0.05);
+        const Real v0 = ao.airspeed;
+        // Fully expanded jet: T = mdot (vj - v0), mdot = rho A vj.
+        const Real A = kPi * rNozzle * rNozzle;
+        const Real vj = 0.5 * (v0 + std::sqrt(v0 * v0 + 4 * std::max(ts.thrust, 0.0) / (rho * A)));
+        o[0] = d.position.x; o[1] = d.position.y; o[2] = d.position.z;
+        const Vec3 ax = normalized(d.thrustAxis);
+        o[3] = ax.x; o[4] = ax.y; o[5] = ax.z;
+        o[6] = rNozzle; o[7] = std::max(vj - v0, 0.0); o[8] = ts.thrust; o[9] = 1;
+    }
+    g_flow[1] = ne;
+    return g_flow;
+}
+
+// Attitude indicator caging knob (square the gyro to the case; use in level flight).
+AVD_EXPORT void avd_ai_cage() {
+    if (g) g->ac->instruments().cageAttitude(g->ac->state().body.attitude);
+}
+
+// Jet systems (32 doubles): [0] turbofans, [1] gear position 0..1, [2] gear
+// lever (1 down), [3] speedbrake position 0..1, [4] speedbrake detent, [5] Mach,
+// [6] fuel kg, [7] fuel flow kg/h; engines at 8 + 8 i: N1 %, N2 %, ITT degC,
+// fuel flow kg/h, thrust kN, running, starting, fuel switch; [24] MMO,
+// [25] VMO kt, [26] TAS kt, [27] flap deg, [28] trim, [29] weight on wheels,
+// [30], [31] oil pressure psi (engines 1, 2).
+AVD_EXPORT double* avd_jet() {
+    for (double& v : g_jet) v = 0;
+    if (!g) return g_jet;
+    const Aircraft& ac = *g->ac;
+    const AircraftTelemetry& t = ac.telemetry();
+    g_jet[0] = ac.turbofanCount();
+    g_jet[1] = ac.gearPosition();
+    g_jet[2] = ac.cockpitControl("gear.lever") != 0;
+    g_jet[3] = ac.speedbrakePosition();
+    g_jet[4] = std::max(ac.cockpitControl("speedbrake.lever"), 0);
+    g_jet[5] = t.mach;
+    g_jet[6] = t.fuelMass;
+    Real ff = 0;
+    for (int i = 0; i < std::min(ac.turbofanCount(), 2); ++i) {
+        const TurbofanState& e = ac.turbofanState(i);
+        double* o = g_jet + 8 + 8 * i;
+        o[0] = e.n1 * 100; o[1] = e.n2 * 100; o[2] = e.itt - 273.15; o[3] = e.fuelFlow * 3600; o[4] = e.thrust / 1000;
+        o[5] = e.running; o[6] = e.starting; o[7] = ac.cockpitControl("engine" + std::to_string(i + 1) + ".fuel") == 1;
+        g_jet[30 + i] = e.oilPressure / 6894.757;
+        ff += e.fuelFlow;
+    }
+    g_jet[7] = ff * 3600;
+    g_jet[24] = g->def.limits.maxOperatingMach;
+    g_jet[25] = msToKt(g->def.limits.neverExceedIas);
+    g_jet[26] = msToKt(t.trueAirspeed);
+    g_jet[27] = radToDeg(t.flapAngle);
+    g_jet[28] = t.elevatorTrim;
+    g_jet[29] = t.onGround;
+    // Low-speed awareness and V-speeds: 1-g stall CAS from the trimmed CLmax at
+    // this weight (current flap and Mach; take-off and landing flap at low Mach).
+    const std::vector<Real>& det = g->def.controls.flapDetents;
+    if (!g->clmaxModel) {
+        g->clmaxModel = std::make_unique<AeroModel>(g->def);
+        const Vec3 cg0 = ac.massProperties().cg;
+        g->clmaxTakeoff = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det[det.size() / 2], 0.2);
+        g->clmaxLanding = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det.back(), 0.2);
+    }
+    const Real key = std::round(radToDeg(t.flapAngle) * 2) * 1000 + std::round(std::max(t.mach, 0.2) * 20);
+    if (key != g->clmaxKey) {
+        g->clmaxKey = key;
+        g->clmax = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, ac.massProperties().cg, t.flapAngle,
+                                             std::max(t.mach, 0.2));
+    }
+    auto vs = [&](Real cl) { return cl > 0.1 ? msToKt(std::sqrt(2 * t.mass * 9.80665 / (1.225 * g->def.referenceArea * cl))) : 0.0; };
+    g_jet[32] = vs(g->clmax);
+    g_jet[33] = vs(g->clmaxTakeoff);
+    g_jet[34] = vs(g->clmaxLanding);
+    g_jet[35] = t.mass;
+    const Vec3 vn = t.velocityNed;
+    g_jet[36] = radToDeg(std::atan2(-vn.z, std::max(std::hypot(vn.x, vn.y), 0.5)));
+    g_jet[37] = std::fmod(radToDeg(std::atan2(vn.y, vn.x)) + 360.0, 360.0);
+    const Vec3 w = t.air.wind;  // air velocity, NED: the wind blows toward it
+    g_jet[38] = std::fmod(radToDeg(std::atan2(-w.y, -w.x)) + 360.0, 360.0);
+    g_jet[39] = msToKt(std::hypot(w.x, w.y));
+    g_jet[40] = mToFt(t.heightAgl);
+    g_jet[41] = kToCelsius(t.air.state.temperature);
+    g_jet[42] = t.loadFactor;
+    g_jet[43] = radToDeg(t.alpha);
+    g_jet[44] = ac.electrical().alternatorOnline();
+    g_jet[45] = t.busVoltage;
+    g_jet[46] = t.stallWarning;
+    const StructuralLimitsDef& lim = g->def.limits;
+    g_jet[47] = t.flapAngle < degToRad(0.5) ? 0.0
+                : msToKt(!lim.flapExtendedIasVsFlap.empty() ? lim.flapExtendedIasVsFlap(t.flapAngle) : lim.flapExtendedIas);
+    g_jet[48] = msToKt(g->def.controls.gear.maxExtendedIas);
+    g_jet[49] = det.size() > 2 ? radToDeg(det[det.size() / 2]) : 0.0;
+    g_jet[50] = radToDeg(det.back());
+    g_jet[51] = t.stickPusher;
+    return g_jet;
 }
 
 // Advance by wall-clock seconds at a fixed 240 Hz (at most 0.25 s per call).
@@ -310,6 +569,7 @@ AVD_EXPORT int avd_advance(double seconds) {
         g->accumulator -= kDt;
         ++n;
     }
+    updateJetStart();
     collectEvents();
     return n;
 }
@@ -373,7 +633,8 @@ AVD_EXPORT double* avd_state() {
     s[21] = m3ToGal(r.fuelFlow / g->def.fuel.density) * 3600; s[22] = r.fuelGauge[0] * 1000; s[23] = r.fuelGauge[1] * 1000;
     s[24] = g->raw.throttle; s[25] = g->raw.mixture;
     s[26] = radToDeg(t.flapAngle); s[27] = t.elevatorTrim; s[28] = t.onGround; s[29] = r.stallHorn;
-    s[30] = e.engine.running; s[31] = r.voltmeter; s[32] = ac.electrical().alternatorOnline(); s[33] = paToInHg(ac.vacuum().suction());
+    s[30] = ac.turbofanCount() > 0 ? ac.turbofanState(0).running || ac.turbofanState(std::min(1, ac.turbofanCount() - 1)).running
+                                   : e.engine.running; s[31] = r.voltmeter; s[32] = ac.electrical().alternatorOnline(); s[33] = paToInHg(ac.vacuum().suction());
     s[34] = ac.electrical().batteryCharge();
     s[35] = radToDeg(r.attitudeRoll); s[36] = radToDeg(r.attitudePitch); s[37] = std::fmod(radToDeg(r.headingIndicator) + 360.0, 360.0);
     s[38] = radToDeg(r.turnRate); s[39] = r.slipBall;

@@ -76,7 +76,14 @@ Real InstrumentPanel::casFromImpactPressure(Real qc) {
 }
 
 Real InstrumentPanel::altitudeFromPressure(Real p, Real setting) {
-    return 44330.77 * (1 - std::pow(std::max(p, 1.0) / std::max(setting, 1.0), 0.190263));
+    // ISA calibration: the troposphere law up to the 11 km tropopause
+    // (22,632 Pa), then the isothermal stratosphere (216.65 K: R T / g =
+    // 6341.62 m per e-fold of pressure).
+    constexpr Real p11 = 22632.06;
+    const Real ps = std::max(setting, 1.0);
+    auto trop = [&](Real pp) { return 44330.77 * (1 - std::pow(std::max(pp, 1.0) / ps, 0.190263)); };
+    if (p >= p11) return trop(p);
+    return trop(p11) + 6341.62 * std::log(p11 / std::max(p, 1.0));
 }
 
 // ----------------------------------------------------------------- panel ----
@@ -260,28 +267,37 @@ void InstrumentPanel::updateAttitude(Real dt, const SensorInputs& in) {
                 aiAxis_ = normalized(rotateAbout(aiAxis_, e / s, step));
             }
         }
-    } else {
+    } else if (aiAxisBodyValid_) {
         // Rotor too slow to be rigid: bearing friction drags the gimbals with
-        // the case, so the display drifts toward the airframe's own "down".
-        const Real drag = (1 - aiSpin_ / d.minimumUsefulSpin) * 0.05 * dt;
-        const Vec3 e = cross(aiAxis_, caseDown);
-        const Real s = length(e);
-        if (s > 1e-9) aiAxis_ = normalized(rotateAbout(aiAxis_, e / s, std::min(drag, std::asin(clamp(s, 0.0, 1.0)))));
+        // the case, so a stopped gyro's display freezes wherever it was (it
+        // neither holds the horizon nor rights itself).
+        const Real hold = 1 - aiSpin_ / d.minimumUsefulSpin;
+        const Vec3 spaceFixed = q.inverseRotate(aiAxis_);
+        aiAxis_ = normalized(q.rotate(normalized(spaceFixed * (1 - hold) + aiAxisBody_ * hold)));
     }
+    (void)caseDown;
     // Displayed attitude: the case (airframe) relative to the gyro's vertical.
     const Vec3 db = q.inverseRotate(aiAxis_);
     const Real pitch = -std::asin(clamp(db.x, -1.0, 1.0));
     const Real roll = std::atan2(db.y, db.z);
-    // Gimbal stops: beyond them a spinning gyro tumbles.
+    // Gimbal stops. Striking one with the rotor spinning tumbles the gyro: one
+    // violent precession of the rotor axis at the moment of impact (about the
+    // case's lateral axis, ~70 deg), after which the gimbals ride free again
+    // and the pendulous vanes re-erect it. The kick is edge-triggered: the stop
+    // is not a force that keeps acting while the attitude stays beyond it.
     const bool beyond = std::abs(pitch) > d.pitchLimit || (d.rollLimit > 0 && std::abs(roll) > d.rollLimit);
-    if (beyond && aiSpin_ >= d.minimumUsefulSpin) {
-        aiAxis_ = normalized(aiAxis_ + q.rotate({1, 0, 0}) * 0.9);
+    if (beyond && !aiAtStop_ && aiSpin_ >= d.minimumUsefulSpin) {
+        const Vec3 lateral = q.rotate({0, 1, 0});
+        aiAxis_ = normalized(rotateAbout(aiAxis_, lateral, pitch >= 0 ? 1.2 : -1.2));
         s_.attitudeTumbled = true;
     }
+    aiAtStop_ = beyond;
     if (s_.attitudeTumbled && dot(aiAxis_, Vec3{0, 0, 1}) > std::cos(0.09)) s_.attitudeTumbled = false;
     const Vec3 db2 = q.inverseRotate(aiAxis_);
     s_.attitudePitch = -std::asin(clamp(db2.x, -1.0, 1.0));
     s_.attitudeRoll = std::atan2(db2.y, db2.z);
+    aiAxisBody_ = db2;
+    aiAxisBodyValid_ = true;
 }
 
 // ------------------------------------------------------ directional gyro ----
@@ -297,15 +313,25 @@ void InstrumentPanel::updateHeading(Real dt, const SensorInputs& in) {
     // the Earth's rotation (+Omega sin(lat)) plus mechanical drift, which grows
     // as the rotor slows; below ~30% the card is no longer held at all.
     Real drift = kEarthRate * std::sin(in.position.latitude) + d.mechanicalDrift / std::max(dgSpin_, 0.2);
-    if (dgSpin_ < 0.3) drift += 0.02 * (1 - dgSpin_ / 0.3);
+    // A slow rotor is dragged round with the case: the card stops following turns.
+    if (dgSpin_ < 0.3 && dgLastHeadingValid_ && dt > 0)
+        drift += (1 - dgSpin_ / 0.3) * wrapPi(t_.trueHeading - dgLastHeading_) / dt;
+    dgLastHeading_ = t_.trueHeading;
+    dgLastHeadingValid_ = true;
     // Gimbal limits exceeded: the gyro tumbles and the card spins.
-    const bool beyond = std::abs(t_.roll) > d.gimbalLimit || std::abs(t_.pitch) > d.gimbalLimit;
+    const bool beyond = d.gimbalLimit > 0 && (std::abs(t_.roll) > d.gimbalLimit || std::abs(t_.pitch) > d.gimbalLimit);
     if (beyond && dgSpin_ > 0.3) drift += 1.5;
     dgAxisAzimuth_ = wrapPi(dgAxisAzimuth_ + drift * dt);
     // The card reads the spin axis in the case's own horizontal plane (gimbal
     // error in banked/pitched attitudes emerges from this projection).
     const Vec3 sb = q.inverseRotate({std::cos(dgAxisAzimuth_), std::sin(dgAxisAzimuth_), 0});
     const Real gimbal = std::atan2(sb.y, sb.x);
+    // Slaved (flux valve / AHRS magnetometer): the card is driven slowly toward
+    // the sensed magnetic heading while the gyro is up to speed.
+    if (d.slavingRate > 0 && dgSpin_ > 0.7) {
+        const Real err = wrapPi(t_.magneticHeading - wrapPi(dgCardOffset_ - gimbal));
+        dgCardOffset_ = wrapPi(dgCardOffset_ + clamp(err, -d.slavingRate * dt, d.slavingRate * dt));
+    }
     s_.headingIndicator = wrapPi(dgCardOffset_ - gimbal);
 }
 
@@ -525,6 +551,8 @@ void InstrumentPanel::resetToTruth(const SensorInputs& in) {
     pitotHeat_ = in.pitotHeatOn ? 1.0 : 0.0;
     aiSpin_ = dgSpin_ = tcSpin_ = 1;
     aiAxis_ = {0, 0, 1};
+    aiAtStop_ = false;
+    aiAxisBodyValid_ = dgLastHeadingValid_ = false;
     s_.attitudeTumbled = false;
     dgAxisAzimuth_ = 0;
     dgCardOffset_ = 0;
@@ -535,12 +563,22 @@ void InstrumentPanel::resetToTruth(const SensorInputs& in) {
     tcGimbal_.reset(0);
 }
 
+void InstrumentPanel::cageAttitude(const Quat& attitude) {
+    // The caging knob locks the gimbals square to the case: the rotor axis is
+    // forced onto the airframe's own vertical (so cage in level flight).
+    aiAxis_ = attitude.rotate({0, 0, 1});
+    aiAxisBody_ = {0, 0, 1};
+    aiAtStop_ = false;
+    s_.attitudeTumbled = false;
+}
+
 void InstrumentPanel::resetCold(const SensorInputs& in) {
     initialised_ = false;
     pitotIce_ = pitotHeat_ = 0;
     aiSpin_ = dgSpin_ = tcSpin_ = 0;
     // A stopped attitude gyro rests against its stops: a tilted display.
     aiAxis_ = normalized(in.attitude.rotate(normalized(Vec3{-0.09, 0.26, 1})));
+    aiAxisBodyValid_ = dgLastHeadingValid_ = false;
     dgAxisAzimuth_ = 0;
     dgCardOffset_ = 0.7;  // card wherever it was left
     compassVertical_ = in.attitude.rotate({0, 0, 1});

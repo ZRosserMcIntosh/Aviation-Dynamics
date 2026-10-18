@@ -60,8 +60,8 @@ A.avd_set_input(0, 0, 0, A.avd_trim_throttle() * 0.85, A.avd_trim_mixture(), 0, 
 for (let i = 0; i < 30; ++i) A.avd_advance(1);
 const h0 = A.state()[53];
 for (let i = 0; i < 30; ++i) A.avd_advance(1);
-let st = A.state();
-check(st[55] === 1 && Math.abs(st[53] - h0) < 15 && Math.abs(st[7]) < 2, `auto-trim holds straight and level (${(st[53] - h0).toFixed(1)} ft in 30 s, bank ${st[7].toFixed(1)} deg)`);
+const held = A.state();
+check(held[55] === 1 && Math.abs(held[53] - h0) < 15 && Math.abs(held[7]) < 2, `auto-trim holds straight and level (${(held[53] - h0).toFixed(1)} ft in 30 s, bank ${held[7].toFixed(1)} deg)`);
 A.avd_set_assist(1);
 A.avd_advance(0.1);
 check(A.state()[55] === 1, 'auto-trim kept across preset changes');
@@ -75,9 +75,63 @@ A.avd_set_assist(2);
 A.avd_set_input(0, 0, 0, A.avd_trim_throttle(), A.avd_trim_mixture(), 0, 0, 0, 0);
 A.avd_advance(0.25);
 const vs0 = A.cockpitState()[3];
-for (let i = 0; i < 10; ++i) A.avd_advance(1);
+for (let i = 0; i < 40; ++i) A.avd_advance(0.25);  // 10 s (each call is clamped to 0.25 s)
 c = A.cockpitState();
 check(Math.abs(vs0 - c[53]) < 60, `final spawn: VSI reads the descent at once (${vs0.toFixed(0)} fpm)`);
 check(Math.abs(c[0] - 65) < 2 && Math.abs(c[53] + 345) < 60, `final spawn trimmed: ${c[0].toFixed(1)} KIAS, ${c[53].toFixed(0)} fpm after 10 s hands-off`);
 check(Math.abs(c[38]) < 0.1 && Math.abs(c[41]) < 0.2, `on the ILS: CDI ${c[38].toFixed(2)}, GS ${c[41].toFixed(2)}`);
+// Spawn anywhere: over MASP, 600 m above the field, heading north at 100 KIAS.
+A.avd_reset_air(0, 0, 600, 0, 100, 0);
+A.avd_set_input(0, 0, 0, A.avd_trim_throttle(), A.avd_trim_mixture(), 0, 0, 0, 0);
+for (let i = 0; i < 40; ++i) A.avd_advance(0.25);  // 10 s (each call is clamped to 0.25 s)
+c = A.cockpitState();
+const st = A.state();
+check(Math.abs(c[0] - 100) < 3 && Math.abs(c[53]) < 150, `spawn over MASP trimmed: ${c[0].toFixed(1)} KIAS, ${c[53].toFixed(0)} fpm after 10 s`);
+check(Math.abs(st[0]) < 60 && st[1] > 400 && st[1] < 600 && Math.abs(st[14] - 600 / 0.3048) < 150,
+  `spawn position: ${st[0].toFixed(0)} m E, ${st[1].toFixed(0)} m N, ${st[14].toFixed(0)} ft above the field`);
+// A 135 deg roll: the attitude indicator follows (360 deg roll, no tumble) and is not stuck afterwards.
+A.avd_set_assist(2);
+A.avd_reset_air(0, 0, 900, 0, 110, 0);
+for (let i = 0; i < 6; ++i) { A.avd_set_input(0, 1, 0, A.avd_trim_throttle(), A.avd_trim_mixture(), 0, 0, 0, 0); A.avd_advance(0.25); }
+c = A.cockpitState();
+check(c[6] === 0 && Math.abs(c[5] - c[55]) < 5, `steep roll: AI ${c[5].toFixed(0)} deg vs ${c[55].toFixed(0)} deg, not tumbled`);
+A.avd_ai_cage();
+check(A.cockpitState()[6] === 0, 'caging knob');
+
+// ---- The Top G (turbofan, retractable gear, speedbrake) ----
+const B = await createAvdModule();
+const jetErrors = B.load(await readFile(new URL('./dist/top_g.json', import.meta.url), 'utf8'));
+check(jetErrors.length === 0, `top_g.json loads${jetErrors.length ? ': ' + jetErrors.join('; ') : ''}`);
+B.avd_set_assist(0);
+B.avd_reset(1);
+check(B.jet()[0] === 2 && B.jet()[13] === 1 && B.jet()[21] === 1, 'jet: two turbofans running at idle on the runway');
+B.avd_set_input(0, 0, 1, 0, 1, 1, 1, 0, 0);  // full right Q/E input, brakes on, at rest
+B.avd_advance(0.5);
+check(B.state()[57] === 1 && B.state()[56] === 1, 'jet: Q/E turn the nose-wheel tiller at walking pace');
+B.avd_set_input(0, 0, 0, 0, 1, 0, 0, 0, 0);
+B.avd_advance(4);  // tiller centred again (20 deg/s actuator) before the take-off run
+B.avd_cockpit_cycle(B.cockpit().find((x) => x.id === 'brakes.parking').index);
+for (let i = 0; i < 40 * 4; ++i) {
+  const js = B.state();
+  B.avd_set_input(js[10] > 125 ? Math.max(-1, Math.min(1, 0.15 * (10 - js[8]))) : 0, 0, 0, 1, 1, 0, 0, 0, 0);
+  B.avd_advance(0.25);
+}
+let j = B.jet(), js = B.state();
+check(js[28] === 0 && js[14] > 200, `jet: airborne after 40 s at full thrust (AGL ${js[14].toFixed(0)} ft, N1 ${j[8].toFixed(0)} %)`);
+B.avd_cockpit_cycle(B.cockpit().find((x) => x.id === 'gear.lever').index);
+for (let i = 0; i < 40; ++i) B.avd_advance(0.25);
+check(B.jet()[1] === 0, 'jet: gear retracts');
+j = B.jet();
+check(j[32] > 95 && j[32] < 140 && j[34] > 75 && j[34] < j[33] && j[33] < j[32] && Math.abs(j[36]) < 25 && j[40] > 100,
+  `jet: low-speed data (Vs ${j[32].toFixed(0)}, Vs TO ${j[33].toFixed(0)}, Vs LDG ${j[34].toFixed(0)} kt, FPA ${j[36].toFixed(1)}, RA ${j[40].toFixed(0)} ft)`);
+B.avd_set_assist(2);
+B.avd_reset_air(0, 0, 3000, 0, 250, 0);
+for (let i = 0; i < 40; ++i) { B.avd_set_input(0, 0, 0, B.avd_trim_throttle(), 1, 0, 0, 0, 0); B.avd_advance(0.25); }
+c = B.cockpitState();
+check(Math.abs(c[0] - 250) < 4 && Math.abs(c[53]) < 200 && B.jet()[1] === 0, `jet spawn trimmed: ${c[0].toFixed(1)} KIAS, ${c[53].toFixed(0)} fpm, gear up`);
+B.avd_reset(0);
+B.avd_quick_start();
+for (let i = 0; i < 100 * 4; ++i) { B.avd_set_input(0, 0, 0, 0, 1, 0, 0, 0, 0); B.avd_advance(0.25); }
+j = B.jet();
+check(j[13] === 1 && j[21] === 1 && B.procedure().status === 2, `jet Quick Start: both engines running (N2 ${j[9].toFixed(0)} / ${j[17].toFixed(0)} %)`);
 process.exit(failures ? 1 : 0);

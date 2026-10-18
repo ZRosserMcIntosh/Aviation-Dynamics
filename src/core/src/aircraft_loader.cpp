@@ -249,6 +249,7 @@ void readPanel(Obj& o, InstrumentPanelDef& p) {
         a.str("electrical_load", p.heading.electricalLoad);
         a.num("mechanical_drift_deg_per_hour", p.heading.mechanicalDrift, kDeg / 3600);
         a.num("gimbal_limit_deg", p.heading.gimbalLimit, kDeg);
+        a.num("slaving_rate_deg_per_s", p.heading.slavingRate, kDeg);
         a.num("spin_up_time_constant_s", p.heading.spinUpTime);
         a.num("spin_down_time_constant_s", p.heading.spinDownTime);
     }
@@ -465,6 +466,7 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.str("name", di.name, true);
         o.vec3("position_m", di.position, 1, true);
         o.num("drag_area_m2", di.dragArea, 1, true);
+        o.num("critical_mach", di.criticalMach);
         d.dragItems.push_back(di);
     });
     r.each("engines", [&](Obj& o, std::size_t) {
@@ -519,6 +521,33 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
             pr.integer("bem_elements", e.propeller.bemElements);
         }
         d.engines.push_back(e);
+    });
+    r.each("turbofans", [&](Obj& o, std::size_t) {
+        TurbofanDef e;
+        o.str("name", e.name);
+        o.vec3("position_m", e.position, 1, true);
+        o.vec3("thrust_axis", e.thrustAxis);
+        o.num("static_thrust_kn", e.staticThrust, 1000, true);
+        o.num("bypass_ratio", e.bypassRatio);
+        o.num("throttle_ratio", e.throttleRatio);
+        o.num("lapse_mach_coefficient", e.lapseMachCoefficient);
+        o.num("idle_n1", e.idleN1);
+        o.num("idle_n2", e.idleN2);
+        o.num("idle_thrust_fraction", e.idleThrustFraction);
+        o.num("thrust_exponent", e.thrustExponent);
+        o.num("acceleration_time_s", e.accelerationTime);
+        o.num("deceleration_time_s", e.decelerationTime);
+        o.num("start_time_s", e.startTime);
+        // lb/(lbf h) -> kg/(N s)
+        o.num("tsfc_static_lb_per_lbf_h", e.tsfcStatic, 0.45359237 / (4.4482216 * 3600));
+        o.num("tsfc_mach_slope", e.tsfcMachSlope);
+        o.num("idle_fuel_flow_kg_per_h", e.idleFuelFlow, 1.0 / 3600);
+        o.num("itt_idle_k", e.ittIdle);
+        o.num("itt_takeoff_k", e.ittTakeoff);
+        o.num("oil_pressure_idle_psi", e.oilPressureIdle, 6894.757);
+        o.num("oil_pressure_max_psi", e.oilPressureMax, 6894.757);
+        o.integer("fuel_feed", e.fuelFeed);
+        d.turbofans.push_back(e);
     });
     if (r.has("fuel")) {
         Obj f = r.child("fuel");
@@ -612,6 +641,22 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         c.num("elevator_trim_rate", d.controls.elevatorTrimRate);
         c.num("rigging_aileron", d.controls.riggingAileron);
         c.num("rigging_rudder", d.controls.riggingRudder);
+        c.num("rudder_limiter_kias", d.controls.rudderLimiterIas, units::kKnot);
+        if (c.has("landing_gear")) {
+            Obj g = c.child("landing_gear");
+            g.boolean("retractable", d.controls.gear.retractable);
+            g.num("transit_time_s", d.controls.gear.transitTime);
+            g.num("drag_area_m2", d.controls.gear.dragArea);
+            g.num("vle_kias", d.controls.gear.maxExtendedIas, units::kKnot);
+        }
+        if (c.has("speedbrake")) {
+            Obj b = c.child("speedbrake");
+            d.controls.speedbrake.present = true;
+            b.integer("detents", d.controls.speedbrake.detents);
+            b.num("drag_area_m2", d.controls.speedbrake.dragArea);
+            b.num("lift_loss_fraction", d.controls.speedbrake.liftLossFraction);
+            b.num("rate_per_s", d.controls.speedbrake.rate);
+        }
     }
     if (r.has("pitot_static")) {
         Obj p = r.child("pitot_static");
@@ -626,6 +671,8 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         s.integer("surface", d.stallWarning.surface);
         s.integer("strip", d.stallWarning.strip);
         s.num("alpha_margin_deg", d.stallWarning.alphaMargin, kDeg);
+        s.num("pusher_margin_deg", d.stallWarning.pusherMargin, kDeg);
+        s.num("pusher_elevator", d.stallWarning.pusherElevator);
     } else {
         d.stallWarning.present = false;
     }
@@ -653,6 +700,7 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         l.num("load_positive_g", d.limits.limitLoadPositive);
         l.num("load_negative_g", d.limits.limitLoadNegative);
         l.num("load_flaps_g", d.limits.limitLoadFlaps);
+        l.num("mmo", d.limits.maxOperatingMach);
     }
 }
 

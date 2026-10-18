@@ -14,7 +14,8 @@ for f in avd_text avd_load avd_error_text avd_set_weather avd_reset avd_set_inpu
          avd_quick_start avd_procedure_status avd_advance avd_events avd_cockpit_count avd_cockpit_text \
          avd_cockpit_cycle avd_runway avd_state avd_cockpit avd_markings avd_altimeter_adjust avd_dg_adjust \
          avd_dg_sync avd_heading_bug avd_obs_adjust avd_nav_tune avd_nav_swap avd_com_tune avd_com_swap avd_squawk \
-         avd_xpdr_mode avd_dimmer avd_failure avd_trim_throttle avd_trim_mixture avd_compass_card avd_set_cloud avd_set_level_hold; do
+         avd_xpdr_mode avd_dimmer avd_failure avd_trim_throttle avd_trim_mixture avd_compass_card avd_set_cloud avd_reset_air \
+         avd_ai_cage avd_jet avd_flow avd_set_level_hold; do
   EXPORTS="$EXPORTS -Wl,--export=$f"
 done
 "$WASI_SDK/bin/clang++" --target=wasm32-wasip1 --sysroot="$WASI_SDK/share/wasi-sysroot" \
@@ -26,4 +27,5 @@ done
   -o "$OUT/avd.wasm"
 cp "$HERE/avd_loader.mjs" "$OUT/avd.mjs"
 cp "$REPO/data/aircraft/tupi_t180.json" "$OUT/tupi_t180.json"
+cp "$REPO/data/aircraft/top_g.json" "$OUT/top_g.json"
 ls -l "$OUT"

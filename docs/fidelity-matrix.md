@@ -13,16 +13,19 @@ Legend: ✅ implemented and tested · 🟡 partial or simplified · ⛔ not star
 | Wake turbulence | ⛔ | — | — | — |
 | Wing aerodynamics | ✅ | Strip theory, ±180° polar, flaps, ground effect, downwash lag | Stall speeds +1.6%/+2.6%; adverse yaw; stability signs | No vortex-lattice interference; no spin validation |
 | Fuselage and drag | 🟡 | Munk moment, component drag build-up (calibrated) | Cruise −3.9%, maximum +0.4% | Calibrated scale factor |
-| Compressibility | 🟡 | Korn/Lock drag rise | Unit test | Irrelevant to the C172; unvalidated for jets |
+| Compressibility | 🟡 | Korn/Lock drag rise with simple sweep theory (free-stream Mach, streamwise CL); body (fuselage, nacelle) drag rise above a critical Mach | Unit test; Top G drag rise above M0.85 | Calibrated only against published cruise figures |
 | Propeller | ✅ | BEM with Prandtl tip loss, swirl, element compressibility (2-D tables in advance angle and Mach), fixed pitch | Static rpm in range; climb −4.7%; static figure of merit in the measured range | Take-off roll still −12.5% (lift-off/transition, see validation) |
 | Slipstream | 🟡 | Axial momentum plus swirl angle on washed strips | Tail-down take-off roll | Simplified contraction |
 | Piston engine | ✅ | MAP, φ, fmep, temperatures, oil pressure, magnetos, starter | Rated power, altitude lapse, mixture | No carburettor icing, detonation, shock cooling |
-| Turboprop / jet / rotor | ⛔ | — | — | Milestones 4–6 |
+| Turbofan | 🟡 | Two-spool lag, Mattingly thrust lapse, TSFC vs Mach; windmilling below idle (~25 % N1 / 20 % N2 at cruise) with windmill relight; windmill drag neglected | Unit tests; Top G trims vs published G650ER cruise, take-off and approach figures | `tests/test_jet.cpp` |
+| Retractable gear, speedbrakes | 🟡 | Gear transit and drag area; spoiler lift fraction + drag area | Unit tests | |
+| Turboprop / rotor | ⛔ | — | — | Milestones 4–6 |
 | Fuel system | ✅ | Tanks, selector, shutoff, line volume, starvation, leaks | Scenario A/C tests | No unporting in uncoordinated flight |
 | Electrical | ✅ | Battery OCV/resistance, alternator, named loads and breakers | Depletion, VOLTS annunciator | No bus split, no avionics bus relay |
 | Vacuum | ✅ | Pump suction against rpm | Unit test | No regulator failure modes beyond pump failure |
 | Landing gear and ground | 🟡 | Struts, bristle tyres, brakes, pedal and tiller steering with actuator rate limit, hard points | Static equilibrium, tip-over, brakes | Landing roll −19% with a modelled pilot technique; no surface wetness |
 | Instruments (analog) | ✅ | Full six-pack, compass (with airframe deviation and a generated correction card), engine and system gauges, annunciators, pitot icing and heat | 37 tests | Static-port icing; instrument lighting photometry |
+| Jet avionics and protection | 🟡 | AHRS heading slaved to the magnetometer (no gimbal stops); ISA altimeter law incl. the isothermal stratosphere; trimmed-CLmax stall speeds for low-speed awareness and V-speeds; stick pusher; rudder travel limiter | `tests/test_instruments.cpp`, `tests/test_jet.cpp` | Display logic (PFD/EICAS) lives in the web host |
 | Navigation radios | 🟡 | VOR, LOC, GS, radio horizon, synthetic facilities | Geometry tests | No real navaid data; no DME, ADF or marker |
 | Glass cockpit (G1000) | ⛔ | — | — | Separate profile on the same `CockpitState` pattern |
 | Autopilot | ⛔ | (assists only: wing leveller, and a straight-and-level hold acting through stick and trim) | Assist tests | No modes, panel or servo model |
