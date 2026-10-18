@@ -149,8 +149,13 @@ Two options sit outside the presets:
   arrests any climb or descent, captures the heading and altitude, and holds
   them. It works like a two-axis autopilot with auto-trim: a small stick input
   makes the fast correction and the trim wheel integrates it away, so a power
-  change ends with the airplane retrimmed. Any stick or trim input from the
-  player overrides it, and letting go captures new references.
+  change ends with the airplane retrimmed. The trim only runs once the
+  altitude is captured, so it does not wind up while the climb or descent is
+  being arrested. Underspeed protection: closer than about 4° to the wing's
+  stall angle, the hold lowers the nose as far as it takes to keep that
+  margin. It trades height for speed instead of stalling and climbs back once
+  there is power. It never moves the throttle. Any stick or trim input from
+  the player overrides it, and letting go captures new references.
 - **Tiller handover** (`tillerHandover`, every preset). This is an input
   binding, not an assist. On the ground below 5 kt the yaw input (Q/E, the
   gamepad rudder axis) turns the nose-wheel tiller instead of the pedals,

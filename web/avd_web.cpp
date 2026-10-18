@@ -643,6 +643,7 @@ AVD_EXPORT double* avd_state() {
     s[49] = ac.parkingBrake(); s[50] = e.prop.thrust; s[51] = t.mach; s[52] = ac.fuel().totalQuantity() * 1000;
     s[53] = mToFt(t.altitudeMsl); s[54] = g->assist.report().active();
     s[55] = g->assist.report().levelHold; s[56] = g->assist.report().yawOnTiller; s[57] = ac.hasTiller();
+    s[58] = g->assist.report().underspeed;
     return s;
 }
 

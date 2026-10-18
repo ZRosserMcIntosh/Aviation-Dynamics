@@ -41,6 +41,9 @@ struct AssistConfig {
     // stick (comparable to a two-axis autopilot in heading and altitude hold
     // with auto-trim). The player's stick always wins; releasing it
     // re-captures. Off below `levelHoldMinHeight` so it never fights a flare.
+    // Underspeed protection: near the stall it gives up height (a shallow
+    // descent) rather than speed, like modern autopilots; it does not move
+    // the throttle, so the player still owns the power.
     bool levelHold = false;
     Real levelHoldMinHeight = 30;    // m above ground
     // Input binding, not an assist (on in every preset, a no-op unless the
@@ -67,6 +70,7 @@ struct AssistReport {
     Real mixtureSet = -1;    // -1 = not touched
     Real brakeAdded = 0;
     bool levelHold = false;  // straight-and-level hold engaged
+    bool underspeed = false; // ... and trading height for speed near the stall
     // The yaw input is on the tiller (an input binding; not counted as an assist).
     bool yawOnTiller = false;
     bool active() const {

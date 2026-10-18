@@ -347,3 +347,69 @@ TEST_CASE("top g: Q/E steer the nose wheel by tiller below 5 kt, by pedals above
     CHECK(!tillerFast);
     CHECK(std::abs(steerFast) <= degToRad(10) + 1e-6);
 }
+
+TEST_CASE("top g: auto-trim holds FL410 after a pitch input, and near the stall gives up height, not speed") {
+    // Trimmed, hands-off start with the trimmed elevator in the trim wheel.
+    auto start = [](Aircraft& ac, Real altFt, Real kias, int flap, bool gear) {
+        SimpleWeather atm;
+        FlatGround ground(0);
+        const TrimResult tr =
+            trimAt(ac, altFt, tasFromCas(ktToMs(kias), atm.atmosphere().at(ftToM(altFt)).density), flap, gear);
+        ac.setState(tr.state);
+        ac.prepareContext(tr.input, ground, atm);
+        ac.settleDownwash();
+        Real elevUp = 0.4;
+        for (const auto& s : ac.definition().surfaces)
+            for (const auto& p : s.panels)
+                for (const auto& c : p.controls)
+                    if (c.channel == ControlChannel::Elevator) elevUp = c.maxNegative;
+        ac.setElevatorTrim(tr.elevator * elevUp / ac.definition().controls.elevatorTrimRange);
+        return tr;
+    };
+    AssistConfig cfg = makePreset(AssistPreset::Simulation);
+    cfg.levelHold = true;
+    SimpleWeather atm;
+    FlatGround ground(0);
+    {
+        // Climbing turn, then hands off with 30% less thrust at FL410.
+        Aircraft ac(jet());
+        const TrimResult tr = start(ac, 41000, 240, 0, false);
+        FlightAssist assist(cfg);
+        PilotInput raw = tr.input;
+        Real hMin = 1e9, hMax = -1e9;
+        for (int i = 0; i < 240 * 120; ++i) {
+            raw.roll = i < 240 * 1.5 ? 0.25 : 0.0;
+            raw.pitch = i < 240 * 2 ? 0.15 : 0.0;
+            raw.throttle = i < 240 * 2 ? tr.input.throttle : 0.7 * tr.input.throttle;
+            ac.step(kDt, assist.apply(raw, ac, kDt), ground, atm);
+            if (i > 240 * 40) {
+                hMin = std::min(hMin, ac.telemetry().altitudeMsl);
+                hMax = std::max(hMax, ac.telemetry().altitudeMsl);
+            }
+        }
+        CHECK(assist.report().levelHold);
+        CHECK(!assist.report().underspeed);
+        CHECK(hMax - hMin < ftToM(20));  // held while the speed bleeds off
+        CHECK(std::abs(ac.telemetry().roll) < degToRad(1));
+    }
+    {
+        // On the approach with too little thrust to hold altitude: the hold
+        // trades height for speed and the wing never stalls.
+        Aircraft ac(jet());
+        const TrimResult tr = start(ac, 5000, 150, 2, true);
+        FlightAssist assist(cfg);
+        PilotInput raw = tr.input;
+        raw.throttle = 0.5 * tr.input.throttle;
+        bool underspeed = false;
+        int stalled = 0;
+        for (int i = 0; i < 240 * 150; ++i) {
+            ac.step(kDt, assist.apply(raw, ac, kDt), ground, atm);
+            underspeed = underspeed || assist.report().underspeed;
+            stalled = std::max(stalled, ac.telemetry().stalledStrips);
+        }
+        CHECK(underspeed);
+        CHECK(stalled == 0);
+        CHECK(ac.telemetry().verticalSpeed < 0);  // descending to keep flying speed
+        CHECK(ac.telemetry().altitudeMsl > ftToM(1000));
+    }
+}

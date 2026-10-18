@@ -796,7 +796,7 @@
       const proc = A.procedure();
       $('status').textContent = replay ? 'Replay (read-only): “Back to live” returns to the simulation.' : paused ? 'Paused — Space resumes.' : proc.status === 1 ? `Quick Start: ${proc.message}` :
         `Throttle ${(input.throttle * 100).toFixed(0)} % · mixture ${(input.mixture * 100).toFixed(0)} % · ${gamepadOn ? 'gamepad connected' : 'keyboard'}${s[49] ? ' · parking brake SET' : ''}` +
-        (s[55] ? ' · holding straight and level' : levelHold.checked ? ' · auto-trim armed' : '') + (s[56] ? ' · Q/E on the tiller' : '');
+        (s[58] ? ' · auto-trim: TOO SLOW, descending to keep flying speed' : s[55] ? ' · holding straight and level' : levelHold.checked ? ' · auto-trim armed' : '') + (s[56] ? ' · Q/E on the tiller' : '');
       if (showDebug) {
         const f = (v, d) => (v === null ? '—' : v.toFixed(d));
         const row = (n, truth, shown, unit, d = 0) => `<tr><th>${n}</th><td>${f(truth, d)}</td><td>${f(shown, d)}</td><td>${unit}</td></tr>`;

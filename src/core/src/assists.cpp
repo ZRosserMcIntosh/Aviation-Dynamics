@@ -31,6 +31,21 @@ const char* toString(AssistPreset p) {
     return "?";
 }
 
+namespace {
+
+// Smallest margin (rad) between a main-wing strip's angle of attack and its
+// stall angle; 1 when there is no wing or no airflow.
+Real wingStallMargin(const Aircraft& ac) {
+    if (ac.aeroModel().surfaceCount() == 0) return 1;
+    const AeroOutputs& a = ac.aero();
+    Real margin = 1;
+    for (int i = ac.aeroModel().firstStrip(0); i < ac.aeroModel().endStrip(0); ++i)
+        if (a.strips[i].q > 0) margin = std::min(margin, a.strips[i].stallAlpha - a.strips[i].alpha);
+    return margin;
+}
+
+}  // namespace
+
 PilotInput FlightAssist::apply(const PilotInput& raw, const Aircraft& ac, Real dt) {
     r_ = {};
     PilotInput o = raw;
@@ -103,8 +118,18 @@ PilotInput FlightAssist::apply(const PilotInput& raw, const Aircraft& ac, Real d
         }
         const Real tas = std::max(t.trueAirspeed, 15.0);
         const Real vsCmd = altitudeCaptured_ ? clamp(0.1 * (holdAltitude_ - t.altitudeMsl), -2.5, 2.5) : 0.0;
-        const Real gammaError = std::asin(clamp(vsCmd / tas, -1.0, 1.0)) - std::asin(clamp(t.verticalSpeed / tas, -1.0, 1.0));
-        const Real pitchAdd = clamp((3.0 * gammaError - 0.5 * t.omega.y) * qScale, -0.3, 0.3);
+        const Real gamma = std::asin(clamp(t.verticalSpeed / tas, -1.0, 1.0));
+        Real gammaCmd = std::asin(clamp(vsCmd / tas, -1.0, 1.0));
+        // Underspeed protection: closer than ~4 deg to the wing's stall angle
+        // the hold lowers the nose as far as it takes to keep that margin,
+        // trading height for speed instead of pitching up into the stall. It
+        // climbs back to the held altitude once there is power to do so.
+        const Real margin = wingStallMargin(ac);
+        r_.underspeed = margin < 0.07;
+        if (r_.underspeed) gammaCmd = std::min(gammaCmd, gamma + 3.0 * (margin - 0.07));
+        const Real gammaError = gammaCmd - gamma;
+        const Real gammaRate = kStandardGravity / tas * (t.loadFactor * std::cos(t.roll) - std::cos(gamma));
+        const Real pitchAdd = clamp((6.0 * gammaError - 2.0 * gammaRate - 1.5 * t.omega.y) * qScale, -0.3, 0.3);
         o.pitch = clamp(o.pitch + pitchAdd, -1.0, 1.0);
         r_.pitchAdded = pitchAdd;
     } else {
@@ -117,20 +142,15 @@ PilotInput FlightAssist::apply(const PilotInput& raw, const Aircraft& ac, Real d
         r_.rollAdded = add;
     }
     if (c_.stallPrevention && airborne && o.pitch > 0 && ac.aeroModel().surfaceCount() > 0) {
-        // Margin to the main wing's stall angle (mean strip alpha vs stall).
-        const AeroOutputs& a = ac.aero();
-        const int s0 = ac.aeroModel().firstStrip(0), s1 = ac.aeroModel().endStrip(0);
-        Real margin = 1;
-        for (int i = s0; i < s1; ++i)
-            if (a.strips[i].q > 0) margin = std::min(margin, a.strips[i].stallAlpha - a.strips[i].alpha);
-        const Real allowed = clamp((margin - 0.03) / 0.05, 0.0, 1.0);
+        const Real allowed = clamp((wingStallMargin(ac) - 0.03) / 0.05, 0.0, 1.0);
         const Real limited = std::min(o.pitch, allowed);
         r_.pitchLimited = o.pitch - limited;
         o.pitch = limited;
     }
-    if (hold) {
-        // Trim runs until the hold needs no elevator beyond the trim.
-        const Real add = clamp(o.pitch * 2.0, -1.0, 1.0);
+    if (hold && altitudeCaptured_) {
+        // Trim runs until the hold needs no elevator beyond the trim; not
+        // during the arrest (it would wind up) and never nose-up in underspeed.
+        const Real add = clamp(o.pitch * 2.0, -1.0, r_.underspeed ? 0.0 : 1.0);
         o.trimRate = clamp(o.trimRate + add, -1.0, 1.0);
         r_.trimRateAdded = add;
     } else if (c_.autoTrim && airborne && std::abs(raw.trimRate) < 1e-3) {

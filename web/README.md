@@ -93,6 +93,7 @@ Indices and fields:
 | 55 | straight-and-level hold engaged |
 | 56 | yaw input on the nose-wheel tiller (below 5 kt on the ground) |
 | 57 | aircraft has a tiller |
+| 58 | straight-and-level hold in underspeed protection (descending to keep flying speed) |
 
 ## `avd_cockpit()`: 96 doubles
 
