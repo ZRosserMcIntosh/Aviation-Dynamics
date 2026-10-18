@@ -227,6 +227,87 @@ struct Microburst {
     Vec3 velocity(const Vec3& x, Real heightAgl, Real t) const;
 };
 
+// ----------------------------------------------------------- vertical air --
+
+// One convective thermal. Mean updraft and radius follow Allen (2006, NASA
+// TM-2006-214250) with height in a convective boundary layer of depth zi:
+//   w_avg = w* (z/zi)^(1/3) (1 - 1.1 z/zi),
+//   r2 = max(10, 0.102 (z/zi)^(1/3) (1 - 0.25 z/zi) zi).
+// The radial shape is a core with a compensating sink annulus and zero net
+// mass flux, written as an axisymmetric stream function
+//   Psi = A R^2 / 2 (exp(-r^2 / 4R^2) - exp(-r^2 / R^2)),
+//   w = (1/r) dPsi/dr = A (exp(-r^2/R^2) - exp(-r^2/4R^2) / 4),
+//   u_r = -(1/r) dPsi/dz,
+// so continuity holds exactly, including the inflow at the base and the
+// outflow at the top. The updraft reaches zero at r2 (R = r2 / 1.36).
+struct Thermal {
+    Real north = 0, east = 0;     // core position at startTime (frozen frame)
+    Real strength = 1;            // multiplies the convective velocity
+    Real startTime = -1e9;        // s; life cycle sin^2 over `lifetime`
+    Real lifetime = 0;            // s; 0: steady
+};
+
+struct ThermalParams {
+    Real convectiveVelocity = 0;  // w* (m/s): 0 none, 1-2 weak-average, 3+ strong
+    Real depth = 1500;            // zi, m AGL (cloud base / inversion)
+    // Random thermal field: cores on a jittered grid with this spacing (m;
+    // 0 = Allen's density N = 0.6 area / (zi r2) at mid-layer, ~500 m for
+    // zi = 1500 m). Each cell produces thermals one after another with
+    // random strength, position and phase.
+    bool field = true;
+    Real spacing = 0;
+    // The convective turbulence that goes with the thermals (Lenschow).
+    bool convectiveTurbulence = true;
+    Real lifetime = 1200;         // s, life of each thermal in the field
+    std::uint64_t seed = 7;
+    std::vector<Thermal> thermals;  // explicit thermals, in addition
+};
+
+class ThermalField {
+public:
+    ThermalField() = default;
+    // `drift`: horizontal velocity carrying the thermals (CBL mean wind).
+    ThermalField(const ThermalParams& p, const Vec3& drift);
+    bool active() const { return p_.convectiveVelocity > 0; }
+    const ThermalParams& params() const { return p_; }
+    // Allen's mean updraft and outer radius at a height (m/s, m).
+    Real meanUpdraft(Real heightAgl) const;
+    Real outerRadius(Real heightAgl) const;
+    // Air velocity (NED) at x, height AGL and time.
+    Vec3 velocity(const Vec3& x, Real heightAgl, Real t) const;
+    // Velocity of one thermal whose core is at (cn, ce) with strength s.
+    Vec3 thermalVelocity(Real dn, Real de, Real heightAgl, Real s) const;
+
+private:
+    ThermalParams p_;
+    Vec3 drift_;
+    Real spacing_ = 0;
+};
+
+// A ridge across the wind: ridge lift near the surface and a vertically
+// propagating mountain wave aloft, from Queney's (1948) linear hydrostatic
+// solution for a Witch-of-Agnesi ridge h(x) = h0 a^2 / (x^2 + a^2):
+//   eta = h0 a (a cos(l z) - x sin(l z)) / (x^2 + a^2),  l = N / U,
+//   w = U d(eta)/dx (= U dh/dx at the surface: slope lift),
+//   u' = -U d(eta)/dz (2-D continuity).
+// x is across the ridge, measured downwind; z above the ridge base. The
+// waves fade above `waveTop` (absorbed near the tropopause) and toward the
+// ridge ends; strongly stable flow that cannot cross (N h0 / U > ~1,
+// blocking) is approximated by limiting the effective height to 0.8 U / N.
+struct Ridge {
+    Real north = 0, east = 0;     // crest centre, m NED
+    Real axis = 0;                // rad, direction along the crest line
+    Real length = 20000;          // m along the crest (ends tapered over a)
+    Real height = 400;            // h0, m above its base
+    Real halfWidth = 1500;        // a, m
+    Real baseElevation = 0;       // m MSL
+    Real stability = 0.01;        // Brunt-Väisälä frequency N, 1/s
+    Real waveTop = 9000;          // m MSL
+    // Air velocity (NED) at x / altitude, given the horizontal wind at
+    // crest height (NED).
+    Vec3 velocity(const Vec3& x, Real altitudeMsl, const Vec3& crestWind) const;
+};
+
 // FAA/TDWR wind-shear hazard index along a flight path:
 // F = (dW_x/dt) / g - w / V, with W_x the tailwind component, w the vertical
 // air velocity (+ up) and V the airspeed. F > 0.1 is hazardous

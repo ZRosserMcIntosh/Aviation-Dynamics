@@ -304,3 +304,130 @@ TEST_CASE("microburst: hazardous wind-shear F-factor on a low-level crossing") {
     }
     CHECK(fWeak < 0.1);
 }
+
+// ============================================================== vertical air ==
+
+TEST_CASE("thermals: Allen profile, zero net mass flux, exact continuity") {
+    ThermalParams tp;
+    tp.convectiveVelocity = 2.5;
+    tp.depth = 1500;
+    tp.field = false;
+    tp.thermals.push_back({0, 0, 1.0, -1e9, 0});
+    const ThermalField f(tp, {});
+    const Real z = 600;
+    // Allen: w_avg = w* (z/zi)^(1/3) (1 - 1.1 z/zi), rounded at the surface only.
+    CHECK_NEAR(f.meanUpdraft(z), 2.5 * std::cbrt(0.4) * (1 - 0.44), 0.01);
+    CHECK_NEAR(f.meanUpdraft(1400), 0, 1e-12);
+    // Mean updraft over r < r2 reproduces w_avg; zero at r2; sink outside.
+    const Real r2 = f.outerRadius(z);
+    Real flux = 0, area = 0, fluxAll = 0;
+    const int n = 400;
+    for (int i = 0; i < n; ++i) {
+        const Real r = (i + 0.5) * 6 * r2 / n, dr = 6 * r2 / n;
+        const Real w = -f.velocity({r, 0, 0}, z, 0).z;
+        fluxAll += w * kTwoPi * r * dr;
+        if (r < r2) { flux += w * kTwoPi * r * dr; area += kTwoPi * r * dr; }
+    }
+    CHECK_NEAR(flux / area, f.meanUpdraft(z), 0.01 * f.meanUpdraft(z));
+    CHECK_NEAR(-f.velocity({r2, 0, 0}, z, 0).z, 0, 1e-6);
+    CHECK(-f.velocity({1.6 * r2, 0, 0}, z, 0).z < -0.05);
+    CHECK(std::abs(fluxAll) < 0.002 * flux);  // the sink ring returns the air
+    CHECK_RANGE(-f.velocity({0, 0, 0}, z, 0).z / f.meanUpdraft(z), 2.5, 3.2);
+    // Inflow below, outflow aloft.
+    CHECK(f.velocity({80, 0, 0}, 100, 0).x < 0);
+    CHECK(f.velocity({80, 0, 0}, 1300, 0).x > 0);
+    // Continuity (central-difference gradient of the field itself).
+    for (const Vec3& x : {Vec3{30, 40, -300}, Vec3{-90, 10, -800}, Vec3{0.001, 0, -500}, Vec3{150, -20, -50}}) {
+        Vec3 v;
+        Mat3 g;
+        sampleWithGradient([&](const Vec3& y) { return f.velocity(y, -y.z, 0); }, x, v, g, 0.01);
+        CHECK(std::abs(g.m[0][0] + g.m[1][1] + g.m[2][2]) < 1e-4);
+    }
+}
+
+TEST_CASE("thermals: random field -- strong cores, mass balance, drift and life cycle") {
+    SimpleWeather::Params p;
+    p.windSpeed = 6;
+    p.windFromDirection = kPi;  // from the south: air moves north
+    p.thermals.convectiveVelocity = 2.0;
+    p.thermals.depth = 1500;
+    const SimpleWeather w(p);
+    CHECK(w.turbulence().params().convectiveVelocity == 2.0);  // convective turbulence comes along
+    const ThermalField& f = w.thermals();
+    // A 60 km traverse at 0.5 zi: strong cores, net vertical flux ~ 0.
+    Real sum = 0, maxUp = 0;
+    int up = 0;
+    const int n = 60000;
+    for (int i = 0; i < n; ++i) {
+        const Real wz = -f.velocity({i * 1.0, 0.37 * i, 0}, 750, 300).z;
+        sum += wz;
+        maxUp = std::max(maxUp, wz);
+        up += wz > 0.5;
+    }
+    CHECK(maxUp > 2.0);  // cores of ~ w* and more
+    CHECK(std::abs(sum / n) < 0.05);
+    CHECK_RANGE(static_cast<Real>(up) / n, 0.02, 0.3);  // lift covers a minority of the sky
+    // Thermals live and die: at a fixed point of the drifting airmass the
+    // field changes over a lifetime.
+    const Vec3 drift = w.boundaryLayer().wind(750, 750);
+    CHECK(drift.x > 6);
+    Real change = 0;
+    for (int i = 0; i < 200; ++i) {
+        const Vec3 y{i * 37.0, i * 11.0, 0};
+        change += std::abs(f.velocity(y, 750, 0).z - f.velocity(y + drift * 600.0, 750, 600).z);
+    }
+    CHECK(change > 1.0);
+    // A steady explicit thermal is carried with the drift, unchanged.
+    ThermalParams tp = p.thermals;
+    tp.field = false;
+    tp.thermals.push_back({0, 0, 1.0, -1e9, 0});
+    const ThermalField one(tp, drift);
+    CHECK_NEAR(length(one.velocity({20, 30, 0}, 750, 0) - one.velocity(Vec3{20, 30, 0} + drift * 90.0, 750, 90)), 0, 1e-9);
+}
+
+TEST_CASE("ridge: slope lift at the surface, lee sink, mountain wave aloft") {
+    Ridge r;
+    r.axis = kPi / 2;   // crest runs east-west
+    r.height = 400;
+    r.halfWidth = 1500;
+    r.stability = 0.01;
+    r.length = 1e6;
+    const Vec3 wind{10, 0, 0};  // 10 m/s from the south (air moves north)
+    const Real a = r.halfWidth, h0 = r.height;
+    // At the surface the flow follows the terrain: w = U dh/dx.
+    for (Real xc : {-3000.0, -1000.0, -200.0, 500.0, 2500.0}) {
+        const Real dhdx = -2 * h0 * a * a * xc / sq(xc * xc + a * a);
+        CHECK_NEAR(-r.velocity({xc, 0, 0}, 0, wind).z, 10 * dhdx, 1e-9);
+    }
+    CHECK(-r.velocity({-1000, 0, 0}, 0, wind).z > 1.5);  // windward lift
+    CHECK(-r.velocity({1000, 0, 0}, 0, wind).z < -1.5);  // lee sink
+    // Vertical wavelength 2 pi U / N: the pattern repeats.
+    const Real lz = kTwoPi * 10 / 0.01;
+    for (Real xc : {-2000.0, 0.0, 1800.0})
+        CHECK_NEAR(r.velocity({xc, 0, 0}, 700, wind).z, r.velocity({xc, 0, 0}, 700 + lz, wind).z, 1e-9);
+    // Half a vertical wavelength up the pattern is inverted: the lift sits
+    // over the lee slope (wave lift), the sink over the windward one.
+    CHECK_NEAR(-r.velocity({1000, 0, 0}, lz / 2, wind).z, -(-r.velocity({1000, 0, 0}, 0, wind).z), 1e-9);
+    CHECK(-r.velocity({1000, 0, 0}, lz / 2, wind).z > 1.5);
+    // The phase tilts upwind with height: at a quarter wavelength the
+    // streamlines are displaced up upwind of the crest, down over it.
+    CHECK(-r.velocity({-2 * a, 0, 0}, lz / 4, wind).z > 0);
+    CHECK(-r.velocity({0, 0, 0}, lz / 4, wind).z < -1.5);
+    // 2-D continuity.
+    for (const Vec3& x : {Vec3{-800, 0, -300}, Vec3{1200, 0, -2500}}) {
+        Vec3 v;
+        Mat3 g;
+        sampleWithGradient([&](const Vec3& y) { return r.velocity(y, -y.z, wind); }, x, v, g, 0.01);
+        CHECK(std::abs(g.m[0][0] + g.m[1][1] + g.m[2][2]) < 1e-6);
+    }
+    // Wind along the crest, a calm day, or high above the absorbing layer: nothing.
+    CHECK(length(r.velocity({-1000, 0, 0}, 0, {0, 10, 0})) < 1e-12);
+    CHECK(length(r.velocity({-1000, 0, 0}, 0, {0.5, 0, 0})) < 1e-12);
+    CHECK(length(r.velocity({-1000, 0, 0}, 12000, wind)) < 1e-12);
+    // Wind from the other side: lift moves to the other slope.
+    CHECK(-r.velocity({1000, 0, 0}, 0, {-10, 0, 0}).z > 1.5);
+    // Strongly stable, weak wind: blocked, the height is limited (N h0 / U <= 0.8).
+    Ridge b = r;
+    b.stability = 0.03;
+    CHECK(std::abs(r.velocity({-1000, 0, 0}, 0, {4, 0, 0}).z) > std::abs(b.velocity({-1000, 0, 0}, 0, {4, 0, 0}).z));
+}

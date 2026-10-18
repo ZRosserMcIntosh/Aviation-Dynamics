@@ -120,6 +120,10 @@ struct SimpleWeatherParams {
     TurbulenceParams turbulence;     // mechanical turbulence is on by default
     std::vector<DiscreteGust> gusts;
     std::vector<Microburst> microbursts;
+    // Convection: thermals (and the convective turbulence that goes with
+    // them) when thermals.convectiveVelocity > 0.
+    ThermalParams thermals;
+    std::vector<Ridge> ridges;       // ridge lift and mountain waves
     // One stratiform cloud layer (m MSL) with its liquid water content
     // (g/m^3; stratus ~0.1-0.5, cumulus up to ~1-2). Supercooled where the
     // air is below 0 C: an icing layer. cloudTop <= cloudBase: no cloud.
@@ -140,12 +144,14 @@ public:
     Vec3 meanWindAt(Real heightAgl) const;
     const BoundaryLayer& boundaryLayer() const { return boundaryLayer_; }
     const AtmosphericTurbulence& turbulence() const { return turbulence_; }
+    const ThermalField& thermals() const { return thermals_; }
 
 private:
     Params p_;
     StandardAtmosphere atm_;
     BoundaryLayer boundaryLayer_;
     AtmosphericTurbulence turbulence_;
+    ThermalField thermals_;
 };
 
 }  // namespace avd

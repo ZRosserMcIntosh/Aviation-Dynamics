@@ -19,6 +19,9 @@
 //  - Discrete gusts: FAR 25.341 (1-cosine), MIL-F-8785C (ramp).
 //  - Microburst: Oseguera & Bowles, NASA TM-100632 (1988); hazard index
 //    F-factor: Bowles (1990), FAA AC 120-41 / TDWR.
+//  - Thermals: Allen, NASA TM-2006-214250 (2006), mean updraft and radius.
+//  - Mountain waves: Queney (1948); Durran, "Mountain waves and downslope
+//    winds" (1990), linear hydrostatic flow over a Witch of Agnesi.
 //  - von Kármán spectrum: E(k) ∝ (k/k_e)^4 / (1 + (k/k_e)^2)^(17/6),
 //    k_e = 1 / (1.339 L).
 #include "avd/wind.hpp"
@@ -350,6 +353,134 @@ Vec3 Microburst::velocity(const Vec3& x, Real z, Real t) const {
     const Real radialOverR = 0.5 * lam * (q > 1e-12 ? -std::expm1(-q) / q : 1.0) * outflowShape(z, zs, eps);
     const Real wUp = -lam * std::exp(-q) * (zs * -std::expm1(-z / zs) - eps * -std::expm1(-z / eps));
     return {radialOverR * dx, radialOverR * dy, -wUp};
+}
+
+// ============================================================ vertical air ==
+
+namespace {
+// Updraft zero crossing of exp(-q) - exp(-q/4)/4: q = 4 ln 4 / 3.
+const Real kThermalZeroRadius = std::sqrt(4 * std::log(4.0) / 3);
+// Mean of the shape over r < r2 as a fraction of A.
+Real thermalMeanFraction() {
+    const Real q0 = sq(kThermalZeroRadius);
+    return (std::exp(-q0 / 4) - std::exp(-q0)) / q0;
+}
+std::uint64_t mix(std::uint64_t a, std::uint64_t b) {
+    SplitMix m{a * 0x9E3779B97F4A7C15ull ^ (b + 0x632BE59BD9B4E019ull)};
+    return m.next();
+}
+Real unit(std::uint64_t h) { return static_cast<Real>(h >> 11) * (1.0 / 9007199254740992.0); }
+}  // namespace
+
+ThermalField::ThermalField(const ThermalParams& p, const Vec3& drift) : p_(p), drift_{drift.x, drift.y, 0} {
+    p_.depth = std::max(p_.depth, 100.0);
+    spacing_ = p_.spacing > 0 ? p_.spacing : std::sqrt(p_.depth * outerRadius(0.5 * p_.depth) / 0.6);
+}
+
+Real ThermalField::meanUpdraft(Real z) const {
+    const Real zi = p_.depth;
+    if (z <= 0 || z >= zi / 1.1) return 0;
+    // Allen's profile, rounded off at the surface (the inflow layer) so the
+    // convergence below the core stays finite.
+    return p_.convectiveVelocity * std::cbrt(z / zi) * (1 - 1.1 * z / zi) * -std::expm1(-z / (0.05 * zi));
+}
+
+Real ThermalField::outerRadius(Real z) const {
+    const Real zi = p_.depth;
+    const Real zz = clamp(z, 0.0, zi);
+    return std::max(10.0, 0.102 * std::cbrt(zz / zi) * (1 - 0.25 * zz / zi) * zi);
+}
+
+Vec3 ThermalField::thermalVelocity(Real dn, Real de, Real z, Real s) const {
+    if (s == 0 || z <= 0 || z >= p_.depth / 1.1) return {};
+    // Stream function Psi = A R^2/2 (e4 - e1); A and R vary with height.
+    auto ar = [&](Real zz, Real& a, Real& rr) {
+        rr = outerRadius(zz) / kThermalZeroRadius;
+        a = s * meanUpdraft(zz) / thermalMeanFraction();
+    };
+    Real a, rr;
+    ar(z, a, rr);
+    const Real r2 = dn * dn + de * de;
+    const Real q = r2 / (rr * rr);
+    const Real e1 = std::exp(-q), e4 = std::exp(-q / 4);
+    if (q > 64) return {};
+    const Real wUp = a * (e1 - 0.25 * e4);
+    // dPsi/dz = 1/2 (A R^2)' (e4 - e1) + 1/2 A R^2 R' (r^2 / R^3)(e4/2 - 2 e1).
+    const Real h = 0.5;
+    Real ap, rp, am, rm;
+    ar(z + h, ap, rp);
+    ar(std::max(z - h, 1e-6), am, rm);
+    const Real dz = z + h - std::max(z - h, 1e-6);
+    const Real dAR2 = (ap * rp * rp - am * rm * rm) / dz;
+    const Real dR = (rp - rm) / dz;
+    const Real e4m1 = std::expm1(-q / 4) - std::expm1(-q);  // e4 - e1 without cancellation
+    const Real dPsi = 0.5 * dAR2 * e4m1 + 0.5 * a * rr * rr * dR * (r2 / (rr * rr * rr)) * (0.5 * e4 - 2 * e1);
+    // u_r = -(1/r) dPsi/dz; as a vector: -(dPsi/dz) / r^2 * (dn, de). On the
+    // axis Psi -> 3/8 A r^2, so the limit is -3/8 dA/dz.
+    const Real k = r2 > 1e-8 ? -dPsi / r2 : -0.375 * (ap - am) / dz;
+    return {k * dn, k * de, -wUp};
+}
+
+Vec3 ThermalField::velocity(const Vec3& x, Real z, Real t) const {
+    if (!active() || z <= 0 || z >= p_.depth / 1.1) return {};
+    const Vec3 xf = x - drift_ * t;
+    Vec3 v;
+    for (const Thermal& th : p_.thermals) {
+        Real s = th.strength;
+        if (th.lifetime > 0) {
+            const Real ph = (t - th.startTime) / th.lifetime;
+            s *= ph > 0 && ph < 1 ? sq(std::sin(kPi * ph)) : 0.0;
+        } else if (t < th.startTime) {
+            s = 0;
+        }
+        v += thermalVelocity(xf.x - th.north, xf.y - th.east, z, s);
+    }
+    if (p_.field) {
+        const Real d = spacing_;
+        const auto ci = static_cast<long long>(std::floor(xf.x / d)), cj = static_cast<long long>(std::floor(xf.y / d));
+        for (long long i = ci - 1; i <= ci + 1; ++i)
+            for (long long j = cj - 1; j <= cj + 1; ++j) {
+                const std::uint64_t cell = mix(mix(p_.seed, static_cast<std::uint64_t>(i)), static_cast<std::uint64_t>(j));
+                // Each cell runs successive thermals with a random phase;
+                // a new one starts at a new place when the last dies.
+                const Real life = std::max(p_.lifetime, 1.0);
+                const Real ph = t / life + unit(mix(cell, 1));
+                const auto n = static_cast<std::uint64_t>(static_cast<long long>(std::floor(ph)));
+                const std::uint64_t th = mix(cell, n + 17);
+                const Real s = (0.6 + 0.8 * unit(mix(th, 2))) * sq(std::sin(kPi * (ph - std::floor(ph))));
+                const Real cn = (static_cast<Real>(i) + 0.15 + 0.7 * unit(mix(th, 3))) * d;
+                const Real ce = (static_cast<Real>(j) + 0.15 + 0.7 * unit(mix(th, 4))) * d;
+                v += thermalVelocity(xf.x - cn, xf.y - ce, z, s);
+            }
+    }
+    return v;
+}
+
+Vec3 Ridge::velocity(const Vec3& x, Real altitudeMsl, const Vec3& crestWind) const {
+    const Vec3 along{std::cos(axis), std::sin(axis), 0};
+    Vec3 n{-along.y, along.x, 0};
+    Real u = dot(crestWind, n);
+    if (u < 0) { n = -n; u = -u; }
+    const Real z = altitudeMsl - baseElevation;
+    if (z < 0 || u < 1.0 || height <= 0 || halfWidth <= 0 || stability <= 0) return {};
+    const Vec3 d{x.x - north, x.y - east, 0};
+    const Real xc = dot(d, n);       // across, downwind positive
+    const Real yc = dot(d, along);   // along the crest
+    // Fades: light cross-wind, ridge ends, absorbing layer aloft.
+    const Real ends = 1 - smoothstep(0.5 * length, 0.5 * length + halfWidth, std::abs(yc));
+    const Real top = 1 - smoothstep(waveTop - 1000, waveTop, altitudeMsl);
+    const Real fade = smoothstep(1.0, 3.0, u) * ends * top;
+    if (fade <= 0) return {};
+    const Real a = halfWidth;
+    const Real h0 = std::min(height, 0.8 * u / stability);  // blocking limit
+    const Real l = stability / u;
+    const Real c = std::cos(l * z), s = std::sin(l * z);
+    const Real den = xc * xc + a * a;
+    const Real detadx = h0 * a * ((xc * xc - a * a) * s - 2 * a * xc * c) / (den * den);
+    const Real detadz = h0 * a * l * (-a * s - xc * c) / den;
+    const Real wUp = u * detadx * fade;
+    const Real du = -u * detadz * fade;
+    return {n.x * du, n.y * du, -wUp};
 }
 
 Real windShearHazardFactor(Real tailwindRate, Real verticalAirVelocity, Real airspeed) {

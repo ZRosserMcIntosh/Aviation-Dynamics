@@ -153,6 +153,72 @@ about 55 kt and 250 m, more sink than the airplane can out-climb.
 **Shear layers.** Frontal and low-level-jet shear are expressed as
 closely spaced `windsAloft` levels (see above).
 
+## Vertical air
+
+**Thermals** (`thermals`, active when `convectiveVelocity` w* > 0). The
+mean updraft and the outer radius follow Allen (2006, NASA TM-2006-214250)
+with height in a convective layer of depth zi:
+
+    w_avg = w* (z/zi)^(1/3) (1 − 1.1 z/zi),   r2 = max(10, 0.102 (z/zi)^(1/3) (1 − 0.25 z/zi) zi)
+
+Each thermal is an axisymmetric stream function. It has a core and a
+compensating sink annulus with zero net mass flux:
+
+    Ψ = A R²/2 (e^{−r²/4R²} − e^{−r²/R²}),   w = (1/r) ∂Ψ/∂r,   u_r = −(1/r) ∂Ψ/∂z
+
+Continuity therefore holds exactly. That includes the inflow toward the base
+of a thermal and the outflow under the inversion, which a "w only" model
+lacks. The updraft reaches zero at r2. Its mean inside r2 equals Allen's
+w_avg, and the peak is about 3 w_avg. The profile is rounded off over the
+bottom 5% of the layer, so the convergence below the core stays finite.
+
+The **random field** puts cores on a jittered grid at Allen's density,
+N = 0.6 · area / (zi r2) at mid-layer, which is about 500 m spacing for
+zi = 1500 m. Each cell produces thermals one after another. Each has a
+random strength (0.6–1.4), a random position, and a sin² life cycle
+(`lifetime`, 20 min by default). When one dies the next rises somewhere else
+in the cell. The whole field drifts with the mean wind at mid-layer.
+Explicit `thermals` (steady, or with their own life cycle) can be added, for
+example a reliable thermal over a hangar roof or a ploughed field.
+The **convective turbulence** of the layer (Lenschow σ, above) is switched on
+with the thermals unless `convectiveTurbulence` is false.
+
+*Checks:*
+
+- the mean updraft inside r2 equals Allen's w_avg, w = 0 at r2, sink outside;
+- the net flux over a 6 r2 disc is under 0.2% of the core flux;
+- the gradient is trace-free;
+- over a 60 km traverse the field has cores of at least w*, no net vertical
+  flux, and lift over a minority of the sky;
+- thermals are carried by the drift and they change over a lifetime;
+- a C172 crossing a 3 m/s core climbs 1.3 m/s and then meets the sink ring.
+
+**Ridges and mountain waves** (`ridges`). Queney's (1948) linear hydrostatic
+solution for a Witch-of-Agnesi ridge h = h0 a²/(x² + a²):
+
+    η = h0 a (a cos(lz) − x sin(lz)) / (x² + a²),   l = N/U
+    w = U ∂η/∂x,   u′ = −U ∂η/∂z
+
+Here x is across the ridge and measured downwind, z is height above the ridge
+base, U is the cross-ridge wind at crest height, and N is the
+Brunt–Väisälä frequency (`stability`, 0.01 s⁻¹ typical). One model gives:
+
+- **ridge lift**: at the surface w = U dh/dx exactly, lift on the windward
+  slope and sink in the lee;
+- **mountain waves** aloft, with vertical wavelength 2πU/N and phase lines
+  tilting upwind. Half a wavelength up, the lift sits over the lee slope.
+
+The waves fade at the ridge ends (over one half-width), above `waveTop`
+(where the tropopause absorbs them), and in cross-winds under about 3 m/s.
+Flow that is too stable to cross the ridge (N h0/U > about 1, blocking) is
+approximated by limiting the effective height to 0.8 U/N. The ridge is an
+atmospheric object only. Its geometry should match the terrain of the world
+tile (for São Paulo: the Serra da Cantareira north of SBMT, the Serra do Mar
+to the south).
+
+Not modelled yet: trapped lee waves and rotors, which need a two-layer
+Scorer-parameter solution. Also absent is cloud suck under cumulus.
+
 ## Tests
 
 `tests/test_wind.cpp` checks:

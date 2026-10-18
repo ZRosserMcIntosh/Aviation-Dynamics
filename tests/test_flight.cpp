@@ -318,6 +318,36 @@ TEST_CASE("flight: a vertical 1-cosine gust gives the Pratt gust load factor") {
     CHECK_RANGE(dnMax / pratt, 1.0, 1.35);
 }
 
+TEST_CASE("flight: a thermal lifts the airplane through the air") {
+    // A strong explicit thermal (w* 3 m/s, zi 1800 m) on the track at
+    // 3000 ft AGL. Holding airspeed at fixed power, the airplane climbs
+    // through the core and sinks in the ring around it.
+    SimpleWeather::Params wp;
+    wp.turbulence.mechanical = false;
+    Rig probe(100, ftToM(3000), 0, &wp);
+    const Vec3 p0 = probe.ac.telemetry().positionNed;
+    const Real hdg = probe.ac.telemetry().heading;
+    wp.thermals.convectiveVelocity = 3;
+    wp.thermals.depth = 1800;
+    wp.thermals.field = false;
+    wp.thermals.thermals.push_back({p0.x + 1500 * std::cos(hdg), p0.y + 1500 * std::sin(hdg), 1.0, -1e9, 0});
+    wp.thermals.convectiveTurbulence = false;  // would mask the single core
+    Rig r(100, ftToM(3000), 0, &wp);
+    r.pilot.lateral = TestPilot::Lateral::WingsLevel;
+    Real maxVs = 0, minVs = 0, maxUp = 0;
+    for (int i = 0; i < 60 * 240; ++i) {
+        r.ac.step(kDefaultDt, r.pilot.update(r.ac, kDefaultDt), r.ground, r.atm);
+        maxVs = std::max(maxVs, r.ac.telemetry().verticalSpeed);
+        minVs = std::min(minVs, r.ac.telemetry().verticalSpeed);
+        maxUp = std::max(maxUp, -r.ac.telemetry().air.wind.z);
+    }
+    const Real wPeak = -ThermalField(wp.thermals, {}).thermalVelocity(0, 0, ftToM(3000), 1).z;
+    CHECK_NEAR(maxUp, wPeak, 0.3 * wPeak);  // flew through the core
+    CHECK(maxVs > 0.4 * wPeak);              // and was carried up
+    CHECK(minVs < -0.15);                    // then the (broad, weaker) sink ring
+    CHECK(!r.ac.faulted());
+}
+
 TEST_CASE("flight: fuel burn reduces mass exactly and moves the CG forward") {
     Rig r(100, 1500);
     const Real m0 = r.ac.massProperties().mass, f0 = r.ac.fuel().totalQuantity() + r.ac.fuel().lineQuantity();

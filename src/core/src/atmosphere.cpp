@@ -159,13 +159,24 @@ BoundaryLayerParams boundaryLayerParams(const SimpleWeatherParams& p) {
     b.aloft = p.windsAloft;
     return b;
 }
+
+TurbulenceParams turbulenceParams(const SimpleWeatherParams& p) {
+    TurbulenceParams t = p.turbulence;
+    if (p.thermals.convectiveVelocity > 0 && p.thermals.convectiveTurbulence) {
+        t.convectiveVelocity = p.thermals.convectiveVelocity;
+        t.convectiveDepth = p.thermals.depth;
+    }
+    return t;
+}
 }  // namespace
 
 SimpleWeather::SimpleWeather(const Params& p)
     : p_(p),
       atm_(p.conditions),
       boundaryLayer_(boundaryLayerParams(p)),
-      turbulence_(p.turbulence, boundaryLayer_.surfaceFlowHeading(), boundaryLayer_.frictionVelocity()) {}
+      turbulence_(turbulenceParams(p), boundaryLayer_.surfaceFlowHeading(), boundaryLayer_.frictionVelocity()),
+      // Thermals drift with the mean wind in the middle of the convective layer.
+      thermals_(p.thermals, boundaryLayer_.wind(0.5 * p.thermals.depth, p.groundElevation + 0.5 * p.thermals.depth)) {}
 
 Vec3 SimpleWeather::meanWindAt(Real agl) const {
     return boundaryLayer_.wind(agl, p_.groundElevation + agl) + Vec3{0, 0, -p_.updraft};
@@ -191,14 +202,21 @@ AirSample SimpleWeather::sample(const Vec3& positionNed, Real altitudeMsl, Real 
         s.wind += u;
         s.windGradient = s.windGradient + g;
     }
-    // Discrete events: analytic fields, gradient by central differences.
-    if (!p_.gusts.empty() || !p_.microbursts.empty()) {
+    // Discrete events, thermals and ridges: analytic fields, gradient by
+    // central differences.
+    if (!p_.gusts.empty() || !p_.microbursts.empty() || thermals_.active() || !p_.ridges.empty()) {
         const Vec3 adv = boundaryLayer_.wind(p_.referenceHeight, p_.groundElevation + p_.referenceHeight);
         auto events = [&](const Vec3& x) {
-            const Real h = agl - (x.z - positionNed.z);
+            const Real dz = x.z - positionNed.z;
+            const Real h = agl - dz;
             Vec3 v;
             for (const DiscreteGust& g : p_.gusts) v += g.velocity(x, time, adv);
             for (const Microburst& m : p_.microbursts) v += m.velocity(x, h, time);
+            v += thermals_.velocity(x, h, time);
+            for (const Ridge& r : p_.ridges) {
+                const Real crest = r.baseElevation + r.height;
+                v += r.velocity(x, altitudeMsl - dz, boundaryLayer_.wind(crest - p_.groundElevation, crest));
+            }
             return v;
         };
         Vec3 v;
