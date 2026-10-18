@@ -57,3 +57,28 @@ Exit criteria:
   note;
 - the SBMT circuit flies on real terrain;
 - CI is green on all platforms.
+
+## Playable backlog (ordered)
+
+What the browser test bed (zrossermcintosh.com/sao-paulo/flying) needs, in
+the order each step's physics depends on the one before. Every step ships to
+the site when it is done.
+
+| # | Step | Depends on | Status |
+|---|---|---|---|
+| 1 | Load sheet (fuel and payload, limits, CG envelope); Congonhas 35L default; km/h and mph readouts; jet fixes (fuel starvation, gear handle) | — | ✅ shipped |
+| 2 | Weather on the aircraft and the ground: merge the wind branch (boundary layer, winds aloft, MIL-HDBK-1797 turbulence, gusts, microbursts, thermals, ridge lift); fix its span-gradient and microburst-height bugs; wind-aware trim and spawns (crab on final); wind display (vector, drift, track); turbulence visible in the streamlines; **wet and flooded runways** (rain, water depth, braking action, hydroplaning above 9·√p kt) | — | next |
+| 3 | Aerodynamics I: consistent simple-sweep strip frame and the downwash bug; true section CLmax (remove the compensating flap gains); finite-wing post-stall drag | — | |
+| 4 | Aerodynamics II: nonlinear lifting line (span loading, tip stall, pitch-up, roll damping); dynamic stall | 3 | |
+| 5 | Navigation: pick a destination airport and get its real ILS tuned and a GPS route (flight plan, legs, CDI/ND); real airport, runway and ILS data for Brazil (source and licence to settle: AIP Brasil / DECEA, OurAirports) | — | |
+| 6 | Clickable cockpit: first-person mouse look and a pointer on every switch, knob and lever that the core models (fuel cut-off cuts the fuel); few key bindings, the rest by clicking | — | |
+| 7 | Synthesized sound per type (piston, turboprop, turbofan, afterburning turbojet) from the engine states | 8–10 for the new types | |
+| 8 | Turboprop and multi-engine (Milestone 4): constant-speed propeller, feathering, beta and reverse, engine-out and Vmc; **Pilatus PC-12**, **Beechcraft King Air 350** | 3 | |
+| 9 | Structural loads, in-flight failure (limit/ultimate, flutter, surfaces and wings separating), crash structure (gear collapse, crush, wing and engine separation), crash dummies (HIC, DRI, chest g; survival probability), crash report | 4 | |
+| 10 | Supersonic aerodynamics (Milestone 5): wave drag, shock-induced separation, Mach tuck, buffet, aerodynamic heating; mixed-compression inlets and afterburning turbojets; **Lockheed SR-71** (inlet unstart, Mach 3.2) | 4 | |
+| 11 | Post-stall and thrust vectoring: high-alpha aerodynamics, 3D thrust vectoring, departure and recovery; **Sukhoi Su-35S** (Cobra, Kulbit) | 4, 10 | |
+| 12 | Roster: Phenom 300E, Citation CJ4, Learjet 45, CRJ, E175/E195-E2, 737-800, A320, 747-400, Extra 300, J-3 Cub, Stearman, DC-3, a helicopter (Milestone 6) — each with a weight-and-balance data sheet, structural limits and a validation report | the steps its physics needs | |
+| — | 3D buildings on the flying page (light, streamed by tile) | the São Paulo World export (blocked on data, see 2b.3) | blocked |
+
+Data honesty applies to every new type: published figures with their source;
+military types (SR-71, Su-35S) will carry many `estimated` fields, and say so.
