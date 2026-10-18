@@ -32,7 +32,9 @@ call is clamped to 0.25 s. It returns the number of steps run.
 |---|---|
 | `avd_reset(mode)` | Reset scenario: 0 cold and dark on runway 12, 1 engine running on runway 12, 2 on final for runway 12 (3 km), 3 cruising over the city. Sets NAV 1 to 110.30 active and 113.70 standby, OBS and bug 122, COM standby 132.80, transponder ALT |
 | `avd_reset_air(east, north, heightAboveField, headingDeg, kias, flap)` | Trimmed, level, hands-off spawn anywhere in the world (ENU metres from the world anchor, height in m above the field elevation, true heading, 55–350 KIAS, flap detent 0–3). Read the levers with `avd_trim_throttle()` / `avd_trim_mixture()` |
-| `avd_set_weather(windMs, windFromDeg, turbulenceMs, isaDevC, humidity)` | Weather (rebuilds the field) |
+| `avd_set_weather(windMs, windFromDeg, turbulenceMs, isaDevC, humidity)` | Weather (rebuilds the field). The wind is the airfield report; it brings its own mechanical turbulence, weaker wind and stronger gusts over the city around SBMT, backing with height, and Cantareira ridge lift. `turbulenceMs` is an extra RMS on top |
+| `avd_set_wind_detail(severity, wStarMs, ziM)` | Turbulence class (0 none, 1 light, 2 moderate, 3 severe; MIL-HDBK-1797) and thermals (w*, convective-layer depth m AGL; w* 0 = none) |
+| `avd_set_wind_hazard(kind)` | 0 none, 1 microburst 2 km before the runway in use (12 m/s outflow), 2 gust front from the SW reaching the field in ~5 min; placed at the current sim time |
 | `avd_set_input(pitch, roll, yaw, throttle, mixture, brakeL, brakeR, trimRate, starter)` | Raw pilot input in −1..1 or 0..1. Starter is held while 1. On an aircraft with a tiller, yaw turns the tiller on the ground below 5 kt |
 | `avd_set_assist(p)` | 0 Arcade, 1 Sport, 2 Simulation |
 | `avd_set_airport(id)` / `avd_airport_text()` | Spawn airport: 0 Campo de Marte (SBMT, runway 12), 1 Congonhas (SBSP, runway 35L, the default). Kept across aircraft loads; takes effect at the next reset. Text: `ICAO\|name\|runway\|reciprocal`. `avd_runway()` describes the runway in use |

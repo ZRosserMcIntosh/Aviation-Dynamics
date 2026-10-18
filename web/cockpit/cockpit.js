@@ -236,11 +236,20 @@
     $('quickstart').addEventListener('click', () => { A.avd_quick_start(); log('Quick Start: working through the checklist…'); });
     function applyWeather() {
       A.avd_set_weather(+$('wind').value * 0.5144, +$('winddir').value, +$('turb').value, +$('temp').value, 0.6);
+      // Thermals: w* with a convective layer 1500 m deep.
+      A.avd_set_wind_detail(+$('turbclass').value, +$('thermals').value, 1500);
       $('wind-v').textContent = `${$('wind').value} kt from ${String($('winddir').value).padStart(3, '0')}°`;
       $('turb-v').textContent = (+$('turb').value).toFixed(1) + ' m/s';
+      $('thermals-v').textContent = +$('thermals').value ? (+$('thermals').value).toFixed(2) + ' m/s' : 'off';
       $('temp-v').textContent = 'ISA ' + (+$('temp').value >= 0 ? '+' : '') + $('temp').value + ' °C';
     }
-    for (const id of ['wind', 'winddir', 'turb', 'temp']) $(id).addEventListener('input', applyWeather);
+    for (const id of ['wind', 'winddir', 'turb', 'temp', 'thermals']) $(id).addEventListener('input', applyWeather);
+    $('turbclass').addEventListener('change', applyWeather);
+    $('hazard').addEventListener('change', () => {
+      A.avd_set_wind_hazard(+$('hazard').value);
+      log(['Wind hazard cleared.', 'Microburst 2 km before runway 12: 12 m/s outflow, strong downdraft.',
+           'Gust front from the south-west, over the field in about 5 minutes: 27 kt from 225°.'][+$('hazard').value]);
+    });
     // Icing layer: stratus from 1,500 to 3,600 ft above the field, 0.4 g/m^3 of
     // cloud water. Supercooled when the temperature slider makes it freezing.
     function applyCloud() {

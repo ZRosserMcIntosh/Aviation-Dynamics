@@ -148,4 +148,33 @@ B.avd_reset(2);
 for (let i = 0; i < 60; ++i) B.avd_advance(1 / 60);
 const cg = B.cockpitState();
 check(cg[32] === 110.5 && cg[37] === 1 && cg[40] === 1 && Math.abs(cg[38]) < 0.1, `Congonhas 35L final: ILS 110.50 received (CDI ${cg[38].toFixed(2)}, GS ${cg[41].toFixed(2)})`);
+// Wind physics through the page API: a hands-off approach flown into the
+// microburst on final loses its airspeed and sinks far faster than the
+// 3 deg path; moderate turbulence shakes the airspeed.
+A.avd_set_wind_hazard(1);
+A.avd_reset(2);
+A.avd_set_input(0, 0, 0, A.avd_trim_throttle(), A.avd_trim_mixture(), 0, 0, 0, 0);
+let minIas = 1e9, maxSink = 0;
+for (let i = 0; i < 75 * 4; ++i) {
+  A.avd_advance(0.25);
+  c = A.cockpitState();
+  minIas = Math.min(minIas, c[49]);
+  maxSink = Math.max(maxSink, -c[53]);
+}
+check(minIas < 55 && maxSink > 900, `microburst on final: CAS down to ${minIas.toFixed(1)} kt, sink ${maxSink.toFixed(0)} fpm`);
+A.avd_set_wind_hazard(0);
+A.avd_set_wind_detail(2, 0, 1500);
+A.avd_reset(3);
+A.avd_set_input(0, 0, 0, A.avd_trim_throttle(), A.avd_trim_mixture(), 0, 0, 0, 0);
+let lo = 1e9, hi = 0;
+for (let i = 0; i < 20 * 4; ++i) {
+  A.avd_advance(0.25);
+  c = A.cockpitState();
+  lo = Math.min(lo, c[49]);
+  hi = Math.max(hi, c[49]);
+}
+check(hi - lo > 4, `moderate turbulence: CAS ${lo.toFixed(1)}-${hi.toFixed(1)} kt`);
+A.avd_set_wind_detail(0, 2, 1500);  // thermals: just runs
+A.avd_advance(1);
+check(Number.isFinite(A.cockpitState()[49]), 'thermals over the city');
 process.exit(failures ? 1 : 0);

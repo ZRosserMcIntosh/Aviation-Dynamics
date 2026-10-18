@@ -222,7 +222,7 @@ TEST_CASE("atmosphere: boundary-layer wind profile and direction convention") {
     const Vec3 v10 = w.meanWindAt(10);
     CHECK_NEAR(v10.x, -10, 1e-9);  // air moves south
     CHECK_NEAR(v10.y, 0, 1e-9);
-    CHECK(w.meanWindAt(300).x < -14);  // stronger aloft (1/7 power law: ~16 m/s)
+    CHECK(w.meanWindAt(300).x < -14);  // stronger aloft (log law over z0 = 0.03 m: ~15.9 m/s)
     CHECK(w.meanWindAt(2).x > -10);
     const AirSample s = w.sample({0, 0, -100}, 100, 0);
     CHECK(s.windGradient.m[0][2] > 0);  // wind magnitude grows upward (-z)

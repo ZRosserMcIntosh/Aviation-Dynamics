@@ -6,7 +6,7 @@
 //  - Buck, A. L. (1981, updated 1996): saturation vapour pressure over water.
 //  - Moist-air density: rho = (p - e)/(Rd T) + e/(Rv T) (ideal-gas mixture).
 //  - Sutherland's law with USSA-1976 constants (beta = 1.458e-6, S = 110.4 K).
-//  - von Kármán spectrum: E(k) ∝ (kL)^4 / (1 + (kL)^2)^(17/6) (MIL-HDBK-1797).
+//  - Wind and turbulence: see wind.cpp.
 #include "avd/atmosphere.hpp"
 
 #include <cstdint>
@@ -58,18 +58,6 @@ const std::array<Real, 8>& standardBasePressures() {
     static const std::array<Real, 8> pb = basePressures(isa::kSeaLevelPressure, 0);
     return pb;
 }
-
-// SplitMix64: tiny, portable, deterministic across platforms.
-struct SplitMix {
-    std::uint64_t s;
-    std::uint64_t next() {
-        std::uint64_t z = (s += 0x9E3779B97F4A7C15ull);
-        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
-        z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
-        return z ^ (z >> 31);
-    }
-    Real uniform() { return static_cast<Real>(next() >> 11) * (1.0 / 9007199254740992.0); }
-};
 
 }  // namespace
 
@@ -157,64 +145,113 @@ AirState StandardAtmosphere::at(Real z) const {
 
 // ---------------------------------------------------------------------------
 
-TurbulenceField::TurbulenceField(const Params& p) : p_(p) {
-    if (p.intensity <= 0 || p.modes <= 0 || p.scaleLength <= 0) return;
-    SplitMix rng{p.seed};
-    const Real L = p.scaleLength;
-    const Real kMin = 0.05 / L;
-    const Real kMax = kTwoPi / std::max(p.minWavelength, 0.5);
-    const int n = p.modes;
-    const Real ratio = std::pow(kMax / kMin, 1.0 / n);
-    Real energySum = 0;
-    modes_.reserve(static_cast<std::size_t>(n));
-    for (int i = 0; i < n; ++i) {
-        const Real k0 = kMin * std::pow(ratio, i), k1 = k0 * ratio;
-        const Real k = std::sqrt(k0 * k1);
-        const Real kl = k * L;
-        const Real e = std::pow(kl, 4) / std::pow(1 + kl * kl, 17.0 / 6.0) * (k1 - k0);  // ∝ E(k) dk
-        // Random direction for k (uniform on the sphere) and a random unit
-        // velocity direction perpendicular to it (divergence-free mode).
-        const Real cz = 2 * rng.uniform() - 1, az = kTwoPi * rng.uniform();
-        const Real sz = std::sqrt(1 - cz * cz);
-        const Vec3 khat{sz * std::cos(az), sz * std::sin(az), cz};
-        const Vec3 helper = std::abs(khat.z) < 0.9 ? Vec3{0, 0, 1} : Vec3{1, 0, 0};
-        const Vec3 e1 = normalized(cross(khat, helper));
-        const Vec3 e2 = cross(khat, e1);
-        const Real ang = kTwoPi * rng.uniform();
-        modes_.push_back({khat * k, e1 * std::cos(ang) + e2 * std::sin(ang), e, kTwoPi * rng.uniform()});
-        energySum += e;
-    }
-    // Normalise: mean of |u|^2 = sum a^2 / 2 = 3 sigma^2.
-    for (Mode& m : modes_) m.amplitude = std::sqrt(m.amplitude / energySum * 6.0) * p.intensity;
+namespace {
+BoundaryLayerParams boundaryLayerParams(const SimpleWeatherParams& p) {
+    BoundaryLayerParams b;
+    b.windSpeed = p.windSpeed;
+    b.windFromDirection = p.windFromDirection;
+    b.referenceHeight = p.referenceHeight;
+    b.profile = p.profile;
+    b.surfaceRoughness = p.surfaceRoughness;
+    b.powerLawExponent = p.powerLawExponent;
+    b.top = p.boundaryLayerTop;
+    b.veer = p.veer;
+    b.aloft = p.windsAloft;
+    return b;
 }
 
-void TurbulenceField::evaluate(const Vec3& x, Vec3& velocity, Mat3& gradient) const {
-    velocity = {};
-    gradient = Mat3::zero();
-    for (const Mode& m : modes_) {
-        const Real arg = dot(m.k, x) + m.phase;
-        const Real c = std::cos(arg), s = std::sin(arg);
-        velocity += m.dir * (m.amplitude * c);
-        const Vec3 d = m.dir * (-m.amplitude * s);
-        const Real dv[3] = {d.x, d.y, d.z}, kv[3] = {m.k.x, m.k.y, m.k.z};
-        for (int i = 0; i < 3; ++i)
-            for (int j = 0; j < 3; ++j) gradient.m[i][j] += dv[i] * kv[j];
+TurbulenceParams turbulenceParams(const SimpleWeatherParams& p) {
+    TurbulenceParams t = p.turbulence;
+    if (p.thermals.convectiveVelocity > 0 && p.thermals.convectiveTurbulence) {
+        t.convectiveVelocity = p.thermals.convectiveVelocity;
+        t.convectiveDepth = p.thermals.depth;
     }
+    return t;
+}
+}  // namespace
+
+// Representative surface u* (enables the mechanical turbulence): the
+// strongest surface wind any source can produce over the reference surface.
+Real representativeFrictionVelocity(const SimpleWeatherParams& p, const BoundaryLayer& bl) {
+    Real v = p.stations.empty() ? p.windSpeed : 0.0;
+    for (const WindStation& s : p.stations)
+        for (Real sp : s.speeds) v = std::max(v, sp);
+    for (const WindShift& w : p.windShifts) v = std::max(v, w.newSpeed);
+    Real zMax = p.surfaceRoughness;
+    for (const RoughnessPatch& r : p.roughnessPatches) zMax = std::max(zMax, r.roughness);
+    return bl.frictionVelocity({v, 0, zMax});
 }
 
-SimpleWeather::SimpleWeather(const Params& p) : p_(p), atm_(p.conditions), turbulence_(p.turbulence) {}
+SimpleWeather::SimpleWeather(const Params& p)
+    : p_(p),
+      spatial_(!p.roughnessPatches.empty() || !p.stations.empty() || !p.windShifts.empty() || !p.obstacles.empty()),
+      atm_(p.conditions),
+      boundaryLayer_(boundaryLayerParams(p)),
+      turbulence_(turbulenceParams(p), boundaryLayer_.surfaceFlowHeading(),
+                  representativeFrictionVelocity(p, BoundaryLayer(boundaryLayerParams(p)))),
+      // Thermals drift with the mean wind in the middle of the convective layer.
+      thermals_(p.thermals, boundaryLayer_.wind(0.5 * p.thermals.depth, p.groundElevation + 0.5 * p.thermals.depth)) {}
 
 Vec3 SimpleWeather::meanWindAt(Real agl) const {
-    // Wind blows FROM windFromDirection: the air velocity points the other way.
-    const Real dir = p_.windFromDirection + kPi;
-    Real factor = 1.0;
-    if (p_.boundaryLayerExponent > 0) {
-        const Real hz = clamp(agl, 0.0, p_.boundaryLayerTop);
-        factor = std::pow(std::max(hz, 0.5) / p_.referenceHeight, p_.boundaryLayerExponent);
-        if (agl <= 0) factor = std::pow(0.5 / p_.referenceHeight, p_.boundaryLayerExponent);
+    return boundaryLayer_.wind(agl, p_.groundElevation + agl) + Vec3{0, 0, -p_.updraft};
+}
+
+Vec3 SimpleWeather::meanWindAt(const Vec3& positionNed, Real altitudeMsl, Real time) const {
+    return localWind(positionNed, altitudeMsl - p_.groundElevation, altitudeMsl, time).wind;
+}
+
+Real SimpleWeather::roughnessAt(Real north, Real east) const {
+    Real lz = std::log(std::max(p_.surfaceRoughness, 1e-5));
+    for (const RoughnessPatch& r : p_.roughnessPatches) {
+        const Real d = std::hypot(north - r.north, east - r.east);
+        const Real half = 0.5 * std::max(r.transition, 1e-3);
+        const Real w = 1 - smoothstep(r.radius - half, r.radius + half, d);
+        lz = lerp(lz, std::log(std::max(r.roughness, 1e-5)), w);
     }
-    const Real v = p_.windSpeed * factor;
-    return {v * std::cos(dir), v * std::sin(dir), -p_.updraft};
+    return std::exp(lz);
+}
+
+SurfaceWind SimpleWeather::surfaceWindAt(Real north, Real east, Real time) const {
+    SurfaceWind sw{p_.windSpeed, p_.windFromDirection, roughnessAt(north, east)};
+    if (p_.stations.empty()) return sw;
+    // Average the reports as vectors, weighted 1 / (d^2 + L^2).
+    Real sn = 0, se = 0, sumW = 0;
+    const Real l2 = sq(std::max(p_.stationInfluence, 1.0));
+    for (const WindStation& st : p_.stations) {
+        Real sp, from;
+        st.at(time, sp, from);
+        const Real w = 1 / (sq(north - st.north) + sq(east - st.east) + l2);
+        sn += w * sp * std::cos(from);
+        se += w * sp * std::sin(from);
+        sumW += w;
+    }
+    sw.speed = std::hypot(sn, se) / sumW;
+    sw.fromDirection = sw.speed > 1e-9 ? std::atan2(se, sn) : p_.windFromDirection;
+    return sw;
+}
+
+SimpleWeather::LocalWind SimpleWeather::localWind(const Vec3& pos, Real agl, Real msl, Real time) const {
+    LocalWind lw;
+    const SurfaceWind sw = surfaceWindAt(pos.x, pos.y, time);
+    lw.wind = boundaryLayer_.wind(agl, msl, sw);
+    Real uStar = boundaryLayer_.frictionVelocity(sw);
+    for (const WindShift& f : p_.windShifts) {
+        const Real b = f.behind(pos, agl, time);
+        const SurfaceWind nw{f.newSpeed, f.newFromDirection, sw.roughness};
+        if (b > 0) lw.wind = lw.wind + (boundaryLayer_.wind(agl, msl, nw) - lw.wind) * b;
+        uStar = lerp(uStar, boundaryLayer_.frictionVelocity(nw), f.behind(pos, 0, time));
+        lw.wind.z -= f.updraft(pos, agl, time);
+    }
+    Real extra2 = 0;
+    for (const Obstacle& o : p_.obstacles) {
+        const Real roof = o.baseElevation + o.height;
+        Real extra;
+        lw.wind += o.velocity(pos, msl, boundaryLayer_.wind(roof - p_.groundElevation, roof, sw), extra);
+        extra2 += extra * extra;
+    }
+    lw.wind.z -= p_.updraft;
+    lw.turbulence = {uStar, std::sqrt(extra2)};
+    return lw;
 }
 
 AirSample SimpleWeather::sample(const Vec3& positionNed, Real altitudeMsl, Real time) const {
@@ -223,25 +260,68 @@ AirSample SimpleWeather::sample(const Vec3& positionNed, Real altitudeMsl, Real 
     if (p_.cloudTop > p_.cloudBase && altitudeMsl >= p_.cloudBase && altitudeMsl <= p_.cloudTop)
         s.liquidWaterContent = p_.cloudLiquidWater;
     const Real agl = altitudeMsl - p_.groundElevation;
-    s.wind = meanWindAt(agl);
-    // Vertical shear of the boundary layer: d(wind)/d(down) = -d(wind)/d(agl).
-    if (p_.boundaryLayerExponent > 0 && agl > 0.5 && agl < p_.boundaryLayerTop) {
-        const Real dvdh = p_.boundaryLayerExponent / agl;
-        s.windGradient.m[0][2] = -s.wind.x * dvdh;
-        s.windGradient.m[1][2] = -s.wind.y * dvdh;
+    // Frozen turbulence is advected with the reference-height mean wind.
+    const Vec3 adv = boundaryLayer_.wind(p_.referenceHeight, p_.groundElevation + p_.referenceHeight);
+    if (!spatial_) {
+        s.wind = boundaryLayer_.wind(agl, altitudeMsl) + Vec3{0, 0, -p_.updraft};
+        // Vertical shear: d(wind)/d(down) = -d(wind)/d(height).
+        const Vec3 dvdh = boundaryLayer_.shear(agl, altitudeMsl);
+        s.windGradient.m[0][2] = -dvdh.x;
+        s.windGradient.m[1][2] = -dvdh.y;
+        if (turbulence_.active()) {
+            Vec3 u;
+            Mat3 g;
+            turbulence_.evaluate(positionNed - adv * time, agl, altitudeMsl, u, g);
+            s.wind += u;
+            s.windGradient = s.windGradient + g;
+        }
+    } else {
+        // The mean wind and the turbulence statistics vary in space: both
+        // gradients from the same seven local evaluations (point, +-step on
+        // each axis; down = minus height).
+        const Real d = 0.02;
+        const Vec3 off[7] = {{0, 0, 0}, {d, 0, 0}, {-d, 0, 0}, {0, d, 0}, {0, -d, 0}, {0, 0, d}, {0, 0, -d}};
+        LocalWind lw[7];
+        TurbulenceLocal tl[7];
+        for (int k = 0; k < 7; ++k) {
+            lw[k] = localWind(positionNed + off[k], agl - off[k].z, altitudeMsl - off[k].z, time);
+            tl[k] = lw[k].turbulence;
+        }
+        s.wind = lw[0].wind;
+        for (int j = 0; j < 3; ++j) {
+            const Vec3 dv = (lw[2 * j + 1].wind - lw[2 * j + 2].wind) / (2 * d);
+            s.windGradient.m[0][j] = dv.x;
+            s.windGradient.m[1][j] = dv.y;
+            s.windGradient.m[2][j] = dv.z;
+        }
+        if (turbulence_.active()) {
+            Vec3 u;
+            Mat3 g;
+            turbulence_.evaluate(positionNed - adv * time, agl, altitudeMsl, tl, d, u, g);
+            s.wind += u;
+            s.windGradient = s.windGradient + g;
+        }
     }
-    if (turbulence_.active()) {
-        // Frozen turbulence advected with the reference-height mean wind.
-        const Vec3 adv = meanWindAt(p_.referenceHeight);
-        Vec3 u;
+    // Discrete events, thermals and ridges: analytic fields, gradient by
+    // central differences.
+    if (!p_.gusts.empty() || !p_.microbursts.empty() || thermals_.active() || !p_.ridges.empty()) {
+        auto events = [&](const Vec3& x) {
+            const Real dz = x.z - positionNed.z;
+            const Real h = agl - dz;
+            Vec3 v;
+            for (const DiscreteGust& g : p_.gusts) v += g.velocity(x, time, adv);
+            for (const Microburst& m : p_.microbursts) v += m.velocity(x, h, time);
+            v += thermals_.velocity(x, h, time);
+            for (const Ridge& r : p_.ridges) {
+                const Real crest = r.baseElevation + r.height;
+                v += r.velocity(x, altitudeMsl - dz, boundaryLayer_.wind(crest - p_.groundElevation, crest));
+            }
+            return v;
+        };
+        Vec3 v;
         Mat3 g;
-        turbulence_.evaluate(positionNed - adv * time, u, g);
-        // Attenuate the vertical component near the ground (it must vanish at
-        // the surface); a smooth ramp over the first 30 m.
-        const Real ramp = smoothstep(0.0, 30.0, agl);
-        u.z *= ramp;
-        for (int j = 0; j < 3; ++j) g.m[2][j] *= ramp;
-        s.wind += u;
+        sampleWithGradient(events, positionNed, v, g);
+        s.wind += v;
         s.windGradient = s.windGradient + g;
     }
     return s;

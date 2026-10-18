@@ -191,10 +191,14 @@
         <h2>Weather</h2>
         <label class="ctl">Wind speed <input type="range" id="wind" min="0" max="35" step="1" value="0"><output id="wind-v"></output></label>
         <label class="ctl">Wind from <input type="range" id="winddir" min="0" max="350" step="10" value="120"></label>
-        <label class="ctl">Turbulence <input type="range" id="turb" min="0" max="4" step="0.1" value="0"><output id="turb-v"></output></label>
+        <label class="ctl">Turbulence class <select id="turbclass"><option value="0">None (wind only)</option><option value="1">Light</option><option value="2">Moderate</option><option value="3">Severe</option></select></label>
+        <label class="ctl">Extra turbulence <input type="range" id="turb" min="0" max="4" step="0.1" value="0"><output id="turb-v"></output></label>
+        <label class="ctl">Thermals (w*) <input type="range" id="thermals" min="0" max="4" step="0.25" value="0"><output id="thermals-v"></output></label>
+        <label class="ctl">Wind hazard <select id="hazard"><option value="0">None</option><option value="1">Microburst on final 12</option><option value="2">Gust front from the SW</option></select></label>
         <label class="ctl">Temperature <input type="range" id="temp" min="-30" max="30" step="1" value="0"><output id="temp-v"></output></label>
         <div class="checks"><label><input type="checkbox" id="cloud"> Cloud layer 1,500–3,600 ft AGL</label></div>
         <p class="note">Below about ISA−5 the cloud is supercooled: ice builds on the pitot tube unless Pitot Heat is on. Watch the airspeed, and the truth table.</p>
+        <p class="note">The wind is reported at the airfield. It weakens and gets rougher over the city around it, backs with height, and makes ridge lift and waves at the Serra da Cantareira, 10 km north. Gusts near the ground come from the wind itself. The class adds clear-air turbulence at every height.</p>
       </div>
 
       <div class="card">
