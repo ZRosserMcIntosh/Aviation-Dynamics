@@ -226,6 +226,14 @@ private:
     std::array<Real, 6> controlEffects(const Strip& st, const ControlDeflections& d) const;
 public:
     bool hasSpoilers() const { return hasSpoilers_; }
+    // Deployed spoiler panels as bluff bodies (airflow view): centre on the
+    // upper surface, span axis, projected height and drag area (m^2), for a
+    // speedbrake deployment 0..1. Returns how many were written (<= max).
+    struct BluffBody {
+        Vec3 position, axis;
+        Real size = 0, length = 0, dragArea = 0;
+    };
+    int spoilerBodies(Real speedbrake, BluffBody* out, int max) const;
 private:
     bool hasSpoilers_ = false;
     Vec3 localFlow(const Surface& S, const Strip& st, const Vec3& r, const AeroInputs& in) const;

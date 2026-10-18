@@ -526,8 +526,6 @@ TEST_CASE("top g: a wet runway lengthens the stop; standing water above the hydr
 }
 
 TEST_CASE("top g: spoiler panels dump lift where they are and shed their own vortices; gear drag pitches nose down") {
-    const AeroModel& m0 = Aircraft(jet()).aeroModel();
-    (void)m0;
     Aircraft ac(jet());
     const AeroModel& m = ac.aeroModel();
     CHECK(m.hasSpoilers());

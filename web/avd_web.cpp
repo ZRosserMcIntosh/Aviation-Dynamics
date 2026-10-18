@@ -103,7 +103,7 @@ void applyLoad(Aircraft& ac) {
     for (std::size_t i = 0; i < g->loadTanks.size(); ++i) ac.fuel().setTankQuantity(static_cast<int>(i), g->loadTanks[i]);
     ac.refreshMass();
 }
-constexpr int kFlowStrips = 64, kFlowStride = 16;
+constexpr int kFlowStrips = 64, kFlowStride = 18;
 double g_flow[16 + kFlowStrips * kFlowStride + 4 * 10];
 char* g_text = nullptr;
 int g_textCap = 0;
@@ -614,6 +614,7 @@ AVD_EXPORT double* avd_flow() {
         o[6] = sg.normalAxis.x; o[7] = sg.normalAxis.y; o[8] = sg.normalAxis.z;
         o[9] = sg.chord; o[10] = sg.area; o[11] = t.cl; o[12] = t.alpha; o[13] = t.q; o[14] = t.stallAlpha;
         o[15] = sg.surface;
+        o[16] = t.attached; o[17] = t.gamma;
     }
     double* e = g_flow + 16 + kFlowStrips * kFlowStride;
     int ne = 0;
@@ -953,6 +954,41 @@ AVD_EXPORT double* avd_wind_box(double cE, double cN, double cU, double hE, doub
                 *o++ = w.z;
             }
     return g_windBox;
+}
+
+// Bluff bodies in the airflow (airflow view): extended gear legs and deployed
+// spoiler panels. [0] count, then 10 doubles a body: position (structural,
+// m), axis (the body's long axis), size (diameter or projected height, m),
+// length along the axis (m), drag area (m^2), kind (0 gear, 1 spoiler).
+double g_bodies[1 + 32 * 10];
+AVD_EXPORT double* avd_bodies() {
+    std::fill(std::begin(g_bodies), std::end(g_bodies), 0.0);
+    if (!g) return g_bodies;
+    const Aircraft& ac = *g->ac;
+    int n = 0;
+    auto put = [&](const Vec3& p, const Vec3& a, Real size, Real length, Real cda, int kind) {
+        if (n >= 32) return;
+        double* o = g_bodies + 1 + n * 10;
+        o[0] = p.x; o[1] = p.y; o[2] = p.z; o[3] = a.x; o[4] = a.y; o[5] = a.z;
+        o[6] = size; o[7] = length; o[8] = cda; o[9] = kind;
+        ++n;
+    };
+    const GearRetractionDef& gc = g->def.controls.gear;
+    const Real down = gc.retractable ? ac.gearPosition() : 1.0;
+    if (down > 0.05 && !g->def.gear.empty()) {
+        // Retractable: its drag area shared over the legs; fixed gear (in the
+        // drag items): a wheel and strut's frontal area at Cd ~1.
+        for (const GearDef& gd : g->def.gear) {
+            const Real d = 2 * gd.wheelRadius;
+            const Real cda = gc.retractable ? gc.dragArea / static_cast<Real>(g->def.gear.size()) : 0.9 * d * 0.45 * d + 0.06 * gd.length;
+            put(gd.attach + Vec3{0, 0, 0.6 * gd.length * down}, {0, 0, 1}, d, gd.length * down, cda * down, 0);
+        }
+    }
+    std::array<AeroModel::BluffBody, 24> sp{};
+    const int ns = ac.aeroModel().spoilerBodies(ac.speedbrakePosition(), sp.data(), 24);
+    for (int i = 0; i < ns; ++i) put(sp[static_cast<std::size_t>(i)].position, sp[static_cast<std::size_t>(i)].axis, sp[static_cast<std::size_t>(i)].size, sp[static_cast<std::size_t>(i)].length, sp[static_cast<std::size_t>(i)].dragArea, 1);
+    g_bodies[0] = n;
+    return g_bodies;
 }
 
 // ---- Weight and balance ---------------------------------------------------

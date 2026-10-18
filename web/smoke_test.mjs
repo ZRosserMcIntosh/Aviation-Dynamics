@@ -130,6 +130,17 @@ B.avd_reset_air(0, 0, 3000, 0, 250, 0);
 for (let i = 0; i < 40; ++i) { B.avd_set_input(0, 0, 0, B.avd_trim_throttle(), 1, 0, 0, 0, 0); B.avd_advance(0.25); }
 c = B.cockpitState();
 check(Math.abs(c[0] - 250) < 4 && Math.abs(c[53]) < 200 && B.jet()[1] === 0, `jet spawn trimmed: ${c[0].toFixed(1)} KIAS, ${c[53].toFixed(0)} fpm, gear up`);
+// Bluff bodies: none with the gear up and the speedbrake stowed; raised
+// spoiler panels each one, and the flow behind them separated.
+check(B.bodies().n === 0, 'jet: no bluff bodies clean');
+const sbIdx = B.cockpit().find((x) => x.id === 'speedbrake.lever').index;
+for (let k = 0; k < 2; ++k) B.avd_cockpit_cycle(sbIdx);
+for (let i = 0; i < 12; ++i) B.avd_advance(0.25);
+const bod = B.bodies(), fl = B.flow();
+let spoilers = 0, cleanly = true, separated = 0;
+for (let k = 0; k < bod.n; ++k) { spoilers += bod.b[k * 10 + 9] === 1; cleanly = cleanly && bod.b[k * 10 + 8] > 0 && bod.b[k * 10 + 6] > 0; }
+for (let i = 0; i < (fl[0] | 0); ++i) separated += fl[16 + i * 18 + 16] < 0.6;
+check(spoilers >= 4 && cleanly && separated >= 4, `jet speedbrake: ${spoilers} spoiler panels in the flow, ${separated} strips separated`);
 B.avd_reset(0);
 B.avd_quick_start();
 for (let i = 0; i < 100 * 4; ++i) { B.avd_set_input(0, 0, 0, 0, 1, 0, 0, 0, 0); B.avd_advance(0.25); }

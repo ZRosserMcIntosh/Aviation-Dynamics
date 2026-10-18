@@ -316,6 +316,28 @@ Vec3 AeroModel::slipstreamAt(const Vec3& position, const AeroInputs& in) const {
     return dv;
 }
 
+int AeroModel::spoilerBodies(Real speedbrake, BluffBody* out, int max) const {
+    int n = 0;
+    ControlDeflections d;
+    d.speedbrake = speedbrake;
+    for (const Strip& st : strips_) {
+        if (!st.attached) continue;
+        for (int c = 0; c < st.controlCount && n < max; ++c) {
+            const StripControl& sc = st.controls[c];
+            if (sc.channel != ControlChannel::Spoiler) continue;
+            const Real sd = std::sin(std::max(controlDeflection(sc, d), 0.0));
+            if (sd < 0.02) continue;
+            BluffBody& b = out[n++];
+            b.position = st.position - st.chordAxis * (0.3 * st.chord) + st.normalAxis * (0.06 * st.chord);
+            b.axis = st.spanAxis;
+            b.size = sc.chordFraction * st.chord * sd;
+            b.length = st.width;
+            b.dragArea = 0.45 * sc.chordFraction * sd * st.area;
+        }
+    }
+    return n;
+}
+
 std::array<Real, 6> AeroModel::controlEffects(const Strip& st, const ControlDeflections& d) const {
     // Zero-lift shift, clmax increment per unit lift slope, cm, cd, chord extension.
     std::array<Real, 6> e{};

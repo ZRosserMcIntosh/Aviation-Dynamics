@@ -46,7 +46,7 @@ export default async function createAvdModule(wasmBytes) {
   A.cockpitState = () => new Float64Array(memory.buffer, ex.avd_cockpit(), 96);
   A.markings = () => Array.from(new Float64Array(memory.buffer, ex.avd_markings(), 96));
   A.compassCard = () => Array.from(new Float64Array(memory.buffer, ex.avd_compass_card(), 12));
-  A.flow = () => new Float64Array(memory.buffer, ex.avd_flow(), 16 + 64 * 16 + 40);
+  A.flow = () => new Float64Array(memory.buffer, ex.avd_flow(), 16 + 64 * 18 + 40);
   A.jet = () => new Float64Array(memory.buffer, ex.avd_jet(), 64);
   A.runway = () => Array.from(new Float64Array(memory.buffer, ex.avd_runway(), 6));
   A.windGrid = (hx, hy, hz, nx, ny, nz) => new Float64Array(memory.buffer, ex.avd_wind_grid(hx, hy, hz, nx, ny, nz), 3 * nx * ny * nz);
@@ -60,6 +60,8 @@ export default async function createAvdModule(wasmBytes) {
   };
   // The wind (ENU m/s) on a grid over centre +- half size (ENU m), x fastest.
   A.windBox = (c, h, nx, ny, nz) => new Float64Array(memory.buffer, ex.avd_wind_box(c[0], c[1], c[2], h[0], h[1], h[2], nx, ny, nz), 3 * nx * ny * nz);
+  // Bluff bodies (gear legs, spoiler panels): { n, b } with 10 numbers a body.
+  A.bodies = () => { const h = new Float64Array(memory.buffer, ex.avd_bodies(), 1 + 32 * 10); return { n: h[0] | 0, b: h.subarray(1) }; };
   A.airport = () => { const [icao, name, runway, reciprocal] = A.text(ex.avd_airport_text()).split('|'); return { icao, name, runway, reciprocal }; };
   // Weight and balance: planned (next spawn) or current. Masses in kg, x in
   // the structural frame (m, forward positive), fuel in litres.
