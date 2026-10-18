@@ -5,25 +5,29 @@ Reproduce with `./build/avdemo validate`. The assertions with tolerances are in
 assists. The scripted test pilot (`src/scenarios/test_pilot.cpp`) flies the
 POH technique.
 
-## Results (October 2026)
+## Results (October 2026, after the simple-sweep strip frame)
+
+Aerodynamics I (consistent simple sweep theory, finite-wing post-stall drag,
+skin friction on the whole local flow) moved these by a few tenths of a
+percent: the swept fin's friction drag and the separated strips' drag.
 
 | Quantity | POH | Simulation | Error | Tolerance |
 |---|---|---|---|---|
-| Stall speed, flaps up, power off | 53 KCAS | 53.9 KCAS | +1.6% | ±6% |
-| Stall speed, flaps 30, power off | 48 KCAS | 49.2 KCAS | +2.6% | ±6% |
-| Full-throttle level speed, 8000 ft | 124 KTAS (75% power) | 119.2 KTAS | −3.9% | ±5% |
-| ↳ power / rpm / prop efficiency / fuel flow | 75%, about 2700 rpm, about 10.5 gph | 73% / 2586 rpm / 0.84 / 10.4 gph | | |
-| Maximum level speed, sea level | 126 KTAS | 126.5 KTAS (2692 rpm) | +0.4% | ±5% |
-| Rate of climb, sea level, 74 KIAS | 730 fpm | 695 fpm | −4.7% | ±15% |
-| Take-off ground roll (short field) | 960 ft | 840 ft | −12.5% | ±20% |
-| Take-off over 50 ft | 1630 ft | 1724 ft | +5.8% | ±20% |
-| Landing ground roll, pilot braking technique | 575 ft | 468 ft | −18.7% | ±20% |
+| Stall speed, flaps up, power off | 53 KCAS | 54.0 KCAS | +1.9% | ±6% |
+| Stall speed, flaps 30, power off | 48 KCAS | 49.4 KCAS | +2.8% | ±6% |
+| Full-throttle level speed, 8000 ft | 124 KTAS (75% power) | 118.7 KTAS | −4.3% | ±5% |
+| ↳ power / rpm / prop efficiency / fuel flow | 75%, about 2700 rpm, about 10.5 gph | 73% / 2581 rpm / 0.84 / 10.4 gph | | |
+| Maximum level speed, sea level | 126 KTAS | 126.0 KTAS (2687 rpm) | +0.0% | ±5% |
+| Rate of climb, sea level, 74 KIAS | 730 fpm | 691 fpm | −5.4% | ±15% |
+| Take-off ground roll (short field) | 960 ft | 842 ft | −12.3% | ±20% |
+| Take-off over 50 ft | 1630 ft | 1730 ft | +6.1% | ±20% |
+| Landing ground roll, pilot braking technique | 575 ft | 481 ft | −16.4% | ±20% |
 | ↳ tyre-limited bound (full pedal at touchdown) | — | 254 ft | | physics check |
 | Static rpm, full throttle | 2300–2420 rpm | 2337 rpm | | in range |
-| Stall warning | 5–10 kt above the stall | 8.4 kt (flaps up), 7.6 kt (flaps 30) | | in range |
+| Stall warning | 5–10 kt above the stall | 8.3 kt (flaps up), 7.4 kt (flaps 30) | | in range |
 
 Hot and high, for information: at SBMT (722 m) at ISA+20 the ground roll is
-1350 ft, against 840 ft at sea-level ISA.
+1352 ft, against 842 ft at sea-level ISA.
 
 ## Investigated comparisons
 

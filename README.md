@@ -29,9 +29,9 @@ here.
 Current results against the POH are in
 [docs/validation/c172s-validation.md](docs/validation/c172s-validation.md).
 Every comparison is within its tolerance. That document also records the two
-that were investigated: the take-off ground roll (−12.5%, after swirl and tip
+that were investigated: the take-off ground roll (−12.3%, after swirl and tip
 compressibility in the propeller; the residual is in the lift-off and
-transition) and the landing roll (−19% once the pilot's braking technique is
+transition) and the landing roll (−16% once the pilot's braking technique is
 modelled).
 
 ## Build and run

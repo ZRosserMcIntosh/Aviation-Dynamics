@@ -171,6 +171,7 @@ std::vector<std::string> AircraftDefinition::validate() const {
                 c.table(pc + ".effectiveness", C.effectivenessVsDeflection);
                 c.range(pc + ".clMaxIncrementRatio", C.clMaxIncrementRatio, 0, 1.5);
                 c.range(pc + ".profileDragPerRad2", C.profileDragPerRad2, 0, 5);
+                c.range(pc + ".chordExtension", C.chordExtension, 0, 0.6);
             }
         }
         if (strips > 512) c.add(p, "too many strips (max 512)");

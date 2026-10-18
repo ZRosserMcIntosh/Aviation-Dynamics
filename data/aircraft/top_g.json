@@ -78,7 +78,7 @@
    "field": "surfaces",
    "kind": "estimated",
    "source": "EST",
-   "note": "Planform matching the published area and span; quarter-chord sweep 27/33 deg; supercritical section polar; Fowler-flap gains raised to stand for the chord extension the strip model does not represent (approach speeds near the published ~115-125 KIAS)."
+   "note": "Planform matching the published area and span; quarter-chord sweep 27/33 deg; supercritical section polar (section clmax 1.48, no leading-edge devices: with simple sweep theory the wing reaches CLmax ~1.25, near the published ~112 KIAS clean stall at mid weight); single-slotted Fowler flaps, 25 % chord, extending the chord 12 % at full deflection, dclmax/dcl 0.9 (approach speeds near the published ~115-125 KIAS). Wing incidence (-0.0/-0.7/-3.0 deg root/kink/tip) and tailplane incidence (-0.8 deg) set for a ~1.7 deg cruise attitude with the elevator near neutral at M0.85."
   },
   {
    "field": "turbofans",
@@ -205,7 +205,7 @@
    "section": {
     "lift_slope_per_rad": 6.3,
     "zero_lift_alpha_deg": -3.2,
-    "cl_max": 1.72,
+    "cl_max": 1.48,
     "cl_min": -1.0,
     "cd_min": 0.0062,
     "cd_quadratic": 0.006,
@@ -230,8 +230,8 @@
      "tip_chord_m": 4.7,
      "sweep_deg": 27.0,
      "dihedral_deg": 3.0,
-     "root_incidence_deg": 1.0,
-     "tip_incidence_deg": 0.3,
+     "root_incidence_deg": 0.0,
+     "tip_incidence_deg": -0.7,
      "strips": 4,
      "controls": [
       {
@@ -239,7 +239,7 @@
        "channel": "flap",
        "span_start": 0.3,
        "span_end": 1.0,
-       "chord_fraction": 0.33,
+       "chord_fraction": 0.25,
        "max_positive_deg": 39,
        "max_negative_deg": 0,
        "effectiveness": {
@@ -256,8 +256,9 @@
          0.72
         ]
        },
-       "clmax_increment_ratio": 1.05,
-       "profile_drag_per_rad2": 0.35
+       "clmax_increment_ratio": 0.9,
+       "profile_drag_per_rad2": 0.35,
+       "chord_extension": 0.12
       }
      ]
     },
@@ -272,8 +273,8 @@
      "tip_chord_m": 1.65,
      "sweep_deg": 33.0,
      "dihedral_deg": 3.0,
-     "root_incidence_deg": 0.3,
-     "tip_incidence_deg": -2.0,
+     "root_incidence_deg": -0.7,
+     "tip_incidence_deg": -3.0,
      "strips": 8,
      "controls": [
       {
@@ -281,7 +282,7 @@
        "channel": "flap",
        "span_start": 0.0,
        "span_end": 0.5,
-       "chord_fraction": 0.33,
+       "chord_fraction": 0.25,
        "max_positive_deg": 39,
        "max_negative_deg": 0,
        "effectiveness": {
@@ -298,8 +299,9 @@
          0.72
         ]
        },
-       "clmax_increment_ratio": 1.05,
-       "profile_drag_per_rad2": 0.35
+       "clmax_increment_ratio": 0.9,
+       "profile_drag_per_rad2": 0.35,
+       "chord_extension": 0.12
       },
       {
        "name": "aileron",
@@ -350,8 +352,8 @@
      "tip_chord_m": 1.6,
      "sweep_deg": 32,
      "dihedral_deg": -2.0,
-     "root_incidence_deg": -1.5,
-     "tip_incidence_deg": -1.5,
+     "root_incidence_deg": -0.8,
+     "tip_incidence_deg": -0.8,
      "strips": 5,
      "controls": [
       {

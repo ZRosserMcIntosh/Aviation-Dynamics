@@ -83,6 +83,104 @@ TEST_CASE("aero: finite-wing relations (Helmbold slope, flap tau, ground effect)
 
 // ------------------------------------------------------------ airframe ----
 
+namespace {
+// A lone untwisted, untapered wing of aspect ratio 8 at a quarter-chord sweep
+// (deg), with an optional full-span Fowler flap.
+AircraftDefinition sweptWing(Real sweepDeg, Real chordExtension = 0) {
+    AircraftDefinition d;
+    LiftingSurfaceDef w;
+    w.name = "wing";
+    w.section.zeroLiftAlpha = degToRad(-3);
+    w.section.clMax = 1.6;
+    w.section.cdMin = 0.008;
+    w.section.clAtCdMin = 0.2;
+    PanelDef p;
+    p.span = 8;
+    p.rootChord = p.tipChord = 2;
+    p.sweep = degToRad(sweepDeg);
+    p.strips = 12;
+    p.mirrored = true;
+    if (chordExtension > 0) {
+        ControlSurfaceDef f;
+        f.name = "flap";
+        f.channel = ControlChannel::Flap;
+        f.chordFraction = 0.25;
+        f.maxPositive = degToRad(30);
+        f.chordExtension = chordExtension;
+        p.controls.push_back(f);
+    }
+    w.panels.push_back(p);
+    w.groundEffect = false;
+    d.surfaces.push_back(w);
+    return d;
+}
+
+struct WingPolar {
+    Real alpha0 = 0, slope = 0, clMax = 0, cd0 = 0;
+};
+// Streamwise CL(alpha) of a lone wing at 60 m/s (lift and drag on the
+// free-stream q and the reference area of the planform).
+WingPolar wingPolar(const AircraftDefinition& d, Real flap = 0) {
+    const AeroModel m(d);
+    AeroOutputs out;
+    m.prepare(out);
+    AeroInputs in;
+    in.controls.flap = flap;
+    const Real v = 60, q = 0.5 * 1.225 * v * v;
+    Real area = 0;
+    for (int i = 0; i < m.stripCount(); ++i) area += m.stripGeometry(i).area;
+    auto at = [&](Real a, Real& cd) {
+        in.velocityBody = {v * std::cos(a), 0, v * std::sin(a)};
+        m.evaluate(in, out);
+        cd = -(out.force.x * std::cos(a) + out.force.z * std::sin(a)) / (q * area);
+        return (out.force.x * std::sin(a) - out.force.z * std::cos(a)) / (q * area);
+    };
+    WingPolar w;
+    Real cd = 0;
+    const Real c1 = at(degToRad(-1), cd), c2 = at(degToRad(1), cd);
+    w.slope = (c2 - c1) / degToRad(2);
+    w.alpha0 = degToRad(-1) - c1 / w.slope;
+    for (Real a = 0; a < 30; a += 0.1) w.clMax = std::max(w.clMax, at(degToRad(a), cd));
+    at(w.alpha0, w.cd0);
+    return w;
+}
+}  // namespace
+
+TEST_CASE("aero: simple sweep theory - zero-lift angle and profile drag hold, CLmax falls as cos(sweep)") {
+    const WingPolar w0 = wingPolar(sweptWing(0)), w30 = wingPolar(sweptWing(30)), w45 = wingPolar(sweptWing(45));
+    // An untwisted wing's zero-lift angle is its section's at any sweep.
+    CHECK_NEAR(radToDeg(w0.alpha0), -3, 0.05);
+    CHECK_NEAR(radToDeg(w30.alpha0), -3, 0.05);
+    CHECK_NEAR(radToDeg(w45.alpha0), -3, 0.05);
+    // The lift slope is the finite-wing (Helmbold) slope for the sweep.
+    const AeroModel m30(sweptWing(30));
+    CHECK_NEAR(w30.slope, m30.surfaceLiftSlope(0), 0.02 * w30.slope);
+    // Profile drag at zero lift: skin friction does not care about sweep.
+    CHECK_NEAR(w30.cd0, w0.cd0, 0.05 * w0.cd0);
+    CHECK_NEAR(w45.cd0, w0.cd0, 0.08 * w0.cd0);
+    // CLmax ~ clmax cos(sweep) (Raymer 12.15 without the 0.9 span factor;
+    // DATCOM 4.1.3.4 gives 0.8-0.9 at 30 deg).
+    CHECK_RANGE(w30.clMax / w0.clMax, 0.82, 0.9);
+    CHECK_RANGE(w45.clMax / w0.clMax, 0.66, 0.76);
+}
+
+TEST_CASE("aero: a Fowler flap's chord extension adds lift; post-stall drag is the finite wing's") {
+    const WingPolar plain = wingPolar(sweptWing(0, 1e-9), degToRad(30)), fowler = wingPolar(sweptWing(0, 0.15), degToRad(30));
+    CHECK_RANGE(fowler.clMax / plain.clMax, 1.12, 1.16);
+    // Flat-plate drag of an AR 8 wing at 90 deg: Viterna's 1.11 + 0.018 AR, not the 2-D 1.9.
+    CHECK_NEAR(finiteWingMaxDrag(8), 1.254, 1e-9);
+    const AeroModel m(sweptWing(0));
+    AeroOutputs out;
+    m.prepare(out);
+    AeroInputs in;
+    in.velocityBody = {0, 0, 30};
+    m.evaluate(in, out);
+    Real area = 0;
+    for (int i = 0; i < m.stripCount(); ++i) area += m.stripGeometry(i).area;
+    const Real cn = -out.force.z / (0.5 * 1.225 * 900 * area);
+    CHECK_RANGE(cn, 1.15, 1.35);
+}
+
 TEST_CASE("aero: reference airframe static stability and damping signs") {
     const AeroModel m(ref());
     const Real v = 50;

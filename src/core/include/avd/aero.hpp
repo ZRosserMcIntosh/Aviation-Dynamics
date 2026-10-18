@@ -29,12 +29,18 @@ namespace avd {
 struct SectionResult {
     Real cl = 0, cd = 0, cm = 0;
     bool stalled = false;
+    Real attached = 1;  // weight of the attached-flow polar (1 attached, 0 separated)
 };
 
 // Section coefficients at angle of attack alpha (any value, rad) with a
 // zero-lift shift dAlpha0 (from flaps/controls) and clMax increment dClMax.
+// cdMax: the post-stall drag at 90 deg (Viterna's CDmax); <= 0 uses the
+// polar's 2-D flat-plate value.
 SectionResult evaluateSection(const SectionPolar& p, Real alpha, Real liftSlope, Real dAlpha0 = 0,
-                              Real dClMax = 0);
+                              Real dClMax = 0, Real cdMax = 0);
+
+// Viterna & Corrigan's finite-wing CDmax = 1.11 + 0.018 AR (AR <= 50).
+Real finiteWingMaxDrag(Real aspectRatio);
 
 // Thin-airfoil flap effectiveness tau(cf/c).
 Real flapEffectiveness(Real chordFraction);
@@ -88,6 +94,9 @@ struct SurfaceOutput {
     int stalledStrips = 0;
 };
 
+// Section values are in the plane normal to the strip's span (simple sweep
+// theory): cl, cd and q are those of the normal flow; alpha and stallAlpha
+// are the normal-plane angles times cos(sweep) (streamwise-equivalent).
 struct StripTelemetry {
     Real alpha = 0;
     Real stallAlpha = 0;       // positive stall angle incl. control effects
@@ -95,6 +104,7 @@ struct StripTelemetry {
     Real q = 0;                // local dynamic pressure (0 = strip inactive)
     Vec3 flowPerp;             // strip velocity relative to air, spanwise part removed (body)
     bool stalled = false;
+    Real attached = 1;         // attached-flow weight of the section polar (tufts, buffet)
 };
 
 struct AeroOutputs {
@@ -154,6 +164,7 @@ private:
         Table1D effectiveness;  // eta(|delta|), empty = 1
         Real clMaxIncrementRatio = 0.6;
         Real profileDragPerRad2 = 0.9;
+        Real chordExtension = 0;  // Fowler: chord added at full positive deflection (fraction of c)
     };
     struct Strip {
         int surface;
@@ -163,6 +174,10 @@ private:
         Vec3 normalAxis;        // positive-lift side (incidence applied)
         Vec3 spanAxis;          // geometric spanwise unit vector
         Vec3 liftAxis;          // cross(chord, normal): lift = cross(-dragDir, liftAxis)
+        // The section plane normal to the span (simple sweep theory): chord
+        // and normal axes in it, and the cosine of the local sweep.
+        Vec3 chordNormal, normalNormal;
+        Real cosSweep = 1;
         Real area, chord;
         Real width;             // length along spanAxis
         bool attached = true;

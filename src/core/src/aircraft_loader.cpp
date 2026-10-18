@@ -457,6 +457,7 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
                 co.table("effectiveness", "deflection_deg", "eta", c.effectivenessVsDeflection, kDeg);
                 co.num("clmax_increment_ratio", c.clMaxIncrementRatio);
                 co.num("profile_drag_per_rad2", c.profileDragPerRad2);
+                co.num("chord_extension", c.chordExtension);
                 p.controls.push_back(c);
             });
             s.panels.push_back(p);

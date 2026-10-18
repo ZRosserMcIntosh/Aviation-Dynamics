@@ -75,6 +75,9 @@ struct ControlSurfaceDef {
     Table1D effectivenessVsDeflection;
     Real clMaxIncrementRatio = 0.6;   // dclmax / dcl (flaps raise clmax less than cl)
     Real profileDragPerRad2 = 0.3;    // extra section cd per rad^2 of deflection
+    // Fowler flaps move aft as they deflect: chord added at full positive
+    // deflection, as a fraction of the chord (0 for plain and split flaps).
+    Real chordExtension = 0;
 };
 
 // One trapezoidal panel. A wing is a list of panels; `mirrored` panels are

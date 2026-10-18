@@ -6,7 +6,11 @@
 //    Aerodynamics", ch. 5; McCormick, "Aerodynamics, Aeronautics and Flight
 //    Mechanics" (ground effect factor (16h/b)^2 / (1 + (16h/b)^2)).
 //  - 3-D lift slope: Helmbold equation as given in USAF DATCOM 4.1.3.2.
-//  - Post-stall: Viterna & Corrigan (1982), NASA CP-2230.
+//  - Post-stall: Viterna & Corrigan (1982), NASA CP-2230 (finite-wing CDmax
+//    = 1.11 + 0.018 AR).
+//  - Swept strips: simple sweep theory (the section works on the flow normal
+//    to its span; Anderson ch. 10, Raymer §12.4.1: CLmax ~ clmax cos(sweep)),
+//    flap increments with the hinge-line sweep (DATCOM 6.1.4.1).
 //  - Flap effectiveness tau and pitching moment: thin-airfoil theory (Abbott &
 //    von Doenhoff, "Theory of Wing Sections", §8).
 //  - Drag rise: Korn equation + Lock's fourth-power law (Mason, "Transonic
@@ -42,7 +46,7 @@ struct Viterna {
 };
 
 // Forward-flow half: alpha in [-pi/2, pi/2].
-SectionResult forwardSection(const SectionPolar& p, Real alpha, Real a, Real alpha0, Real clMaxE, Real clMinE) {
+SectionResult forwardSection(const SectionPolar& p, Real alpha, Real a, Real alpha0, Real clMaxE, Real clMinE, Real cdMax) {
     SectionResult r;
     const Real clLin = a * (alpha - alpha0);
     const Real alphaSp = alpha0 + clMaxE / a;
@@ -54,7 +58,7 @@ SectionResult forwardSection(const SectionPolar& p, Real alpha, Real a, Real alp
         const Real clAtt = std::min(clLin, clMaxE);
         const Real cdS = attachedCd(clMaxE);
         const Real as = std::min(alphaSp, kHalfPi - 0.05);
-        const Viterna v(as, clMaxE * (1 - p.postStallClDrop), cdS, p.flatPlateCd);
+        const Viterna v(as, clMaxE * (1 - p.postStallClDrop), cdS, cdMax);
         const Real av = std::max(alpha, as);
         const Real blend = 1 - smoothstep(alphaSp, alphaSp + w, alpha);
         r.cl = blend * clAtt + (1 - blend) * v.cl(av);
@@ -67,7 +71,7 @@ SectionResult forwardSection(const SectionPolar& p, Real alpha, Real a, Real alp
         const Real clAtt = std::max(clLin, clMinE);
         const Real cdS = attachedCd(clMinE);
         const Real as = std::min(-alphaSm, kHalfPi - 0.05);
-        const Viterna v(as, -clMinE * (1 - p.postStallClDrop), cdS, p.flatPlateCd);
+        const Viterna v(as, -clMinE * (1 - p.postStallClDrop), cdS, cdMax);
         const Real av = std::max(-alpha, as);
         const Real blend = 1 - smoothstep(-alphaSm, -alphaSm + w, -alpha);
         r.cl = blend * clAtt - (1 - blend) * v.cl(av);
@@ -84,13 +88,16 @@ SectionResult forwardSection(const SectionPolar& p, Real alpha, Real a, Real alp
 
 }  // namespace
 
-SectionResult evaluateSection(const SectionPolar& p, Real alpha, Real a, Real dAlpha0, Real dClMax) {
+Real finiteWingMaxDrag(Real aspectRatio) { return 1.11 + 0.018 * clamp(aspectRatio, 0.0, 50.0); }
+
+SectionResult evaluateSection(const SectionPolar& p, Real alpha, Real a, Real dAlpha0, Real dClMax, Real cdMax) {
     alpha = wrapPi(alpha);
+    if (cdMax <= 0) cdMax = p.flatPlateCd;
     SectionResult r;
     const Real dCl = -a * dAlpha0;
     if (std::abs(alpha) <= kHalfPi) {
         const Real alpha0 = p.zeroLiftAlpha + dAlpha0;
-        r = forwardSection(p, alpha, a, alpha0, p.clMax + dClMax, p.clMin + dCl);
+        r = forwardSection(p, alpha, a, alpha0, p.clMax + dClMax, p.clMin + dCl, cdMax);
     } else {
         // Reversed flow: the trailing edge leads. Treat as a weaker symmetric
         // section (common practice for wind-turbine/rotor polars).
@@ -98,7 +105,7 @@ SectionResult evaluateSection(const SectionPolar& p, Real alpha, Real a, Real dA
         SectionPolar rev = p;
         rev.zeroLiftAlpha = 0;
         rev.clAtCdMin = 0;
-        r = forwardSection(rev, ar, a, 0, 0.7 * p.clMax, -0.7 * p.clMax);
+        r = forwardSection(rev, ar, a, 0, 0.7 * p.clMax, -0.7 * p.clMax, cdMax);
         r.cl *= 0.7;
         r.cm = 0;  // attached weight 0: use the centre-of-pressure model below
         r.stalled = true;
@@ -110,6 +117,7 @@ SectionResult evaluateSection(const SectionPolar& p, Real alpha, Real a, Real dA
     const Real xcp = 0.25 + 0.5 * std::abs(alpha) / kPi;
     const Real cmPost = -cn * (xcp - 0.25);
     r.cm = attachedWeight * p.cm0 + (1 - attachedWeight) * cmPost;
+    r.attached = attachedWeight;
     return r;
 }
 
@@ -207,6 +215,11 @@ void AeroModel::addPanel(int si, const PanelDef& p, int side) {
         s.normalAxis = normal0 * std::cos(inc) - chord0 * std::sin(inc);
         s.liftAxis = cross(s.chordAxis, s.normalAxis);
         s.spanAxis = spanAxis;
+        const Real cs = dot(s.chordAxis, spanAxis);
+        s.cosSweep = std::sqrt(std::max(1 - cs * cs, 0.04));
+        s.chordNormal = normalized(s.chordAxis - spanAxis * cs);
+        s.normalNormal = normalized(cross(s.chordNormal, spanAxis));
+        if (dot(s.normalNormal, s.normalAxis) < 0) s.normalNormal = -s.normalNormal;
         for (const ControlSurfaceDef& c : p.controls) {
             if (t < c.spanStart || t > c.spanEnd || s.controlCount >= 3) continue;
             StripControl sc;
@@ -220,6 +233,7 @@ void AeroModel::addPanel(int si, const PanelDef& p, int side) {
             sc.effectiveness = c.effectivenessVsDeflection;
             sc.clMaxIncrementRatio = c.clMaxIncrementRatio;
             sc.profileDragPerRad2 = c.profileDragPerRad2;
+            sc.chordExtension = c.chordExtension;
             s.controls[s.controlCount++] = sc;
         }
         strips_.push_back(s);
@@ -318,8 +332,13 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             eps = in.downwashLagged ? in.downwashLagged[si] : so.downwash;
         }
 
-        // Pass 1: strip coefficients; accumulate per-side lift for induced angle.
-        Real liftSide[2] = {0, 0}, qaSide[2] = {0, 0}, alphaSum = 0, areaSum = 0;
+        // Induced angle from the strip's own loading (local lifting-line
+        // approximation): d(cl * alpha_i)/dcl = 2 alpha_i, which is what makes
+        // aileron yaw adverse and asymmetric stall yaw into the dropping wing.
+        const Real inducedPerCl = 1.0 / (kPi * arEff * S.def.spanEfficiency);
+        // Finite-wing post-stall drag (Viterna), never above the 2-D flat plate.
+        const Real cdMax = std::min(S.def.section.flatPlateCd, finiteWingMaxDrag(S.aspectRatio));
+        Real liftSum = 0, qaFree = 0, alphaSum = 0, areaSum = 0;
         for (int i = S.firstStrip; i < S.endStrip; ++i) {
             const Strip& st = strips_[i];
             StripTelemetry& tel = out.strips[i];
@@ -330,84 +349,101 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             const Vec3 vPerp = v - st.spanAxis * dot(v, st.spanAxis);
             const Real vp2 = dot(vPerp, vPerp);
             if (vp2 < 1e-8) continue;
-            Real alpha = std::atan2(-dot(vPerp, st.normalAxis), dot(vPerp, st.chordAxis));
-            if (S.horizontal) alpha -= eps;
+            // Simple sweep theory: the section works on the flow normal to its
+            // span. Its streamwise-defined polar maps there with the sweep:
+            // angles, slope and lift limits over cos(sweep), so that q_n cl_n
+            // = q CL (linear range unchanged), an untwisted wing's zero-lift
+            // angle is the section's at any sweep, and CLmax ~ clmax cos(sweep).
+            const Real cs = st.cosSweep;
+            Real alpha = std::atan2(-dot(vPerp, st.normalNormal), dot(vPerp, st.chordNormal));
+            if (S.horizontal) alpha -= eps / cs;
+            SectionPolar sp = S.def.section;
+            sp.zeroLiftAlpha /= cs;
+            sp.clMax /= cs;
+            sp.clMin /= cs;
+            sp.clAtCdMin /= cs;
+            const Real an = a3 / cs;
 
-            // Controls on this strip.
-            Real dAlpha0 = 0, dClMax = 0, dCm = 0, dCd = 0;
+            // Controls on this strip (deflections normal to the hinge line).
+            Real dAlpha0 = 0, dClMax = 0, dCm = 0, dCd = 0, extension = 0;
             for (int c = 0; c < st.controlCount; ++c) {
                 const StripControl& sc = st.controls[c];
                 const Real delta = controlDeflection(sc, in.controls);
                 const Real eta = sc.effectiveness.empty() ? 1.0 : sc.effectiveness(std::abs(delta));
                 const Real dA = -sc.tau * eta * delta;
                 dAlpha0 += dA;
-                dClMax += sc.clMaxIncrementRatio * (-a3 * dA);
+                dClMax += sc.clMaxIncrementRatio * (-an * dA);
                 dCm += sc.cmFactor * eta * delta;
                 dCd += sc.profileDragPerRad2 * delta * delta;
+                if (sc.chordExtension > 0 && delta > 0 && sc.maxPositive > 0)
+                    extension += sc.chordExtension * std::min(delta / sc.maxPositive, 1.0);
             }
-            SectionResult sec = evaluateSection(S.def.section, alpha, a3, dAlpha0, dClMax);
+            SectionResult sec = evaluateSection(sp, alpha, an, dAlpha0, dClMax, cdMax);
             sec.cm += dCm;
             sec.cd += dCd;
             // Spoilers / lift dump on the main wing: a fraction of the
             // section lift is spoiled (the drag is carried by a drag area).
             if (si == 0 && in.controls.spoiler > 0) sec.cl *= 1 - in.controls.spoiler;
-            // Compressibility drag rise (Korn + Lock). The strip sees the flow
-            // normal to its swept span axis (simple sweep theory); Korn's
-            // equation is written for the free-stream Mach number and the
-            // streamwise lift coefficient (cl_streamwise = cl_normal cos^2),
-            // and Lock's increment is streamwise (normal: divide by cos^2).
-            const Real cs = std::cos(S.sweep);
+            // Compressibility drag rise (Korn + Lock), on the normal flow:
+            // Korn's equation is written for the free-stream Mach number and
+            // the streamwise lift coefficient (cl_streamwise = cl_n cos^2), and
+            // Lock's increment is streamwise (normal: divide by cos^2).
             const Real m = std::sqrt(vp2) / in.speedOfSound / cs;
             const Real mdd = S.def.kornFactor / cs - S.def.thicknessRatio / (cs * cs) - std::abs(sec.cl) / (10 * cs);
             const Real mcrit = mdd - 0.1077;  // (0.1/80)^(1/3)
-            if (m > mcrit) sec.cd += 20 * std::pow(m - mcrit, 4) / (cs * cs);
+            const Real cdWave = m > mcrit ? 20 * std::pow(m - mcrit, 4) / (cs * cs) : 0;
 
             const Real q = 0.5 * rho * vp2;
-            tel.alpha = alpha;
+            const Real qFree = 0.5 * rho * dot(v, v);
+            // A Fowler flap's chord extension: more lifting area.
+            const Real area = st.area * (1 + extension), chord = st.chord * (1 + extension);
+            // Angles reported streamwise-equivalent (normal-plane angle x
+            // cos(sweep)), so margins in radians mean the same on every wing.
+            tel.alpha = alpha * cs;
             tel.cl = sec.cl;
-            tel.cd = sec.cd;
+            tel.cd = sec.cd + cdWave;
             tel.cm = sec.cm;
             tel.q = q;
             tel.flowPerp = vPerp;
             tel.stalled = sec.stalled;
-            tel.stallAlpha = S.def.section.zeroLiftAlpha + dAlpha0 + (S.def.section.clMax + dClMax) / a3;
-            const int sideIdx = st.side > 0 ? 0 : 1;
-            liftSide[sideIdx] += q * st.area * sec.cl;
-            qaSide[sideIdx] += q * st.area;
-            alphaSum += alpha * st.area;
+            tel.attached = sec.attached;
+            tel.stallAlpha = (sp.zeroLiftAlpha + dAlpha0 + (sp.clMax + dClMax) / an) * cs;
+            liftSum += q * area * sec.cl;
+            qaFree += qFree * area;
+            alphaSum += alpha * cs * st.area;
             areaSum += st.area;
             if (sec.stalled) ++so.stalledStrips;
-        }
-        const Real qaTot = qaSide[0] + qaSide[1];
-        so.cl = qaTot > 0 ? (liftSide[0] + liftSide[1]) / qaTot : 0;
-        so.alphaMean = areaSum > 0 ? alphaSum / areaSum : 0;
-        // Induced angle from the strip's own loading (local lifting-line
-        // approximation): d(cl * alpha_i)/dcl = 2 alpha_i, which is what makes
-        // aileron yaw adverse and asymmetric stall yaw into the dropping wing.
-        const Real inducedPerCl = 1.0 / (kPi * arEff * S.def.spanEfficiency);
-        // Pass 2: forces and moments.
-        for (int i = S.firstStrip; i < S.endStrip; ++i) {
-            const Strip& st = strips_[i];
-            const StripTelemetry& tel = out.strips[i];
-            if (!st.attached || tel.q <= 0) continue;
-            const Vec3 r = st.position - in.cg;
-            Vec3 dragDir = normalized(-tel.flowPerp);
-            // Lift is normal to both the strip's (spanwise-free) flow and its
-            // swept span axis; the unswept lateral axis would tilt it forward
-            // by ~sin(alpha) sin^2(sweep) and cancel induced drag.
+
+            // Forces. Lift is normal to both the strip's (spanwise-free) flow
+            // and its swept span axis; the unswept lateral axis would tilt it
+            // forward by ~sin(alpha) sin^2(sweep) and cancel induced drag.
+            Vec3 dragDir = normalized(-vPerp);
             const Vec3 la = dot(st.spanAxis, st.liftAxis) >= 0 ? st.spanAxis : -st.spanAxis;
             if (S.horizontal && eps != 0) {
                 // Downwash tilts the local flow (rotate about the span axis).
                 const Vec3 n = normalized(cross(la, dragDir));
-                dragDir = normalized(dragDir * std::cos(eps) + n * std::sin(eps));
+                dragDir = normalized(dragDir * std::cos(eps / cs) + n * std::sin(eps / cs));
             }
             const Vec3 liftDir = normalized(cross(dragDir, la));
-            const Real ai = tel.cl * inducedPerCl;
-            const Real qa = tel.q * st.area;
-            const Vec3 f = liftDir * (qa * tel.cl) + dragDir * (qa * (tel.cd + tel.cl * ai));
+            // Induced angle in the normal plane from the streamwise CL (cl_n
+            // cos^2), fading as the flow separates (a stalled strip sheds its
+            // vorticity rather than trailing it).
+            const Real ai = sec.cl * cs * cs * inducedPerCl * sec.attached;
+            const Real qa = q * area;
+            // Attached profile drag is skin friction and pressure drag of the
+            // whole local flow (spanwise flow included); the separated part,
+            // the wave drag and the induced drag act on the normal flow.
+            const Real cdFriction = sec.attached * sec.cd;
+            const Real cdNormal = (1 - sec.attached) * sec.cd + cdWave;
+            const Vec3 f = liftDir * (qa * sec.cl) + dragDir * (qa * (cdNormal + sec.cl * ai)) +
+                           normalized(-v) * (qFree * area * cdFriction);
             out.force += f;
-            out.moment += cross(r, f) + st.liftAxis * (qa * st.chord * tel.cm);
+            out.moment += cross(r, f) + st.liftAxis * (qa * chord * sec.cm);
         }
+        // The surface's streamwise lift coefficient (on the free-stream q),
+        // the input of the downwash it makes.
+        so.cl = qaFree > 0 ? liftSum / qaFree : 0;
+        so.alphaMean = areaSum > 0 ? alphaSum / areaSum : 0;
     }
 
     // Fuselage: Munk moment and crossflow drag (free stream; slender-body

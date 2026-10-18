@@ -68,8 +68,8 @@ the site when it is done.
 |---|---|---|---|
 | 1 | Load sheet (fuel and payload, limits, CG envelope); Congonhas 35L default; km/h and mph readouts; jet fixes (fuel starvation, gear handle) | — | ✅ shipped |
 | 2 | Weather on the aircraft and the ground: merge the wind branch (boundary layer, winds aloft, MIL-HDBK-1797 turbulence, gusts, microbursts, thermals, ridge lift); fix its span-gradient and microburst-height bugs; wind-aware trim and spawns (crab on final); wind display (vector, drift, track); turbulence visible in the streamlines; **wet and flooded runways** (rain, water depth, braking action, hydroplaning above 9·√p kt) | — | ✅ shipped (contaminant drag, slush and ice still open) |
-| 3 | Aerodynamics I: consistent simple-sweep strip frame and the downwash bug; true section CLmax (remove the compensating flap gains); finite-wing post-stall drag | — | next |
-| 4 | Aerodynamics II: nonlinear lifting line (span loading, tip stall, pitch-up, roll damping); dynamic stall | 3 | |
+| 3 | Aerodynamics I: consistent simple-sweep strip frame and the downwash bug; true section CLmax (remove the compensating flap gains); finite-wing post-stall drag | — | ✅ shipped (Top G re-derived: section clmax 1.48, Fowler flaps with 12 % chord extension, incidences re-centred) |
+| 4 | Aerodynamics II: nonlinear lifting line (span loading, tip stall, pitch-up, roll damping); dynamic stall | 3 | next |
 | 5 | Navigation: pick a destination airport and get its real ILS tuned and a GPS route (flight plan, legs, CDI/ND); real airport, runway and ILS data for Brazil (source and licence to settle: AIP Brasil / DECEA, OurAirports) | — | |
 | 6 | Clickable cockpit: first-person mouse look and a pointer on every switch, knob and lever that the core models (fuel cut-off cuts the fuel); few key bindings, the rest by clicking | — | |
 | 7 | Synthesized sound per type (piston, turboprop, turbofan, afterburning turbojet) from the engine states | 8–10 for the new types | |
