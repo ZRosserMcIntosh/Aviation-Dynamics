@@ -18,6 +18,7 @@ const char* toString(ControlChannel c) {
         case ControlChannel::Elevator: return "elevator";
         case ControlChannel::Rudder: return "rudder";
         case ControlChannel::Flap: return "flap";
+        case ControlChannel::Spoiler: return "spoiler";
         case ControlChannel::None: return "none";
     }
     return "none";

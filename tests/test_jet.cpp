@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT
 #include "avd/assists.hpp"
 #include "avd/loading.hpp"
+#include "avd/wake.hpp"
 #include "avd/units.hpp"
 #include "avd_test.hpp"
 #include "scenarios.hpp"
@@ -522,4 +523,67 @@ TEST_CASE("top g: a wet runway lengthens the stop; standing water above the hydr
     // From 140 kt the tyres ride on standing water until they slow below it.
     const Real wetFast = stop(0.001, 140), floodedFast = stop(0.008, 140);
     CHECK(floodedFast > wetFast + 150);
+}
+
+TEST_CASE("top g: spoiler panels dump lift where they are and shed their own vortices; gear drag pitches nose down") {
+    const AeroModel& m0 = Aircraft(jet()).aeroModel();
+    (void)m0;
+    Aircraft ac(jet());
+    const AeroModel& m = ac.aeroModel();
+    CHECK(m.hasSpoilers());
+    AeroOutputs out;
+    m.prepare(out);
+    AeroInputs in;
+    in.cg = ac.massProperties().cg;
+    const Real v = 128, a = 0.03;
+    in.velocityBody = {v * std::cos(a), 0, v * std::sin(a)};
+    auto lift = [&](Real sb) {
+        in.controls.speedbrake = sb;
+        for (int k = 0; k < 3; ++k) m.evaluate(in, out);
+        return out.force.x * std::sin(a) - out.force.z * std::cos(a);
+    };
+    const Real clean = lift(0);
+    // The strips behind the panels lose their lift and separate (red tufts);
+    // the root, with no panels, stays attached. (The outer wing loses lift
+    // too: past the panels' outer edge the circulation steps back up, and
+    // that edge's vortex washes the outer wing down like an inboard tip.)
+    std::vector<Real> clClean(static_cast<std::size_t>(m.stripCount()));
+    for (int i = 0; i < m.stripCount(); ++i) clClean[static_cast<std::size_t>(i)] = out.strips[static_cast<std::size_t>(i)].cl;
+    const Real dumped = lift(1);
+    CHECK(dumped < 0.8 * clean);
+    for (int i = m.firstStrip(0); i < m.endStrip(0); ++i) {
+        const Real y = std::abs(m.stripGeometry(i).position.y);
+        if (y > 5 && y < 10) {
+            CHECK(out.strips[i].cl < 0.7 * clClean[static_cast<std::size_t>(i)]);
+            CHECK(out.strips[i].attached < 0.5);
+        }
+        if (y < 3.8) CHECK(out.strips[i].attached > 0.99);
+    }
+    // The wake: a clean wing sheds one rolled-up vortex a side; with the
+    // spoilers out the lift steps down at their edges, so it sheds more.
+    auto vortices = [&](Real sb) {
+        Aircraft a2(jet());
+        SimpleWeather atm;
+        FlatGround ground(0);
+        const TrimResult tr = trimAt(a2, 10000, ktToMs(250) * 1.16);
+        Wake w(a2.aeroModel());
+        PilotInput pin = tr.input;
+        a2.setCockpitControl("speedbrake.lever", sb > 0 ? 2 : 0);
+        for (int i = 0; i < 240 * 4; ++i) {
+            a2.step(kDt, pin, ground, atm);
+            w.update(a2, atm, &ground);
+        }
+        return w.pair(1.0).vortices;
+    };
+    CHECK(vortices(1) > vortices(0));
+    // Gear drag below the CG: nose down when it comes out.
+    Aircraft up(jet()), down(jet());
+    up.setGearImmediately(false);
+    down.setGearImmediately(true);
+    SimpleWeather atm;
+    FlatGround ground(0);
+    const TrimResult tu = trimAt(up, 5000, ktToMs(200) * 1.08, 1, false);
+    const TrimResult td = trimAt(down, 5000, ktToMs(200) * 1.08, 1, true);
+    CHECK(tu.converged && td.converged);
+    CHECK(td.trim > tu.trim);  // more nose-up trim needed against the gear's nose-down drag moment
 }

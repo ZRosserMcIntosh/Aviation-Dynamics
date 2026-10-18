@@ -127,6 +127,12 @@
    "kind": "estimated",
    "source": "EST",
    "note": "Hydraulic nose-wheel steering: tiller +-80 deg (typical of large business jets; G650 figure not public), rudder pedals +-10 deg. Actuator slew 20 deg/s, estimated."
+  },
+  {
+   "field": "surfaces[0].panels[1].controls.spoiler",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Three spoiler panels per side ahead of the outboard flap (photographs), 14 % chord, 40 deg at full speedbrake; their drag (~1.6 m^2 CdA fully out) and lift loss (~25 % of the wing's) match the lumped speedbrake estimate they replace."
   }
  ],
  "mass": {
@@ -321,6 +327,15 @@
        "antisymmetric": true,
        "clmax_increment_ratio": 0.5,
        "profile_drag_per_rad2": 0.25
+      },
+      {
+       "name": "spoiler",
+       "channel": "spoiler",
+       "span_start": 0.0,
+       "span_end": 0.6,
+       "chord_fraction": 0.14,
+       "max_positive_deg": 40,
+       "max_negative_deg": 0
       }
      ]
     },

@@ -151,6 +151,7 @@ ControlChannel channelFrom(const std::string& s, Obj& o) {
     if (s == "elevator") return ControlChannel::Elevator;
     if (s == "rudder") return ControlChannel::Rudder;
     if (s == "flap") return ControlChannel::Flap;
+    if (s == "spoiler") return ControlChannel::Spoiler;
     o.err(o.path() + ".channel", "must be one of aileron, elevator, rudder, flap");
     return ControlChannel::None;
 }

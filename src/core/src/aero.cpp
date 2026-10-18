@@ -266,6 +266,8 @@ void AeroModel::addPanel(int si, const PanelDef& p, int side) {
             sc.clMaxIncrementRatio = c.clMaxIncrementRatio;
             sc.profileDragPerRad2 = c.profileDragPerRad2;
             sc.chordExtension = c.chordExtension;
+            sc.chordFraction = c.chordFraction;
+            if (c.channel == ControlChannel::Spoiler) hasSpoilers_ = true;
             s.controls[s.controlCount++] = sc;
         }
         strips_.push_back(s);
@@ -314,12 +316,25 @@ Vec3 AeroModel::slipstreamAt(const Vec3& position, const AeroInputs& in) const {
     return dv;
 }
 
-std::array<Real, 5> AeroModel::controlEffects(const Strip& st, const ControlDeflections& d) const {
+std::array<Real, 6> AeroModel::controlEffects(const Strip& st, const ControlDeflections& d) const {
     // Zero-lift shift, clmax increment per unit lift slope, cm, cd, chord extension.
-    std::array<Real, 5> e{};
+    std::array<Real, 6> e{};
     for (int c = 0; c < st.controlCount; ++c) {
         const StripControl& sc = st.controls[c];
         const Real delta = controlDeflection(sc, d);
+        if (sc.channel == ControlChannel::Spoiler) {
+            // A spoiler separates the flow behind it: most of the section's
+            // lift is lost (~0.95 sin delta, at most 85 %), the aft loading
+            // with it (nose-up section moment), and it adds pressure drag on
+            // its projected height, well below a free flat plate's since the
+            // panel sits in the boundary layer (DATCOM 6.1.5.1 order).
+            const Real sd = std::sin(std::max(delta, 0.0));
+            const Real f = std::min(0.95 * sd, 0.85);
+            e[5] = 1 - (1 - e[5]) * (1 - f);
+            e[2] += 0.06 * f;
+            e[3] += 0.45 * sc.chordFraction * sd;
+            continue;
+        }
         const Real eta = sc.effectiveness.empty() ? 1.0 : sc.effectiveness(std::abs(delta));
         const Real dA = -sc.tau * eta * delta;
         e[0] += dA;
@@ -338,6 +353,7 @@ Real AeroModel::controlDeflection(const StripControl& c, const ControlDeflection
         case ControlChannel::Elevator: u = -d.elevator; break;
         case ControlChannel::Rudder: u = -d.rudder; break;
         case ControlChannel::Flap: return clamp(d.flap, -c.maxNegative, c.maxPositive);
+        case ControlChannel::Spoiler: return clamp(d.speedbrake, 0.0, 1.0) * c.maxPositive;
         case ControlChannel::None: return 0;
     }
     u = clamp(u, -1.0, 1.0);  // mechanical stops
@@ -625,11 +641,15 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             e.an = an;
             // Controls on this strip (deflections normal to the hinge line),
             // spread spanwise over half a chord on a lifting-line surface.
-            const std::array<Real, 5> ctl = ll ? out.llControl[static_cast<std::size_t>(&st - strips_.data())] : controlEffects(st, in.controls);
-            const Real dAlpha0 = ctl[0], dClMax = ctl[1] * an, dCm = ctl[2], dCd = ctl[3], extension = ctl[4];
+            const std::array<Real, 6> ctl = ll ? out.llControl[static_cast<std::size_t>(&st - strips_.data())] : controlEffects(st, in.controls);
+            const Real dAlpha0 = ctl[0], dClMax = ctl[1] * an, dCm = ctl[2], dCd = ctl[3], extension = ctl[4], spoiled = ctl[5];
             e.sec = evaluateSection(sp, alpha, an, dAlpha0, dClMax, cdMax);
             e.sec.cm += dCm;
             e.sec.cd += dCd;
+            if (spoiled > 0) {
+                e.sec.cl *= 1 - spoiled;
+                e.sec.attached = std::min(e.sec.attached, 1 - spoiled);
+            }
             // Spoilers / lift dump on the main wing: a fraction of the
             // section lift is spoiled (the drag is carried by a drag area).
             if (si == 0 && in.controls.spoiler > 0) e.sec.cl *= 1 - in.controls.spoiler;
@@ -655,16 +675,19 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
         // Free flow at every strip (no induced flow yet).
         const int n0 = S.firstStrip, n = S.endStrip - S.firstStrip;
         if (ll) {
-            std::array<Real, 5>* raw = out.llControl.data() + n0;
-            std::array<std::array<Real, 5>, 64> local{};
+            std::array<Real, 6>* raw = out.llControl.data() + n0;
+            std::array<std::array<Real, 6>, 64> local{};
             for (int k = 0; k < n && k < 64; ++k) local[static_cast<std::size_t>(k)] = controlEffects(strips_[static_cast<std::size_t>(n0 + k)], in.controls);
             for (int i = 0; i < n && i < 64; ++i) {
-                std::array<Real, 5> sm{};
+                std::array<Real, 6> sm{};
                 for (int j = 0; j < n && j < 64; ++j) {
                     const Real w = S.controlSmoothing[static_cast<std::size_t>(i * n + j)];
                     if (w == 0) continue;
                     for (int q = 0; q < 5; ++q) sm[static_cast<std::size_t>(q)] += w * local[static_cast<std::size_t>(j)][static_cast<std::size_t>(q)];
                 }
+                // A spoiler's separation is local, with a sharp edge (whose
+                // vortex is the point): not smoothed.
+                sm[5] = local[static_cast<std::size_t>(i)][5];
                 raw[i] = sm;
             }
         }

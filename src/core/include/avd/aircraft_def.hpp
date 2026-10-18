@@ -58,7 +58,9 @@ struct SectionPolar {
     Real flatPlateCd = 1.9;           // cd at 90 deg (finite-aspect flat plate ~1.2-2.0)
 };
 
-enum class ControlChannel { Aileron, Elevator, Rudder, Flap, None };
+// Spoiler: a panel on the upper surface raised by the speedbrake (lift dump);
+// max_positive is its full deflection, chord_fraction its chord.
+enum class ControlChannel { Aileron, Elevator, Rudder, Flap, Spoiler, None };
 
 // A plain flap-type control surface occupying part of a panel's span.
 struct ControlSurfaceDef {
@@ -239,6 +241,9 @@ struct SpeedbrakeDef {
     int detents = 3;                  // RET, ..., FULL
     Real dragArea = 0;                // m^2 of CdA fully deployed
     Real liftLossFraction = 0;        // wing lift spoiled when fully deployed (lift dump)
+    // (dragArea and liftLossFraction are the lumped model for aircraft
+    // without spoiler panels; with spoiler controls on the wing the panels
+    // carry the drag and the lift loss where they are.)
     Real rate = 0.5;                  // deployment fraction per second
 };
 

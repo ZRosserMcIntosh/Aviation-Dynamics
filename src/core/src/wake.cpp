@@ -106,10 +106,14 @@ void Wake::buildLayouts(const AeroModel& m) {
             std::vector<int> strips;
         };
         std::vector<Bin> bins;
+        // A bin never straddles a side or a control-surface edge: flap ends,
+        // spoiler edges and aileron ends are where real wakes shed vortices.
         for (int k = 0; k < n;) {
             Bin b;
-            const int side = m.stripGeometry(order[k]).side;
-            while (k < n && static_cast<int>(b.strips.size()) < perBin && m.stripGeometry(order[k]).side == side) b.strips.push_back(order[k++]);
+            const AeroModel::StripGeometry g = m.stripGeometry(order[k]);
+            while (k < n && static_cast<int>(b.strips.size()) < perBin && m.stripGeometry(order[k]).side == g.side &&
+                   m.stripGeometry(order[k]).controls == g.controls)
+                b.strips.push_back(order[k++]);
             if (!bins.empty()) {
                 const int prevLast = bins.back().strips.back();
                 const AeroModel::StripGeometry pg = m.stripGeometry(prevLast), ng = m.stripGeometry(b.strips.front());
@@ -314,13 +318,30 @@ void Wake::shed(const Aircraft& ac, Real speed) {
         const bool lifting = gamMax > 1e-3;
         if (lifting) {
             const Real tiny = 0.03 * gamMax;
+            // Within a run of one sign, separate concentrations (a flap or
+            // spoiler edge and the wingtip) roll up into separate vortices,
+            // which then orbit and merge downstream: split at a valley well
+            // below the peaks on both sides.
+            std::array<bool, kMaxEdges> split{};
+            auto sgnOf = [&](int e) { const Real g = gam[static_cast<std::size_t>(e)]; return std::abs(g) < tiny ? 0 : (g > 0 ? 1 : -1); };
+            for (int e = 1; e + 1 < gt.edgeCount; ++e) {
+                const int sg = sgnOf(e) != 0 ? sgnOf(e) : sgnOf(e - 1);
+                if (sg == 0) continue;
+                Real left = 0, right = 0;
+                for (int k = e - 1; k >= 0 && sgnOf(k) != -sg; --k) left = std::max(left, std::abs(gam[static_cast<std::size_t>(k)]));
+                for (int k = e + 1; k < gt.edgeCount && sgnOf(k) != -sg; ++k) right = std::max(right, std::abs(gam[static_cast<std::size_t>(k)]));
+                const Real valley = std::abs(gam[static_cast<std::size_t>(e)]);
+                split[static_cast<std::size_t>(e)] = std::min(left, right) > 0.2 * gamMax && valley < 0.35 * std::min(left, right) &&
+                                                     valley <= std::abs(gam[static_cast<std::size_t>(e - 1)]) &&
+                                                     valley <= std::abs(gam[static_cast<std::size_t>(e + 1)]);
+            }
             int runSign = 0, run = -1;
             std::array<Real, kMaxVortices> wsum{}, gsum{};
             std::array<Vec3, kMaxVortices> psum{};
             for (int e = 0; e < gt.edgeCount; ++e) {
                 const Real gm = gam[static_cast<std::size_t>(e)];
                 const int sgn = std::abs(gm) < tiny ? 0 : (gm > 0 ? 1 : -1);
-                if (run < 0 || (sgn != 0 && sgn != runSign && runSign != 0)) {
+                if (run < 0 || (sgn != 0 && sgn != runSign && runSign != 0) || split[static_cast<std::size_t>(e)]) {
                     if (run + 1 < kMaxVortices) ++run;
                     runSign = sgn;
                 } else if (runSign == 0) {
@@ -477,7 +498,7 @@ void Wake::advanceTo(Real time, const AtmosphereField& air, Real altitudeOfZeroZ
 void Wake::advance(Gate& gt, Real dt, const AtmosphereField& air, Real altitudeOffset) {
     const Real age = time_ - gt.time;
     const Real d = decay(gt, age);
-    const bool ground = gt.groundZ < kNoGround * 0.5;
+    const bool ground = gt.groundZ < kNoGround * 0.5 && gt.groundZ - gt.anchor.z < 8 * std::max(gt.b0, 1.0);
     // One air sample per gate, at the pair's middle; the gradient carries it
     // across the pair (shear tilts and stretches it).
     Vec3 mid = gt.anchor;
@@ -556,7 +577,9 @@ void Wake::forEachSegment(Real minAge, bool images, const Vec3* near, Emit&& emi
         if (std::abs(gamma) < 1e-4) return;
         if (dot(b - a, b - a) < 1e-8) return;
         emit(a, b, gamma, core, age);
-        if (images && groundZ < kNoGround * 0.5) emit(mirror(a, groundZ), mirror(b, groundZ), -gamma, core, age);
+        // Ground images only where the ground matters (within ~8 spans).
+        if (images && groundZ < kNoGround * 0.5 && groundZ - std::max(a.z, b.z) < 8 * refSpan_)
+            emit(mirror(a, groundZ), mirror(b, groundZ), -gamma, core, age);
     };
     // Per layout: the attached row (now) and its gates, newest first. Seeded
     // gates (layout -1) form their own sequence.
@@ -726,6 +749,7 @@ Wake::PairInfo Wake::pair(Real age) const {
     info.left = posRight ? vn.pos : vp.pos;
     info.right = posRight ? vp.pos : vn.pos;
     info.height = gt.groundZ < kNoGround * 0.5 ? gt.groundZ - 0.5 * (vp.pos.z + vn.pos.z) : kNoGround;
+    info.vortices = gt.vortexCount;
     return info;
 }
 

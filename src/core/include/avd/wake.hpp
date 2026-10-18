@@ -114,6 +114,7 @@ public:
         Real rolled = 0;      // roll-up fraction 0..1
         Vec3 left, right;     // vortex centres, local NED
         Real height = 0;      // above the ground (m), large without ground
+        int vortices = 0;     // vortices the gate's sheet rolls up into (2 for a clean wing)
     };
     // The main-wing gate closest to `age` seconds old.
     PairInfo pair(Real age) const;
@@ -122,7 +123,7 @@ public:
 
 private:
     static constexpr int kMaxEdges = 24;
-    static constexpr int kMaxVortices = 6;
+    static constexpr int kMaxVortices = 8;
 
     // Trailing-edge discretisation of one surface (structural frame).
     struct Layout {

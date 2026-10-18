@@ -445,7 +445,8 @@ void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, con
             c.controls.rudder *= std::max(0.15, sq(def_.controls.rudderLimiterIas / eas));
     }
     c.controls.flap = flapAngle_;
-    c.controls.spoiler = def_.controls.speedbrake.present ? speedbrakePos_ * def_.controls.speedbrake.liftLossFraction : 0.0;
+    c.controls.speedbrake = speedbrakePos_;
+    c.controls.spoiler = def_.controls.speedbrake.present && !aeroModel_->hasSpoilers() ? speedbrakePos_ * def_.controls.speedbrake.liftLossFraction : 0.0;
     // Wheel steering follows the pedals (not the rudder tab) plus the tiller,
     // through the steering actuator's slew limit where it is powered.
     for (std::size_t i = 0; i < def_.gear.size(); ++i) {
@@ -566,12 +567,26 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
         moment += cross(r, thrust);
     }
     // ---- Landing gear and speedbrake drag areas ----
+    // Where they are: extended gear drags below the CG (nose down), a lumped
+    // speedbrake on the wing. Spoiler panels are in the aerodynamics instead.
     {
-        const Real cda = def_.controls.gear.dragArea * (def_.controls.gear.retractable ? gearPos_ : 0.0) +
-                         (def_.controls.speedbrake.present ? def_.controls.speedbrake.dragArea * speedbrakePos_ : 0.0);
-        if (cda > 0) {
-            const Vec3 vAir = vBody - windBody;
-            force -= vAir * (0.5 * rho * length(vAir) * cda);
+        const Vec3 vAir = vBody - windBody;
+        const Real qv = 0.5 * rho * length(vAir);
+        const Real gearCda = def_.controls.gear.dragArea * (def_.controls.gear.retractable ? gearPos_ : 0.0);
+        if (gearCda > 0 && !def_.gear.empty()) {
+            const Real share = gearCda / static_cast<Real>(def_.gear.size());
+            for (const GearDef& gd : def_.gear) {
+                const Vec3 at = gd.attach + Vec3{0, 0, 0.5 * gd.length * gearPos_} - cg;
+                const Vec3 f = vAir * (-qv * share);
+                force += f;
+                moment += cross(at, f);
+            }
+        }
+        if (def_.controls.speedbrake.present && !aeroModel_->hasSpoilers() && speedbrakePos_ > 0) {
+            const Vec3 at = (aeroModel_->surfaceCount() > 0 ? aeroModel_->surfaceCentroid(0) : cg) - cg;
+            const Vec3 f = vAir * (-qv * def_.controls.speedbrake.dragArea * speedbrakePos_);
+            force += f;
+            moment += cross(at, f);
         }
     }
 
@@ -761,7 +776,8 @@ void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, co
     if (def_.controls.speedbrake.present) {
         const Real target = static_cast<Real>(speedbrakeDetent_) / std::max(def_.controls.speedbrake.detents - 1, 1);
         speedbrakePos_ = approach(speedbrakePos_, target, def_.controls.speedbrake.rate * dt);
-        c.controls.spoiler = speedbrakePos_ * def_.controls.speedbrake.liftLossFraction;
+        c.controls.speedbrake = speedbrakePos_;
+        c.controls.spoiler = aeroModel_->hasSpoilers() ? 0.0 : speedbrakePos_ * def_.controls.speedbrake.liftLossFraction;
     }
     const bool flapPowered = !def_.controls.flapsElectric ||
                              (electrical_.powered(18) && (flapLoad < 0 || electrical_.loadSwitch(flapLoad)));

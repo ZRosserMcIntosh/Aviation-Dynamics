@@ -61,6 +61,7 @@ struct ControlDeflections {
     Real flap = 0;      // rad, trailing edge down
     Real spoiler = 0;   // fraction of main-wing lift spoiled (speedbrake / lift dump)
     Real stabilizer = 0;  // rad, trimmable horizontal stabiliser, + nose up (leading edge down)
+    Real speedbrake = 0;  // 0..1, spoiler panels' deployment
 };
 
 // Propeller slipstream as seen by downstream surfaces.
@@ -124,8 +125,9 @@ struct AeroOutputs {
     std::vector<Vec3> llInfluence;         // per surface, n x n: air velocity at i per unit circulation of j
     std::vector<Real> llJacobian, llResidual, llGamma, llSeparated;
     std::vector<Vec3> llGrad;
-    // Per strip: zero-lift shift, clmax increment / slope, cm, cd, chord extension.
-    std::vector<std::array<Real, 5>> llControl;
+    // Per strip: zero-lift shift, clmax increment / slope, cm, cd, chord
+    // extension, spoiled lift fraction.
+    std::vector<std::array<Real, 6>> llControl;
     std::array<Vec3, 8> llDir{};           // flow direction the influence was built for
     std::array<Real, 8> llHeight{};
     std::array<bool, 8> llValid{};
@@ -158,10 +160,13 @@ public:
         Vec3 position, chordAxis, normalAxis, spanAxis;
         Real area = 0, chord = 0;
         Real width = 0;  // length along spanAxis (m)
+        unsigned controls = 0;  // bit (1 << channel) for each control surface on the strip
     };
     StripGeometry stripGeometry(int i) const {
         const Strip& s = strips_[static_cast<std::size_t>(i)];
-        return {s.surface, s.side, s.position, s.chordAxis, s.normalAxis, s.spanAxis, s.area, s.chord, s.width};
+        unsigned mask = 0;
+        for (int c = 0; c < s.controlCount; ++c) mask |= 1u << static_cast<unsigned>(s.controls[static_cast<std::size_t>(c)].channel);
+        return {s.surface, s.side, s.position, s.chordAxis, s.normalAxis, s.spanAxis, s.area, s.chord, s.width, mask};
     }
 
     // Detach (or re-attach) every strip of a surface on one side (+1 right, -1
@@ -179,6 +184,7 @@ private:
         Real clMaxIncrementRatio = 0.6;
         Real profileDragPerRad2 = 0.9;
         Real chordExtension = 0;  // Fowler: chord added at full positive deflection (fraction of c)
+        Real chordFraction = 0.25;
     };
     struct Strip {
         int surface;
@@ -217,7 +223,11 @@ private:
 
     void addPanel(int surfaceIndex, const PanelDef& panel, int side);
     Real controlDeflection(const StripControl& c, const ControlDeflections& d) const;
-    std::array<Real, 5> controlEffects(const Strip& st, const ControlDeflections& d) const;
+    std::array<Real, 6> controlEffects(const Strip& st, const ControlDeflections& d) const;
+public:
+    bool hasSpoilers() const { return hasSpoilers_; }
+private:
+    bool hasSpoilers_ = false;
     Vec3 localFlow(const Surface& S, const Strip& st, const Vec3& r, const AeroInputs& in) const;
     Vec3 slipstreamAt(const Vec3& position, const AeroInputs& in) const;
     // Nonlinear lifting line (Phillips & Snyder 2000) over strips [n0, n0+n)
