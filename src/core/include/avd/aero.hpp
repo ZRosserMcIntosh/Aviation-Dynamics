@@ -103,6 +103,7 @@ struct SurfaceOutput {
 struct StripTelemetry {
     Real alpha = 0;
     Real stallAlpha = 0;       // positive stall angle incl. control effects
+    Real zeroLiftAlpha = 0;    // zero-lift angle incl. control effects (flaps)
     Real cl = 0, cd = 0, cm = 0;
     Real q = 0;                // local dynamic pressure (0 = strip inactive)
     Vec3 flowPerp;             // strip velocity relative to air, spanwise part removed (body)

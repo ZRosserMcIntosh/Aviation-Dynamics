@@ -483,6 +483,12 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.vec3("position_m", di.position, 1, true);
         o.num("drag_area_m2", di.dragArea, 1, true);
         o.num("critical_mach", di.criticalMach);
+        if (o.has("body")) {
+            Obj b = o.child("body");
+            b.vec3("axis", di.bodyAxis, 1, true);
+            b.num("length_m", di.bodyLength, 1, true);
+            b.num("size_m", di.bodySize, 1, true);
+        }
         d.dragItems.push_back(di);
     });
     r.each("engines", [&](Obj& o, std::size_t) {

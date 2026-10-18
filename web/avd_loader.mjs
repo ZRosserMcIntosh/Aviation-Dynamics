@@ -46,7 +46,7 @@ export default async function createAvdModule(wasmBytes) {
   A.cockpitState = () => new Float64Array(memory.buffer, ex.avd_cockpit(), 96);
   A.markings = () => Array.from(new Float64Array(memory.buffer, ex.avd_markings(), 96));
   A.compassCard = () => Array.from(new Float64Array(memory.buffer, ex.avd_compass_card(), 12));
-  A.flow = () => new Float64Array(memory.buffer, ex.avd_flow(), 16 + 64 * 18 + 40);
+  A.flow = () => new Float64Array(memory.buffer, ex.avd_flow(), 16 + 64 * 20 + 4 * 14);
   A.jet = () => new Float64Array(memory.buffer, ex.avd_jet(), 64);
   A.runway = () => Array.from(new Float64Array(memory.buffer, ex.avd_runway(), 6));
   A.windGrid = (hx, hy, hz, nx, ny, nz) => new Float64Array(memory.buffer, ex.avd_wind_grid(hx, hy, hz, nx, ny, nz), 3 * nx * ny * nz);

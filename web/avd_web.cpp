@@ -103,8 +103,8 @@ void applyLoad(Aircraft& ac) {
     for (std::size_t i = 0; i < g->loadTanks.size(); ++i) ac.fuel().setTankQuantity(static_cast<int>(i), g->loadTanks[i]);
     ac.refreshMass();
 }
-constexpr int kFlowStrips = 64, kFlowStride = 18;
-double g_flow[16 + kFlowStrips * kFlowStride + 4 * 10];
+constexpr int kFlowStrips = 64, kFlowStride = 20, kFlowEngine = 14;
+double g_flow[16 + kFlowStrips * kFlowStride + 4 * kFlowEngine];
 char* g_text = nullptr;
 int g_textCap = 0;
 std::vector<std::string> g_errors;
@@ -585,11 +585,14 @@ AVD_EXPORT int avd_procedure_status() {
 // Airflow (for the flow visualisation): what the strip aerodynamics computed
 // this step. Header: [0] strips, [1] engines, [2] TAS m/s, [3] alpha, [4] beta
 // (rad), [5] density, [6..8] CG (structural frame), [9] speed of sound.
-// Strips from 16, 16 doubles each: quarter-chord position xyz, span axis xyz,
-// normal (lift side) axis xyz, chord, area, cl, alpha, q, stall alpha, surface.
-// Engines after the strips, 10 doubles each: position xyz, thrust axis xyz,
+// Strips from 16, 20 doubles each: quarter-chord position xyz, span axis xyz,
+// normal (lift side) axis xyz, chord, area, cl, alpha, q, stall alpha, surface,
+// attached fraction, circulation, zero-lift alpha (with the flaps), cd.
+// Engines after the strips, 14 doubles each: position xyz, thrust axis xyz,
 // radius, slipstream / jet velocity increment (m/s), thrust (N), kind (0
-// propeller, 1 turbofan). Structural frame: x forward, y right, z down.
+// propeller, 1 turbofan), propeller rate rad/s (signed: right-handed about the
+// thrust axis), blades, swirl m/s at 0.7 R, hub radius fraction. Structural
+// frame: x forward, y right, z down.
 AVD_EXPORT double* avd_flow() {
     for (double& v : g_flow) v = 0;
     if (!g) return g_flow;
@@ -614,21 +617,25 @@ AVD_EXPORT double* avd_flow() {
         o[6] = sg.normalAxis.x; o[7] = sg.normalAxis.y; o[8] = sg.normalAxis.z;
         o[9] = sg.chord; o[10] = sg.area; o[11] = t.cl; o[12] = t.alpha; o[13] = t.q; o[14] = t.stallAlpha;
         o[15] = sg.surface;
-        o[16] = t.attached; o[17] = t.gamma;
+        o[16] = t.attached; o[17] = t.gamma; o[18] = t.zeroLiftAlpha; o[19] = t.cd;
     }
     double* e = g_flow + 16 + kFlowStrips * kFlowStride;
     int ne = 0;
     for (int i = 0; i < ac.engineCount() && ne < 4; ++i, ++ne) {
         const SlipstreamState& ss = ac.slipstream(i);
-        double* o = e + ne * 10;
+        double* o = e + ne * kFlowEngine;
+        const EngineTelemetry& et = ac.telemetry().engines[static_cast<std::size_t>(i)];
+        const PropellerDef& pd = g->def.engines[static_cast<std::size_t>(i)].propeller;
         o[0] = ss.discCentre.x; o[1] = ss.discCentre.y; o[2] = ss.discCentre.z;
         o[3] = ss.axis.x; o[4] = ss.axis.y; o[5] = ss.axis.z;
-        o[6] = ss.radius; o[7] = ss.axialIncrement; o[8] = ac.telemetry().engines[static_cast<std::size_t>(i)].prop.thrust; o[9] = 0;
+        o[6] = ss.radius; o[7] = ss.axialIncrement; o[8] = et.prop.thrust; o[9] = 0;
+        o[10] = et.rpm * kTwoPi / 60 * (ss.clockwiseFromBehind ? 1.0 : -1.0);
+        o[11] = pd.blades; o[12] = ss.swirlVelocity; o[13] = pd.hubRadiusFraction;
     }
     for (int i = 0; i < ac.turbofanCount() && ne < 4; ++i, ++ne) {
         const TurbofanDef& d = g->def.turbofans[static_cast<std::size_t>(i)];
         const TurbofanState& ts = ac.turbofanState(i);
-        double* o = e + ne * 10;
+        double* o = e + ne * kFlowEngine;
         const Real rNozzle = 0.45;
         const Real rho = std::max(ac.telemetry().air.state.density, 0.05);
         const Real v0 = ao.airspeed;
@@ -956,10 +963,12 @@ AVD_EXPORT double* avd_wind_box(double cE, double cN, double cU, double hE, doub
     return g_windBox;
 }
 
-// Bluff bodies in the airflow (airflow view): extended gear legs and deployed
-// spoiler panels. [0] count, then 10 doubles a body: position (structural,
-// m), axis (the body's long axis), size (diameter or projected height, m),
-// length along the axis (m), drag area (m^2), kind (0 gear, 1 spoiler).
+// Bluff bodies in the airflow (airflow view): extended retractable gear legs,
+// deployed spoiler panels, and the drag items given a shape (wing struts,
+// fixed gear and fairings). [0] count, then 10 doubles a body: position
+// (structural, m), axis (the body's long axis), size (diameter or projected
+// height, m), length along the axis (m), drag area (m^2), kind (0 gear,
+// 1 spoiler, 2 strut or other fixed item).
 double g_bodies[1 + 32 * 10];
 AVD_EXPORT double* avd_bodies() {
     std::fill(std::begin(g_bodies), std::end(g_bodies), 0.0);
@@ -975,14 +984,18 @@ AVD_EXPORT double* avd_bodies() {
     };
     const GearRetractionDef& gc = g->def.controls.gear;
     const Real down = gc.retractable ? ac.gearPosition() : 1.0;
-    if (down > 0.05 && !g->def.gear.empty()) {
-        // Retractable: its drag area shared over the legs; fixed gear (in the
-        // drag items): a wheel and strut's frontal area at Cd ~1.
+    if (gc.retractable && down > 0.05 && !g->def.gear.empty()) {
+        // Retractable: its drag area shared over the legs.
         for (const GearDef& gd : g->def.gear) {
             const Real d = 2 * gd.wheelRadius;
-            const Real cda = gc.retractable ? gc.dragArea / static_cast<Real>(g->def.gear.size()) : 0.9 * d * 0.45 * d + 0.06 * gd.length;
-            put(gd.attach + Vec3{0, 0, 0.6 * gd.length * down}, {0, 0, 1}, d, gd.length * down, cda * down, 0);
+            put(gd.attach + Vec3{0, 0, 0.6 * gd.length * down}, {0, 0, 1}, d, gd.length * down, gc.dragArea / static_cast<Real>(g->def.gear.size()) * down, 0);
         }
+    }
+    // Drag items with a shape (fixed gear is one of these).
+    for (const DragItemDef& di : g->def.dragItems) {
+        if (di.bodySize <= 0 || di.bodyLength <= 0) continue;
+        const bool gear = di.name.find("gear") != std::string::npos || di.name.find("wheel") != std::string::npos;
+        put(di.position, normalized(di.bodyAxis), di.bodySize, di.bodyLength, di.dragArea, gear ? 0 : 2);
     }
     std::array<AeroModel::BluffBody, 24> sp{};
     const int ns = ac.aeroModel().spoilerBodies(ac.speedbrakePosition(), sp.data(), 24);

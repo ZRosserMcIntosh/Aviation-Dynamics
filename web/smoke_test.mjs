@@ -139,7 +139,7 @@ for (let i = 0; i < 12; ++i) B.avd_advance(0.25);
 const bod = B.bodies(), fl = B.flow();
 let spoilers = 0, cleanly = true, separated = 0;
 for (let k = 0; k < bod.n; ++k) { spoilers += bod.b[k * 10 + 9] === 1; cleanly = cleanly && bod.b[k * 10 + 8] > 0 && bod.b[k * 10 + 6] > 0; }
-for (let i = 0; i < (fl[0] | 0); ++i) separated += fl[16 + i * 18 + 16] < 0.6;
+for (let i = 0; i < (fl[0] | 0); ++i) separated += fl[16 + i * 20 + 16] < 0.6;
 check(spoilers >= 4 && cleanly && separated >= 4, `jet speedbrake: ${spoilers} spoiler panels in the flow, ${separated} strips separated`);
 B.avd_reset(0);
 B.avd_quick_start();

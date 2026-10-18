@@ -189,6 +189,9 @@ std::vector<std::string> AircraftDefinition::validate() const {
         c.finite(idx("dragItems", i) + ".position", dragItems[i].position);
         c.nonNegative(idx("dragItems", i) + ".dragArea", dragItems[i].dragArea);
         c.range(idx("dragItems", i) + ".criticalMach", dragItems[i].criticalMach, 0, 1.2);
+        c.range(idx("dragItems", i) + ".bodyLength", dragItems[i].bodyLength, 0, 30);
+        c.range(idx("dragItems", i) + ".bodySize", dragItems[i].bodySize, 0, 5);
+        if (dragItems[i].bodySize > 0) c.finite(idx("dragItems", i) + ".bodyAxis", dragItems[i].bodyAxis);
     }
 
     if (engines.size() > 4) c.add("engines", "at most 4 engines");

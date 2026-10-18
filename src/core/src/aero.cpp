@@ -628,7 +628,7 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
         // Section evaluation of strip i at its velocity relative to the air v
         // (body axes; with the lifting line, including the induced flow).
         struct StripEval {
-            Real alpha = 0, cs = 1, an = 0, q = 0, qFree = 0, cdWave = 0, extension = 0, stallAlpha = 0;
+            Real alpha = 0, cs = 1, an = 0, q = 0, qFree = 0, cdWave = 0, extension = 0, stallAlpha = 0, zeroLiftAlpha = 0;
             Real gamma = 0;  // bound circulation the section's lift implies (Kutta-Joukowski)
             Vec3 vPerp;
             SectionResult sec;
@@ -688,6 +688,7 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             e.qFree = 0.5 * rho * dot(v, v);
             e.extension = extension;
             e.stallAlpha = (sp.zeroLiftAlpha + dAlpha0 + (sp.clMax + dClMax) / an) * cs;
+            e.zeroLiftAlpha = (sp.zeroLiftAlpha + dAlpha0) * cs;
             // Kutta-Joukowski on the (swept) bound vortex: the strip's lift
             // q S cl = rho |V x l| G, so G = V_perp cl (S / width) / 2.
             e.gamma = 0.5 * std::sqrt(vp2) * e.sec.cl * st.area * (1 + extension) / std::max(st.width, 1e-6);
@@ -755,6 +756,7 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             tel.stalled = sec.stalled;
             tel.attached = sec.attached;
             tel.stallAlpha = e.stallAlpha;
+            tel.zeroLiftAlpha = e.zeroLiftAlpha;
             if (ll) tel.gamma = e.gamma;
             liftSum += q * area * sec.cl;
             qaFree += qFree * area;

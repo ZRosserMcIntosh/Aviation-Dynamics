@@ -142,6 +142,11 @@ struct DragItemDef {
     // Transonic drag rise of a body (fuselage, nacelles): above this Mach the
     // drag area grows by 1 + 60 (M - Mcrit)^2, ~2.4x at Mcrit + 0.15. 0 = none.
     Real criticalMach = 0;
+    // Optional shape, for the airflow view's bluff-body wakes (no effect on
+    // the forces): long axis (structural), length and thickness across the
+    // flow, m. A wing strut, a gear leg and its wheel fairing.
+    Vec3 bodyAxis{0, 0, 1};
+    Real bodyLength = 0, bodySize = 0;
 };
 
 // ---- Propulsion -----------------------------------------------------------
