@@ -249,6 +249,7 @@ void readPanel(Obj& o, InstrumentPanelDef& p) {
         a.str("electrical_load", p.heading.electricalLoad);
         a.num("mechanical_drift_deg_per_hour", p.heading.mechanicalDrift, kDeg / 3600);
         a.num("gimbal_limit_deg", p.heading.gimbalLimit, kDeg);
+        a.num("slaving_rate_deg_per_s", p.heading.slavingRate, kDeg);
         a.num("spin_up_time_constant_s", p.heading.spinUpTime);
         a.num("spin_down_time_constant_s", p.heading.spinDownTime);
     }
@@ -465,6 +466,7 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.str("name", di.name, true);
         o.vec3("position_m", di.position, 1, true);
         o.num("drag_area_m2", di.dragArea, 1, true);
+        o.num("critical_mach", di.criticalMach);
         d.dragItems.push_back(di);
     });
     r.each("engines", [&](Obj& o, std::size_t) {
@@ -637,6 +639,7 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         c.num("elevator_trim_rate", d.controls.elevatorTrimRate);
         c.num("rigging_aileron", d.controls.riggingAileron);
         c.num("rigging_rudder", d.controls.riggingRudder);
+        c.num("rudder_limiter_kias", d.controls.rudderLimiterIas, units::kKnot);
         if (c.has("landing_gear")) {
             Obj g = c.child("landing_gear");
             g.boolean("retractable", d.controls.gear.retractable);
@@ -666,6 +669,8 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         s.integer("surface", d.stallWarning.surface);
         s.integer("strip", d.stallWarning.strip);
         s.num("alpha_margin_deg", d.stallWarning.alphaMargin, kDeg);
+        s.num("pusher_margin_deg", d.stallWarning.pusherMargin, kDeg);
+        s.num("pusher_elevator", d.stallWarning.pusherElevator);
     } else {
         d.stallWarning.present = false;
     }

@@ -75,6 +75,7 @@ enum class FlightEventType {
     EngineStarted, EngineStopped, FuelStarvation, StallWarningOn, StallWarningOff,
     Touchdown, Liftoff, Overspeed, OverG, FlapOverspeed, PropStrike, HardPointContact,
     BatteryDepleted, AlternatorOffline, AlternatorOnline, CockpitControlChanged,
+    MachOverspeed, GearOverspeed,
 };
 
 struct FlightEvent {
@@ -122,6 +123,7 @@ struct AircraftTelemetry {
     Real flapAngle = 0, elevatorTrim = 0;
     bool onGround = false;
     bool stallWarning = false;
+    bool stickPusher = false;                // stall protection pushing the nose down
     int stalledStrips = 0;
     Real busVoltage = 0;
     AirSample air;
@@ -325,6 +327,7 @@ private:
     mutable bool contactTouched_[kMaxContacts] = {};
     bool contactWas_[kMaxContacts] = {};
     Real groundStateTimer_ = 0;  // debounce for touchdown/lift-off events
+    bool pusher_ = false, gearOverspeedWas_ = false;
     bool wasOnGround_ = false, stallWarningWas_ = false, overspeedWas_ = false, overGWas_ = false;
     bool flapOverspeedWas_ = false;
     std::array<bool, kMaxEngines> runningWas_{};

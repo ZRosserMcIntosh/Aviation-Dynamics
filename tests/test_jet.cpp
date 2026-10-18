@@ -186,3 +186,118 @@ TEST_CASE("top g: speedbrakes add drag and spoil lift; swept-wing drag rises pas
     const Real cd80 = m80.thrust / sq(0.80), cd92 = m92.thrust / sq(0.92);
     CHECK(cd92 > cd80 * 1.08);
 }
+
+TEST_CASE("trimmed CLmax gives stall speeds near the published values for the single and the Top G") {
+    auto vs = [](const AircraftDefinition& d, Real massKg, Real flapDeg) {
+        Aircraft ac(d);
+        const Real cl = trimmedMaxLiftCoefficient(ac.aeroModel(), d.referenceArea, ac.massProperties().cg,
+                                                  degToRad(flapDeg), 0.15);
+        CHECK(cl > 0.8);
+        return msToKt(std::sqrt(2 * massKg * 9.80665 / (1.225 * d.referenceArea * cl)));
+    };
+    // Top G at 33.7 t: clean 1-g minimum ~118-126 KCAS in the trim sweep; landing flap ~92.
+    const Real jetClean = vs(jet(), 33700, 0), jetLand = vs(jet(), 33700, 39);
+    std::printf("    Top G Vs1g clean %.1f kt, flaps 39 %.1f kt\n", jetClean, jetLand);
+    CHECK(jetClean > 105 && jetClean < 135);
+    CHECK(jetLand > 82 && jetLand < 102);
+    CHECK(jetLand < vs(jet(), 33700, 20));
+    // The single (tupi_t180) at 1,157 kg: calibrated to POH 53 KCAS flaps up, 48 KCAS flaps 30.
+    const AircraftDefinition single = loadReference("tupi_t180");
+    const Real cClean = vs(single, 1156.7, 0), cLand = vs(single, 1156.7, 30);
+    std::printf("    single Vs1g clean %.1f kt, flaps 30 %.1f kt\n", cClean, cLand);
+    CHECK(cClean > 48 && cClean < 58);
+    CHECK(cLand > 42 && cLand < 53);
+}
+
+TEST_CASE("top g: swept-wing lift is normal to the swept span, so induced drag is real (L/D 11-19)") {
+    // Regression: lift taken normal to the unswept lateral axis tilted it
+    // forward by ~sin(alpha) sin^2(sweep) and cancelled most induced drag
+    // (L/D ~100 at approach speeds, idle-thrust level flight at 130 kt).
+    for (const Real kt : {130.0, 200.0, 250.0}) {
+        Aircraft ac(jet());
+        const TrimResult tr = trimAt(ac, 5000, ktToMs(kt) * 1.08);
+        CHECK(tr.converged);
+        Real thrust = 0;
+        for (int i = 0; i < ac.turbofanCount(); ++i) thrust += ac.turbofanState(i).thrust;
+        const Real ld = ac.telemetry().mass * 9.80665 / thrust;
+        std::printf("    %.0f kt: L/D %.1f\n", kt, ld);
+        CHECK(ld > 10.5 && ld < 19);
+    }
+}
+
+TEST_CASE("top g: a double flame-out at cruise windmills below idle, drops the generators, and relights") {
+    const StandardAtmosphere std0;
+    Aircraft ac(jet());
+    SimpleWeather atm;
+    FlatGround ground(0);
+    const TrimResult tr = trimAt(ac, 33000, 0.72 * std0.at(ftToM(33000)).speedOfSound);
+    CHECK(tr.converged);
+    for (const char* c : {"electrical.battery", "electrical.alternator", "engine1.fuel", "engine2.fuel"}) ac.setCockpitControl(c, 1);
+    PilotInput in;
+    in.throttle = tr.throttle;
+    auto fly = [&](Real seconds, Real pitchDeg) {
+        for (int i = 0; i < static_cast<int>(seconds / kDt); ++i) {
+            const AircraftTelemetry& t = ac.telemetry();
+            in.pitch = clamp(tr.elevator + 2.0 * (degToRad(pitchDeg) - t.pitch) - 0.8 * t.omega.y, -1.0, 1.0);
+            ac.step(kDt, in, ground, atm);
+        }
+    };
+    fly(5, radToDeg(tr.theta));
+    CHECK(ac.electrical().alternatorOnline());
+    ac.setCockpitControl("engine1.fuel", 0);
+    ac.setCockpitControl("engine2.fuel", 0);
+    fly(20, -2);
+    CHECK(ac.turbofanState(0).itt - 273.15 < 350);  // the fire is out: ITT falls fast
+    fly(70, -2);
+    for (int i = 0; i < 2; ++i) {
+        const TurbofanState& e = ac.turbofanState(i);
+        CHECK(!e.running);
+        CHECK(e.n2 > 0.12 && e.n2 < 0.3);       // windmilling core, well below idle
+        CHECK(e.n1 > 0.15 && e.n1 < 0.32);
+        CHECK(e.oilPressure < 6894.76 * 25);   // below the oil-pressure red line
+    }
+    CHECK(!ac.electrical().alternatorOnline());  // windmilling does not hold the bus
+    ac.setCockpitControl("engine1.fuel", 1);
+    ac.setCockpitControl("engine2.fuel", 1);
+    bool both = false;
+    for (Real t = 0; t < 60 && !both; t += 0.5) {
+        fly(0.5, -2);
+        both = ac.turbofanState(0).running && ac.turbofanState(1).running;
+    }
+    CHECK(both);
+}
+
+TEST_CASE("top g: the stick pusher keeps a full-aft-stick idle stall out of the T-tail deep stall") {
+    Aircraft ac(jet());
+    SimpleWeather atm;
+    FlatGround ground(0);
+    const TrimResult tr = trimAt(ac, 15000, ktToMs(200) * 1.27);
+    CHECK(tr.converged);
+    PilotInput in;
+    in.throttle = 0;
+    const Real h0 = ac.telemetry().altitudeMsl;
+    Real maxAlpha = 0, warnIas = 0;
+    bool pushed = false;
+    int pullStart = -1;
+    for (int i = 0; pullStart < 0 ? i < 240 * 240 : i < pullStart + 240 * 45; ++i) {
+        const AircraftTelemetry& t = ac.telemetry();
+        if (warnIas > 0 && pullStart < 0) pullStart = i;
+        if (warnIas == 0) {
+            // Idle, held level: a slow 1-g deceleration to the warning.
+            const Real thetaCmd = t.alpha + clamp(0.01 * (h0 - t.altitudeMsl), -0.08, 0.08);
+            in.pitch = clamp(tr.elevator + 2.5 * (thetaCmd - t.pitch) - 0.8 * t.omega.y, -1.0, 1.0);
+        } else {
+            in.pitch = 1;  // then held fully back
+        }
+        // Wings held level with the ailerons.
+        in.roll = clamp(-2.0 * t.roll - 0.5 * t.omega.x, -1.0, 1.0);
+        ac.step(kDt, in, ground, atm);
+        maxAlpha = std::max(maxAlpha, ac.telemetry().alpha);
+        pushed = pushed || ac.telemetry().stickPusher;
+        if (warnIas == 0 && ac.telemetry().stallWarning) warnIas = msToKt(ac.instruments().readings().indicatedAirspeed);
+    }
+    std::printf("    warning at %.0f KIAS, max alpha %.1f deg\n", warnIas, radToDeg(maxAlpha));
+    CHECK(pushed);
+    CHECK(maxAlpha < degToRad(25));
+    CHECK(warnIas > 112 && warnIas < 125);  // a few knots above the ~112 KIAS clean stall
+}

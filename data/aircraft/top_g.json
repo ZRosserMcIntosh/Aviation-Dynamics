@@ -62,19 +62,25 @@
    "field": "turbofans",
    "kind": "published",
    "source": "ENG",
-   "note": "Take-off thrust and bypass ratio published; lapse coefficient 0.30 (Mattingly's 0.49 for airliner engines) calibrated so cruise at Mach 0.85 is available at FL450 at mid weights; TSFC 0.39 static / ~0.60 cruise (Estimated)."
+   "note": "Take-off thrust and bypass ratio published; lapse coefficient 0.18 (Mattingly's 0.49 for airliner engines) calibrated so Mach 0.85 is available up to FL510 at mid weight (max-cruise thrust near the ceiling); TSFC 0.39 static / ~0.60 cruise (Estimated)."
   },
   {
    "field": "drag_items",
    "kind": "estimated",
    "source": "ROSKAM",
-   "note": "Equivalent flat-plate areas from a wetted-area build-up (CD0 ~ 0.018)."
+   "note": "Equivalent flat-plate areas from a wetted-area build-up (CD0 ~ 0.018); fuselage and nacelle transonic drag rise from Mcrit 0.86 / 0.84 (Estimated)."
   },
   {
    "field": "limits",
    "kind": "published",
    "source": "SPEC",
    "note": "Vmo 340 KCAS, Mmo 0.925; flap speeds 250/220/170 KCAS (10/20/39 deg) and VLE 250 KCAS are representative (Estimated)."
+  },
+  {
+   "field": "controls.rudder_limiter_kias",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Rudder travel limiter: full 25 deg travel to 160 KEAS, then scaled with 1/q (about 10 deg at 250 KEAS), typical of business jets with a rudder limiter."
   },
   {
    "field": "gear",
@@ -410,7 +416,8 @@
     0.0,
     0.0
    ],
-   "drag_area_m2": 0.62
+   "drag_area_m2": 0.62,
+   "critical_mach": 0.86
   },
   {
    "name": "nacelles and pylons",
@@ -419,7 +426,8 @@
     0.0,
     -0.75
    ],
-   "drag_area_m2": 0.3
+   "drag_area_m2": 0.3,
+   "critical_mach": 0.84
   },
   {
    "name": "wing-body fairing, antennas, excrescences",
@@ -451,7 +459,7 @@
    "static_thrust_kn": 75.2,
    "bypass_ratio": 4.4,
    "throttle_ratio": 1.05,
-   "lapse_mach_coefficient": 0.3,
+   "lapse_mach_coefficient": 0.18,
    "idle_n1": 0.22,
    "idle_n2": 0.6,
    "idle_thrust_fraction": 0.035,
@@ -477,7 +485,7 @@
    "static_thrust_kn": 75.2,
    "bypass_ratio": 4.4,
    "throttle_ratio": 1.05,
-   "lapse_mach_coefficient": 0.3,
+   "lapse_mach_coefficient": 0.18,
    "idle_n1": 0.22,
    "idle_n2": 0.6,
    "idle_thrust_fraction": 0.035,
@@ -794,6 +802,7 @@
   "elevator_trim_rate": 0.12,
   "rigging_aileron": 0.0,
   "rigging_rudder": 0.0,
+  "rudder_limiter_kias": 160,
   "landing_gear": {
    "retractable": true,
    "transit_time_s": 7.0,
@@ -838,7 +847,9 @@
   "present": true,
   "surface": 0,
   "strip": 7,
-  "alpha_margin_deg": 2.0
+  "alpha_margin_deg": 1.2,
+  "pusher_margin_deg": 0.2,
+  "pusher_elevator": -0.7
  },
  "vacuum": {
   "present": false
@@ -911,7 +922,8 @@
    "power": "electric",
    "electrical_load": "ahrs",
    "mechanical_drift_deg_per_hour": 0.2,
-   "gimbal_limit_deg": 90,
+   "gimbal_limit_deg": 0,
+   "slaving_rate_deg_per_s": 3,
    "spin_up_time_constant_s": 5,
    "spin_down_time_constant_s": 30
   },

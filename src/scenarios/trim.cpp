@@ -198,9 +198,8 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
 
 void startTrimmedFlight(Aircraft& ac, const FlightSetup& fs, const AtmosphereField& atm, const GroundQuery& ground,
                         TestPilot* pilot, TrimResult* out) {
-    const Real rho = StandardAtmosphere().at(fs.altitude).density;
     TrimRequest req;
-    req.tas = tasFromCas(ktToMs(fs.kias), rho);
+    req.tas = tasFromCas(ktToMs(fs.kias), StandardAtmosphere().at(fs.altitude));
     req.altitude = fs.altitude;
     req.flapDetent = fs.flapDetent;
     const TrimResult tr = trim(ac, req, atm);

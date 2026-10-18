@@ -175,6 +175,7 @@ std::vector<std::string> AircraftDefinition::validate() const {
     for (std::size_t i = 0; i < dragItems.size(); ++i) {
         c.finite(idx("dragItems", i) + ".position", dragItems[i].position);
         c.nonNegative(idx("dragItems", i) + ".dragArea", dragItems[i].dragArea);
+        c.range(idx("dragItems", i) + ".criticalMach", dragItems[i].criticalMach, 0, 1.2);
     }
 
     if (engines.size() > 4) c.add("engines", "at most 4 engines");
@@ -301,6 +302,7 @@ std::vector<std::string> AircraftDefinition::validate() const {
     c.positive("controls.elevatorTrimRate", controls.elevatorTrimRate);
     c.range("controls.riggingAileron", controls.riggingAileron, -0.3, 0.3);
     c.range("controls.riggingRudder", controls.riggingRudder, -0.3, 0.3);
+    c.range("controls.rudderLimiterIas", controls.rudderLimiterIas, 0, 300);
     c.positive("controls.gear.transitTime", controls.gear.transitTime);
     c.nonNegative("controls.gear.dragArea", controls.gear.dragArea);
     c.nonNegative("controls.gear.maxExtendedIas", controls.gear.maxExtendedIas);
@@ -317,6 +319,8 @@ std::vector<std::string> AircraftDefinition::validate() const {
     if (stallWarning.present && (stallWarning.surface < 0 || stallWarning.surface >= static_cast<int>(surfaces.size())))
         c.add("stallWarning.surface", "no such surface");
     c.range("stallWarning.alphaMargin", stallWarning.alphaMargin, 0, 0.3);
+    c.range("stallWarning.pusherMargin", stallWarning.pusherMargin, 0, stallWarning.alphaMargin);
+    c.range("stallWarning.pusherElevator", stallWarning.pusherElevator, -1, 0);
     c.positive("vacuum.regulatedSuction", vacuum.regulatedSuction);
     c.positive("vacuum.rpmForRegulated", vacuum.rpmForRegulated);
     c.positive("vacuum.gyroSpinUpTime", vacuum.gyroSpinUpTime);
@@ -345,7 +349,8 @@ std::vector<std::string> AircraftDefinition::validate() const {
         c.positive("panel.attitude.spinDownTime", p.attitude.spinDownTime);
         c.range("panel.attitude.minimumUsefulSpin", p.attitude.minimumUsefulSpin, 0.05, 1);
         c.range("panel.heading.mechanicalDrift", p.heading.mechanicalDrift, -0.01, 0.01);
-        c.range("panel.heading.gimbalLimit", p.heading.gimbalLimit, 0.2, kPi / 2);
+        if (p.heading.gimbalLimit != 0) c.range("panel.heading.gimbalLimit", p.heading.gimbalLimit, 0.2, kPi / 2);
+        c.range("panel.heading.slavingRate", p.heading.slavingRate, 0, 0.5);
         c.positive("panel.heading.spinUpTime", p.heading.spinUpTime);
         c.positive("panel.heading.spinDownTime", p.heading.spinDownTime);
         c.range("panel.turnCoordinator.cant", p.turnCoordinator.cant, 0, 1.2);

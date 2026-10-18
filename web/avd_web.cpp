@@ -47,12 +47,15 @@ struct Sim {
     Real accumulator = 0;
     std::string events;
     int jetStart = 0;  // jet Quick Start: 0 idle, 1 starting engine 1, 2 engine 2, 3 done
+    // Trimmed CLmax cache for the low-speed awareness band and V-speeds.
+    std::unique_ptr<AeroModel> clmaxModel;
+    Real clmaxKey = -1, clmax = 0, clmaxTakeoff = 0, clmaxLanding = 0;
 };
 
 Sim* g = nullptr;
 double g_state[kStateSize];
 double g_cockpit[96];
-double g_jet[32];
+double g_jet[64];
 constexpr int kFlowStrips = 64, kFlowStride = 16;
 double g_flow[16 + kFlowStrips * kFlowStride + 4 * 10];
 char* g_text = nullptr;
@@ -79,14 +82,16 @@ const char* eventText(FlightEventType t) {
         case FlightEventType::StallWarningOff: return "";
         case FlightEventType::Touchdown: return "Touchdown";
         case FlightEventType::Liftoff: return "Lift-off";
-        case FlightEventType::Overspeed: return "OVERSPEED: above VNE";
+        case FlightEventType::Overspeed: return g && !g->def.turbofans.empty() ? "OVERSPEED: above VMO" : "OVERSPEED: above VNE";
+        case FlightEventType::MachOverspeed: return "OVERSPEED: above MMO";
+        case FlightEventType::GearOverspeed: return "Gear extended above VLE";
         case FlightEventType::OverG: return "LIMIT LOAD EXCEEDED";
         case FlightEventType::FlapOverspeed: return "Flaps above VFE";
         case FlightEventType::PropStrike: return "PROPELLER STRIKE";
         case FlightEventType::HardPointContact: return "Airframe ground contact";
         case FlightEventType::BatteryDepleted: return "Battery depleted";
-        case FlightEventType::AlternatorOffline: return "Alternator offline";
-        case FlightEventType::AlternatorOnline: return "Alternator online";
+        case FlightEventType::AlternatorOffline: return g && !g->def.turbofans.empty() ? "Generators offline" : "Alternator offline";
+        case FlightEventType::AlternatorOnline: return g && !g->def.turbofans.empty() ? "Generators online" : "Alternator online";
         case FlightEventType::CockpitControlChanged: return "";
     }
     return "";
@@ -177,6 +182,8 @@ void newAircraft() {
     g->accumulator = 0;
     g->events.clear();
     g->jetStart = 0;
+    g->trimThrottle = 0;
+    g->trimMixture = 1;
 }
 
 // Trimmed airborne spawn: solve the free-air trim in calm air at the spawn
@@ -195,7 +202,7 @@ void placeTrimmed(Vec3 posNed, Real altMsl, Real heading, Real kias, int flapDet
     scenarios::TrimRequest req;
     req.altitude = altMsl;
     req.flapDetent = flapDetent;
-    req.tas = scenarios::tasFromCas(ktToMs(kias), trimAir.atmosphere().at(altMsl).density);
+    req.tas = scenarios::tasFromCas(ktToMs(kias), trimAir.atmosphere().at(altMsl));
     req.flightPath = path;
     const scenarios::TrimResult tr = scenarios::trim(*g->ac, req, trimAir);
     DynamicState s = tr.state;
@@ -223,6 +230,12 @@ void placeTrimmed(Vec3 posNed, Real altMsl, Real heading, Real kias, int flapDet
 
 // Instruments and radios after any reset.
 void finishReset(bool seedInstruments) {
+    // One step (1/240 s) at the trimmed controls so telemetry, the air sample
+    // and every derived value describe the new state before the host reads it.
+    PilotInput in;
+    in.throttle = g->trimThrottle;
+    in.mixture = g->trimMixture;
+    g->ac->step(kDt, in, *g->ground, *g->weather);
     g->ac->instruments().setAltimeterSetting(g->weather->atmosphere().conditions().seaLevelPressure);
     if (seedInstruments) g->ac->resetInstrumentsToTruth();
     // Radios: NAV 1 on the (synthetic) runway 12 localizer, the test VOR in standby.
@@ -273,8 +286,34 @@ AVD_EXPORT void avd_reset_air(double east, double north, double heightAboveField
     if (!g) return;
     newAircraft();
     const Vec3 ned = world::nedFromEnu({east, north, 0});
-    placeTrimmed(ned, g->airport.elevation + std::max(heightAboveField, 30.0), degToRad(headingDeg),
-                 std::clamp(kias, 55.0, 350.0), std::clamp(flapDetent, 0, 3), 0.0);
+    const AircraftDefinition& d = g->def;
+    const bool jet = !d.turbofans.empty();
+    // Keep the request flyable: below the type's ceiling, no faster than Vmo
+    // (or Mmo at height), flaps no further than the speed allows, and at least
+    // 1.25 Vs for that configuration and weight.
+    const Real height = std::clamp(heightAboveField, 30.0, jet ? 14500.0 : 4500.0);
+    const Real altMsl = g->airport.elevation + height;
+    const std::vector<Real>& det = d.controls.flapDetents;
+    int flap = std::clamp(flapDetent, 0, static_cast<int>(det.size()) - 1);
+    Real v = std::clamp(kias, 55.0, d.limits.neverExceedIas > 0 ? msToKt(d.limits.neverExceedIas) : 350.0);
+    const AirState air = StandardAtmosphere().at(altMsl);
+    while (d.limits.maxOperatingMach > 0 && v > 60 &&
+           scenarios::tasFromCas(ktToMs(v), air) / air.speedOfSound > d.limits.maxOperatingMach - 0.03)
+        v -= 1;
+    auto vfe = [&](int k) {
+        if (det[static_cast<std::size_t>(k)] <= 0) return 1e9;
+        const Real ms = !d.limits.flapExtendedIasVsFlap.empty() ? d.limits.flapExtendedIasVsFlap(det[static_cast<std::size_t>(k)])
+                                                                 : d.limits.flapExtendedIas;
+        return ms > 0 ? msToKt(ms) : 1e9;
+    };
+    while (flap > 0 && v > vfe(flap)) --flap;
+    // Jets at height: no slower than Mach 0.72 (behind the drag curve otherwise).
+    if (jet && altMsl > 9000)
+        while (v < 300 && scenarios::tasFromCas(ktToMs(v), air) / air.speedOfSound < 0.72) v += 1;
+    AeroModel am(d);
+    const Real cl = trimmedMaxLiftCoefficient(am, d.referenceArea, g->ac->massProperties().cg, det[static_cast<std::size_t>(flap)], 0.2);
+    if (cl > 0.1) v = std::max(v, 1.25 * msToKt(std::sqrt(2 * g->ac->massProperties().mass * 9.80665 / (1.225 * d.referenceArea * cl))));
+    placeTrimmed(ned, altMsl, degToRad(headingDeg), v, flap, 0.0);
     finishReset(true);
 }
 
@@ -461,6 +500,46 @@ AVD_EXPORT double* avd_jet() {
     g_jet[27] = radToDeg(t.flapAngle);
     g_jet[28] = t.elevatorTrim;
     g_jet[29] = t.onGround;
+    // Low-speed awareness and V-speeds: 1-g stall CAS from the trimmed CLmax at
+    // this weight (current flap and Mach; take-off and landing flap at low Mach).
+    const std::vector<Real>& det = g->def.controls.flapDetents;
+    if (!g->clmaxModel) {
+        g->clmaxModel = std::make_unique<AeroModel>(g->def);
+        const Vec3 cg0 = ac.massProperties().cg;
+        g->clmaxTakeoff = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det[det.size() / 2], 0.2);
+        g->clmaxLanding = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det.back(), 0.2);
+    }
+    const Real key = std::round(radToDeg(t.flapAngle) * 2) * 1000 + std::round(std::max(t.mach, 0.2) * 20);
+    if (key != g->clmaxKey) {
+        g->clmaxKey = key;
+        g->clmax = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, ac.massProperties().cg, t.flapAngle,
+                                             std::max(t.mach, 0.2));
+    }
+    auto vs = [&](Real cl) { return cl > 0.1 ? msToKt(std::sqrt(2 * t.mass * 9.80665 / (1.225 * g->def.referenceArea * cl))) : 0.0; };
+    g_jet[32] = vs(g->clmax);
+    g_jet[33] = vs(g->clmaxTakeoff);
+    g_jet[34] = vs(g->clmaxLanding);
+    g_jet[35] = t.mass;
+    const Vec3 vn = t.velocityNed;
+    g_jet[36] = radToDeg(std::atan2(-vn.z, std::max(std::hypot(vn.x, vn.y), 0.5)));
+    g_jet[37] = std::fmod(radToDeg(std::atan2(vn.y, vn.x)) + 360.0, 360.0);
+    const Vec3 w = t.air.wind;  // air velocity, NED: the wind blows toward it
+    g_jet[38] = std::fmod(radToDeg(std::atan2(-w.y, -w.x)) + 360.0, 360.0);
+    g_jet[39] = msToKt(std::hypot(w.x, w.y));
+    g_jet[40] = mToFt(t.heightAgl);
+    g_jet[41] = kToCelsius(t.air.state.temperature);
+    g_jet[42] = t.loadFactor;
+    g_jet[43] = radToDeg(t.alpha);
+    g_jet[44] = ac.electrical().alternatorOnline();
+    g_jet[45] = t.busVoltage;
+    g_jet[46] = t.stallWarning;
+    const StructuralLimitsDef& lim = g->def.limits;
+    g_jet[47] = t.flapAngle < degToRad(0.5) ? 0.0
+                : msToKt(!lim.flapExtendedIasVsFlap.empty() ? lim.flapExtendedIasVsFlap(t.flapAngle) : lim.flapExtendedIas);
+    g_jet[48] = msToKt(g->def.controls.gear.maxExtendedIas);
+    g_jet[49] = det.size() > 2 ? radToDeg(det[det.size() / 2]) : 0.0;
+    g_jet[50] = radToDeg(det.back());
+    g_jet[51] = t.stickPusher;
     return g_jet;
 }
 

@@ -129,6 +129,9 @@ struct DragItemDef {
     std::string name;
     Vec3 position;
     Real dragArea = 0;                // Cd*A, m^2 (along the local airflow)
+    // Transonic drag rise of a body (fuselage, nacelles): above this Mach the
+    // drag area grows by 1 + 60 (M - Mcrit)^2, ~2.4x at Mcrit + 0.15. 0 = none.
+    Real criticalMach = 0;
 };
 
 // ---- Propulsion -----------------------------------------------------------
@@ -325,6 +328,10 @@ struct FlightControlsDef {
     // cruise power despite engine torque and slipstream; Calibrated.
     Real riggingAileron = 0;
     Real riggingRudder = 0;
+    // Rudder travel limiter (transport/business jets): full travel up to this
+    // EAS, then travel scaled by (V/EAS)^2 so the yaw authority stays roughly
+    // constant with dynamic pressure (floor 15 %). 0 = none.
+    Real rudderLimiterIas = 0;        // m/s
     GearRetractionDef gear;
     SpeedbrakeDef speedbrake;
 };
@@ -346,6 +353,12 @@ struct StallWarningDef {
     int surface = 0;                  // lifting surface carrying the vane/reed
     int strip = -1;                   // strip index (-1 = middle)
     Real alphaMargin = 0.07;          // rad below the strip's stall angle
+    // Stick pusher (T-tail jets: keeps the airplane out of a locked-in deep
+    // stall): airborne, at this margin below the vane strip's stall angle the
+    // elevator is pushed to at most `pusherElevator` until the angle of attack
+    // is 5 deg lower again. 0 = no pusher.
+    Real pusherMargin = 0;            // rad
+    Real pusherElevator = -0.5;       // elevator command (-1..1, nose down)
 };
 
 struct VacuumDef {

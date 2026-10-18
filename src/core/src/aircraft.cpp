@@ -226,6 +226,7 @@ void Aircraft::setFlightState(const RigidBodyState& s) {
     s_ = DynamicState{};
     s_.body = s;
     s_.body.attitude.normalize();
+    pusher_ = false;
     for (int i = 0; i < engineCount(); ++i) s_.shaftOmega[i] = engineState_[i].omega;
     faulted_ = false;
     updateTelemetry();
@@ -407,7 +408,13 @@ void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, con
                 if (cs.channel == ControlChannel::Elevator) elevUp = cs.maxNegative;
     c.controls.aileron = clamp(in.roll + def_.controls.riggingAileron, -1.0, 1.0);
     c.controls.elevator = clamp(in.pitch + trim_ * def_.controls.elevatorTrimRange / elevUp, -1.0, 1.0);
+    if (pusher_) c.controls.elevator = std::min(c.controls.elevator, def_.stallWarning.pusherElevator);
     c.controls.rudder = clamp(in.yaw + def_.controls.riggingRudder, -1.0, 1.0);
+    if (def_.controls.rudderLimiterIas > 0) {
+        const Real eas = length(s_.body.velocity - c.air.wind) * std::sqrt(c.air.state.density / isa::kSeaLevelDensity);
+        if (eas > def_.controls.rudderLimiterIas)
+            c.controls.rudder *= std::max(0.15, sq(def_.controls.rudderLimiterIas / eas));
+    }
     c.controls.flap = flapAngle_;
     c.controls.spoiler = def_.controls.speedbrake.present ? speedbrakePos_ * def_.controls.speedbrake.liftLossFraction : 0.0;
     c.steer = clamp(in.yaw, -1.0, 1.0);  // nose-wheel steering follows the pedals, not the tab
@@ -678,7 +685,8 @@ void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, co
     // Turbofan starter-generators: crank while starting, generate above ~45 % N2.
     for (int i = 0; i < turbofanCount(); ++i) {
         if (turboState_[i].starting && turboState_[i].n2 < 0.45) starterCurrent += 250;
-        ei.alternatorRpm = std::max(ei.alternatorRpm, turboState_[i].n2 * 4000);
+        // Scaled so the generator comes on line at 45 % N2 (a windmilling core does not hold the bus).
+        ei.alternatorRpm = std::max(ei.alternatorRpm, turboState_[i].n2 * 2000);
     }
     ei.starterCurrent = starterCurrent;
     ei.flapMotorCurrent = flapMoving_ && def_.controls.flapsElectric ? def_.controls.flapMotorCurrent : 0;
@@ -803,11 +811,17 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
         if (idx < end) {
             const StripTelemetry& st = aeroOut_.strips[idx];
             vane = st.q > 30 && st.alpha > st.stallAlpha - def_.stallWarning.alphaMargin;
+            if (def_.stallWarning.pusherMargin > 0) {
+                const Real onAt = st.stallAlpha - def_.stallWarning.pusherMargin;
+                if (st.q > 30 && !tel_.onGround && st.alpha > onAt) pusher_ = true;
+                else if (pusher_ && (st.alpha < onAt - 0.0873 || tel_.onGround)) pusher_ = false;  // 5 deg hysteresis
+            }
         }
     }
     stallVane_ = vane;
     instruments_.update(dt, sensorInputs());
     tel_.stallWarning = vane;
+    tel_.stickPusher = pusher_;
 
     // ---- Events ----
     for (int i = 0; i < engineCount(); ++i) {
@@ -849,7 +863,7 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
     overspeedWas_ = over;
     const bool machOver = def_.limits.maxOperatingMach > 0 &&
                           tel_.mach > def_.limits.maxOperatingMach - (machOverWas_ ? 0.005 : 0.0);
-    if (machOver && !machOverWas_ && !over) pushEvent(FlightEventType::Overspeed, ias);
+    if (machOver && !machOverWas_ && !over) pushEvent(FlightEventType::MachOverspeed, tel_.mach);
     machOverWas_ = machOver;
     const Real nLim = flapAngle_ > 0.01 ? def_.limits.limitLoadFlaps : def_.limits.limitLoadPositive;
     const Real gHyst = overGWas_ ? 0.1 : 0.0;
@@ -861,6 +875,11 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
     const bool flapOver = flapAngle_ > 0.01 && vfe > 0 && ias > vfe - (flapOverspeedWas_ ? hyst : 0.0);
     if (flapOver && !flapOverspeedWas_) pushEvent(FlightEventType::FlapOverspeed, ias);
     flapOverspeedWas_ = flapOver;
+    const Real vle = def_.controls.gear.maxExtendedIas;
+    const bool gearOver = def_.controls.gear.retractable && vle > 0 && gearPos_ > 0.01 &&
+                          ias > vle - (gearOverspeedWas_ ? hyst : 0.0);
+    if (gearOver && !gearOverspeedWas_) pushEvent(FlightEventType::GearOverspeed, ias);
+    gearOverspeedWas_ = gearOver;
     if (electrical_.alternatorOnline() != altOnlineWas_)
         pushEvent(electrical_.alternatorOnline() ? FlightEventType::AlternatorOnline : FlightEventType::AlternatorOffline);
     altOnlineWas_ = electrical_.alternatorOnline();

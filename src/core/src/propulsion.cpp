@@ -408,13 +408,18 @@ void TurbofanEngine::evaluate(TurbofanState& s, const TurbofanInputs& in) const 
 
 void TurbofanEngine::step(TurbofanState& s, const TurbofanInputs& in, Real dt) const {
     const bool fuel = in.fuelOn && in.fuelAtEngine;
-    // Windmilling: ram air turns the fan with the engine unlit.
+    // Windmilling: ram air turns the fan (and, more slowly, the core) with the
+    // engine unlit: ~25 % N1 and ~20 % N2 at cruise Mach.
     const Real windmillN1 = std::min(0.3, 0.32 * std::max(in.mach, 0.0));
+    const Real windmillN2 = std::min(0.24, 0.28 * std::max(in.mach, 0.0));
     if (s.running && !fuel) {
         s.running = false;  // shut down or flamed out
         s.starting = false;
     }
-    if (!s.running && in.fuelOn && !s.starting && in.starterPowered && s.n2 < def_.idleN2) s.starting = true;
+    // Start: the starter cranks the core, or in flight a fast enough windmilling
+    // core (>= 12 % N2) relights on its own.
+    const bool windmillStart = s.n2 >= 0.12 && windmillN2 >= 0.12;
+    if (!s.running && in.fuelOn && !s.starting && (in.starterPowered || windmillStart) && s.n2 < def_.idleN2) s.starting = true;
     if (s.starting && !in.fuelOn) s.starting = false;
     if (s.running) {
         const Real cmd = commandedN1(in.throttle);
@@ -425,9 +430,9 @@ void TurbofanEngine::step(TurbofanState& s, const TurbofanInputs& in, Real dt) c
         // Starter cranks the core to ~25 %, light-off from 20 % with fuel,
         // then the lit core accelerates to idle.
         const Real crank = 0.25 / (0.35 * def_.startTime);
-        const bool litNow = s.n2 >= 0.2 && fuel;
+        const bool litNow = (s.n2 >= 0.2 || windmillStart) && fuel;
         const Real accel = litNow ? (def_.idleN2 - 0.2) / (0.65 * def_.startTime) : (in.starterPowered ? crank : 0.0);
-        if (litNow || s.n2 < 0.25) s.n2 = std::min(s.n2 + accel * dt, def_.idleN2);
+        if (litNow || (in.starterPowered && s.n2 < 0.25)) s.n2 = std::min(s.n2 + accel * dt, def_.idleN2);
         s.n1 = n1FromN2(s.n2);
         if (s.n2 >= def_.idleN2 - 1e-6) {
             s.running = true;
@@ -436,10 +441,10 @@ void TurbofanEngine::step(TurbofanState& s, const TurbofanInputs& in, Real dt) c
         }
         if (!in.starterPowered && !litNow) s.starting = false;
     } else {
-        // Spooling down toward windmill speed.
-        s.n1 += (windmillN1 - s.n1) * std::min(dt / 8.0, 1.0);
-        s.n2 = std::max(n2FromN1(s.n1) * 0.9, s.n2 + (n2FromN1(s.n1) - s.n2) * std::min(dt / 10.0, 1.0));
-        s.itt += (in.ambientTemperature - s.itt) * std::min(dt / 60.0, 1.0);
+        // Spooling down toward windmill speed; ITT falls quickly once the fire is out.
+        s.n1 += (windmillN1 - s.n1) * std::min(dt / 6.0, 1.0);
+        s.n2 += (windmillN2 - s.n2) * std::min(dt / 6.0, 1.0);
+        s.itt += (in.ambientTemperature - s.itt) * std::min(dt / 12.0, 1.0);
     }
     evaluate(s, in);
 }

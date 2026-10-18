@@ -114,6 +114,11 @@ TEST_CASE("instrument dynamics: critically damped needles do not overshoot") {
 TEST_CASE("instrument relations: CAS, altimeter law, encoder") {
     CHECK_NEAR(msToKt(InstrumentPanel::casFromImpactPressure(InstrumentPanel::impactPressure(101325, ktToMs(100) / 340.294))), 100, 1e-6);
     CHECK_NEAR(InstrumentPanel::altitudeFromPressure(StandardAtmosphere::isaPressure(3000), 101325), 3000, 2);
+    // Above the tropopause the isothermal layer applies. Altimeters read
+    // geopotential (pressure) altitude: FL450 is 13,716 m geopotential.
+    const auto geometric = [](Real hgp) { return 6356766.0 * hgp / (6356766.0 - hgp); };
+    CHECK_NEAR(InstrumentPanel::altitudeFromPressure(StandardAtmosphere::isaPressure(geometric(ftToM(45000))), 101325), ftToM(45000), 2);
+    CHECK_NEAR(InstrumentPanel::altitudeFromPressure(StandardAtmosphere::isaPressure(geometric(15500)), 101325), 15500, 2);
     // 1 inHg of Kollsman change ~ 920-960 ft near sea level (standard pressure lapse).
     const Real p = StandardAtmosphere::isaPressure(0);
     const Real d = InstrumentPanel::altitudeFromPressure(p, inHgToPa(30.92)) - InstrumentPanel::altitudeFromPressure(p, inHgToPa(29.92));
@@ -494,6 +499,7 @@ TEST_CASE("attitude gyro: a 360-degree instrument follows a 125-degree bank with
         CHECK(!f.cs().attitudeTumbled);
         worst = std::max(worst, std::abs(wrapPi(f.cs().attitudeRoll - f.truth().roll)));
         steepest = std::max(steepest, std::abs(f.truth().roll));
+        if (steepest > degToRad(120)) f.pilot.targetBank = 0;  // roll out before the nose falls through
     }
     CHECK(steepest > degToRad(115));
     CHECK(worst < degToRad(4));
@@ -539,6 +545,52 @@ TEST_CASE("failure: exceeding the attitude gyro's limits tumbles it once; it re-
     f.fly(1);
     CHECK(!f.cs().attitudeTumbled);
     CHECK_NEAR(f.cs().attitudeRoll, f.truth().roll, degToRad(2));
+}
+
+namespace {
+// A kinematic aileron roll: the airframe is turned about its own x axis at
+// `rate` (rad/s) for one full turn, the instruments seeing the real rates.
+void forceRoll(Flight& f, Real rate) {
+    const int n = static_cast<int>(std::lround(kTwoPi / std::abs(rate) / kDt));
+    for (int i = 0; i < n; ++i) {
+        RigidBodyState s = f.ac.state().body;
+        s.attitude = s.attitude * Quat::fromAxisAngle({1, 0, 0}, rate * kDt);
+        s.attitude.normalize();
+        s.omega = {rate, 0, 0};
+        f.ac.setFlightState(s);
+        f.ac.step(kDt, f.pilot.update(f.ac, kDt), f.ground, f.atm);
+    }
+}
+}  // namespace
+
+TEST_CASE("heading: an AHRS (slaved, no gimbal stops) keeps its heading through a full roll; a free DG tumbles") {
+    static const AircraftDefinition jet = loadReference("top_g");
+    Flight j(220, 6000, nullptr, jet);
+    forceRoll(j, 2.0);
+    j.fly(20);
+    CHECK(std::abs(wrapPi(j.cs().headingIndicator - j.truth().magneticHeading)) < degToRad(3));
+    CHECK(std::abs(wrapPi(j.cs().attitudeRoll - j.truth().roll)) < degToRad(3));
+    // A slaved card also walks off a deliberate mis-set at its slaving rate.
+    j.ac.instruments().adjustHeadingIndicator(degToRad(30));
+    j.fly(15);
+    CHECK(std::abs(wrapPi(j.cs().headingIndicator - j.truth().magneticHeading)) < degToRad(3));
+    // The single's free directional gyro hits its 80 deg gimbal stops and precesses.
+    Flight f(110, 2000);
+    forceRoll(f, 2.0);
+    f.fly(5);
+    CHECK(std::abs(wrapPi(f.cs().headingIndicator - f.truth().magneticHeading)) > degToRad(10));
+}
+
+TEST_CASE("ground: stopped gyros freeze where they are -- the AI does not right itself, the DG card does not wander") {
+    Ground gr;
+    gr.run(1);
+    const CockpitState c0 = gr.ac.instruments().state();
+    gr.run(120);
+    const CockpitState& c = gr.ac.instruments().state();
+    CHECK_NEAR(c.attitudeRoll, c0.attitudeRoll, degToRad(0.5));
+    CHECK_NEAR(c.attitudePitch, c0.attitudePitch, degToRad(0.5));
+    CHECK(std::abs(wrapPi(c.headingIndicator - c0.headingIndicator)) < degToRad(1));
+    CHECK(std::abs(c.attitudeRoll) > degToRad(5));
 }
 
 // ================================================================= navigation ==

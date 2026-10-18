@@ -188,4 +188,10 @@ private:
     std::vector<DragItemDef> dragItems_;
 };
 
+// Highest lift coefficient (on refArea) the airframe reaches in steady 1-g
+// flight with the elevator trimming the pitching moment about cg, for a flap
+// angle (rad) and Mach number: the basis of stall and V-speeds. Sweeps alpha
+// out of ground effect with no slipstream; elevator saturating limits it.
+Real trimmedMaxLiftCoefficient(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach);
+
 }  // namespace avd

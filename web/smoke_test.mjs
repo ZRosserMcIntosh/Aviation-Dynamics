@@ -94,6 +94,9 @@ check(js[28] === 0 && js[14] > 200, `jet: airborne after 40 s at full thrust (AG
 B.avd_cockpit_cycle(B.cockpit().find((x) => x.id === 'gear.lever').index);
 for (let i = 0; i < 40; ++i) B.avd_advance(0.25);
 check(B.jet()[1] === 0, 'jet: gear retracts');
+j = B.jet();
+check(j[32] > 95 && j[32] < 140 && j[34] > 75 && j[34] < j[33] && j[33] < j[32] && Math.abs(j[36]) < 25 && j[40] > 100,
+  `jet: low-speed data (Vs ${j[32].toFixed(0)}, Vs TO ${j[33].toFixed(0)}, Vs LDG ${j[34].toFixed(0)} kt, FPA ${j[36].toFixed(1)}, RA ${j[40].toFixed(0)} ft)`);
 B.avd_set_assist(2);
 B.avd_reset_air(0, 0, 3000, 0, 250, 0);
 for (let i = 0; i < 40; ++i) { B.avd_set_input(0, 0, 0, B.avd_trim_throttle(), 1, 0, 0, 0, 0); B.avd_advance(0.25); }

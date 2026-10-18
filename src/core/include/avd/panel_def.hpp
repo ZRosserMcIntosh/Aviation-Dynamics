@@ -73,7 +73,8 @@ struct HeadingIndicatorDef {
     GyroPower power = GyroPower::Vacuum;
     std::string electricalLoad;
     Real mechanicalDrift = 2.9e-5;        // rad/s (6 deg/h, bearing friction/imbalance)
-    Real gimbalLimit = 1.40;              // rad (80 deg) bank or pitch: tumbles beyond
+    Real gimbalLimit = 1.40;              // rad (80 deg) bank or pitch: tumbles beyond; 0 = unlimited
+    Real slavingRate = 0;                 // rad/s toward magnetic heading (slaved HSI / AHRS); 0 = free gyro
     Real spinUpTime = 60.0;
     Real spinDownTime = 200.0;
 };
