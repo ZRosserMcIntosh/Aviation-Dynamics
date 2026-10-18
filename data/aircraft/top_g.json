@@ -131,10 +131,10 @@
    "ixz": 0
   },
   "empty_includes_unusable_fuel": true,
-  "max_ramp_kg": 47174,
+  "max_ramp_kg": 47173.6,
   "max_takeoff_kg": 46992,
   "max_landing_kg": 37875,
-  "max_zero_fuel_kg": 27442,
+  "max_zero_fuel_kg": 27442.27,
   "stations": [
    {
     "name": "flight deck crew",
