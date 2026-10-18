@@ -377,7 +377,7 @@ TEST_CASE("atmosphere: steady wind changes ground speed, not indicated airspeed"
     SimpleWeather::Params wp;
     wp.windSpeed = 12;
     wp.windFromDirection = 0;
-    wp.boundaryLayerExponent = 0;
+    wp.profile = WindProfile::Uniform;
     Flight calm(100, 1500), windy(100, 1500, &wp);
     windy.fly(20);
     calm.fly(10);

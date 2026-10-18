@@ -172,7 +172,7 @@ TEST_CASE("flight: wind changes ground speed and track, not airspeed") {
     SimpleWeather::Params wp;
     wp.windSpeed = 10;
     wp.windFromDirection = 0;       // headwind for a northbound aircraft
-    wp.boundaryLayerExponent = 0;   // uniform
+    wp.profile = WindProfile::Uniform;   // uniform
     Rig r(100, 1500, 0, &wp);
     r.ac.setFlightState({r.ac.state().body.position, r.ac.state().body.velocity + Vec3{-10, 0, 0},
                          r.ac.state().body.attitude, {}});
@@ -183,7 +183,7 @@ TEST_CASE("flight: wind changes ground speed and track, not airspeed") {
     SimpleWeather::Params cw;
     cw.windSpeed = 10;
     cw.windFromDirection = -kPi / 2;
-    cw.boundaryLayerExponent = 0;
+    cw.profile = WindProfile::Uniform;
     Rig c(100, 1500, 0, &cw);
     c.ac.setFlightState({c.ac.state().body.position, c.ac.state().body.velocity + Vec3{0, 10, 0},
                          c.ac.state().body.attitude, {}});
@@ -209,6 +209,31 @@ TEST_CASE("flight: turbulence disturbs the aircraft through the air, determinist
     CHECK(maxP > degToRad(2));
     CHECK(maxNz > 0.05);
     CHECK(!r.ac.faulted());
+}
+
+TEST_CASE("flight: the wind itself is bumpy near the ground and smooth above the boundary layer") {
+    // Same 15 kt surface wind, no turbulence class set: the mechanical
+    // turbulence of the surface layer shakes the airplane at 500 ft and is
+    // gone at 5000 ft. The test pilot holds wings level and altitude.
+    auto bumps = [](Real altitude, Real wind) {
+        SimpleWeather::Params wp;
+        wp.windSpeed = ktToMs(wind);
+        Rig r(100, altitude, 0, &wp);
+        r.pilot.lateral = TestPilot::Lateral::WingsLevel;
+        Real maxNz = 0, minAlt = 1e9;
+        for (int i = 0; i < 20 * 240; ++i) {
+            r.ac.step(kDefaultDt, r.pilot.update(r.ac, kDefaultDt), r.ground, r.atm);
+            if (i > 240) maxNz = std::max(maxNz, std::abs(r.ac.telemetry().loadFactor - 1));
+            minAlt = std::min(minAlt, r.ac.altitudeMsl());
+        }
+        CHECK(minAlt > altitude - 60);
+        return maxNz;
+    };
+    const Real calmLow = bumps(ftToM(500), 0), low = bumps(ftToM(500), 15);
+    const Real calmHigh = bumps(ftToM(5000), 0), high = bumps(ftToM(5000), 15);
+    CHECK(low > calmLow + 0.1);
+    CHECK(low < 1.0);  // light-to-moderate mechanical turbulence, not a structural event
+    CHECK_NEAR(high, calmHigh, 0.01);
 }
 
 TEST_CASE("flight: fuel burn reduces mass exactly and moves the CG forward") {

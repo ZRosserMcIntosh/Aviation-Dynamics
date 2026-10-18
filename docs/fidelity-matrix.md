@@ -8,7 +8,8 @@ Legend: ✅ implemented and tested · 🟡 partial or simplified · ⛔ not star
 | Area | Status | Model today | Validation | Main gap |
 |---|---|---|---|---|
 | Rigid-body 6-DoF | ✅ | RK4, 240 Hz, quaternion, WGS-84 local frame, rebase | Determinism, convergence, rebase tests | Rotating-earth terms (Coriolis) ignored: fine below Mach 1 at this scale |
-| Atmosphere | ✅ | ISA-1976, ΔT, QNH, humidity, boundary-layer wind, von Kármán turbulence, one cloud layer with liquid water | Table checks against ISA; icing tests | No thermals, fronts, precipitation; airframe icing (wing, prop, induction) not modelled |
+| Atmosphere | ✅ | ISA-1976, ΔT, QNH, humidity, one cloud layer with liquid water | Table checks against ISA; icing tests | Precipitation; airframe icing (wing, prop, induction) not modelled |
+| Wind and turbulence | ✅ | Log-law boundary layer with surface roughness, Ekman veer, winds aloft; MIL-HDBK-1797 turbulence (height-dependent, anisotropic), mechanical turbulence from the actual wind, severity classes, convective σ ([architecture/wind.md](architecture/wind.md)) | `tests/test_wind.cpp`: MIL σ/L values, realised RMS and anisotropy, gradient consistency | See the weather-field row |
 | Weather field | 🟡 | `SimpleWeather`: uniform plus boundary layer and turbulence | — | No spatial weather or time evolution |
 | Wake turbulence | ⛔ | — | — | — |
 | Wing aerodynamics | ✅ | Strip theory, ±180° polar, flaps, ground effect, downwash lag | Stall speeds +1.6%/+2.6%; adverse yaw; stability signs | No vortex-lattice interference; no spin validation |
