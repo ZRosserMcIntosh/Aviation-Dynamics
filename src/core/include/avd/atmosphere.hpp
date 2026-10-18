@@ -8,7 +8,7 @@
 // Aircraft never fake turbulence with camera shake: they sample the air
 // velocity and its spatial gradient at their position, and the aerodynamic
 // model applies the local airflow to each lifting strip. See
-// docs/architecture/atmosphere-and-weather.md.
+// docs/architecture/wind.md.
 #pragma once
 
 #include <array>
@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "avd/math.hpp"
+#include "avd/wind.hpp"
 
 namespace avd {
 
@@ -100,51 +101,43 @@ class AtmosphereField {
 public:
     virtual ~AtmosphereField() = default;
     virtual AirSample sample(const Vec3& positionNed, Real altitudeMsl, Real time) const = 0;
-};
-
-// Frozen, divergence-free turbulence synthesised from Fourier modes with a von
-// Kármán energy spectrum (random-Fourier-mode synthesis, e.g. Kraichnan 1970).
-// The field lives in world space and is advected by the mean wind, so every
-// aircraft sees the same air at the same place and time.
-class TurbulenceField {
-public:
-    struct Params {
-        Real intensity = 0;          // RMS of each velocity component, m/s
-        Real scaleLength = 533.0;    // von Kármán length scale L, m (1750 ft)
-        int modes = 48;
-        Real minWavelength = 4.0;    // m; shorter eddies are below airframe scale
-        std::uint64_t seed = 1;
-    };
-    TurbulenceField() = default;
-    explicit TurbulenceField(const Params& p);
-    const Params& params() const { return p_; }
-    bool active() const { return p_.intensity > 0 && !modes_.empty(); }
-    // Velocity (NED) and gradient at a position already shifted into the
-    // frozen-turbulence frame.
-    void evaluate(const Vec3& x, Vec3& velocity, Mat3& gradient) const;
-
-private:
-    struct Mode {
-        Vec3 k;        // wave vector, rad/m
-        Vec3 dir;      // unit velocity direction, perpendicular to k
-        Real amplitude;
-        Real phase;
-    };
-    Params p_;
-    std::vector<Mode> modes_;
+    // As seen by a body of size `extent` (m, e.g. the wing span): turbulence
+    // shorter than the body is averaged over it rather than extrapolated
+    // linearly from the sample point. Fields without small-scale structure
+    // need not override this.
+    virtual AirSample sample(const Vec3& positionNed, Real altitudeMsl, Real time, Real extent) const {
+        (void)extent;
+        return sample(positionNed, altitudeMsl, time);
+    }
 };
 
 // Parameters for SimpleWeather.
 struct SimpleWeatherParams {
     AtmosphereConditions conditions;
-    Real windSpeed = 0;              // m/s at referenceHeight AGL
+    Real windSpeed = 0;              // m/s at referenceHeight AGL (the surface report)
     Real windFromDirection = 0;      // rad, true, direction the wind blows FROM
     Real referenceHeight = 10.0;     // m AGL (standard anemometer height)
-    Real boundaryLayerExponent = 1.0 / 7.0;  // power law; 0 = uniform
-    Real boundaryLayerTop = 600.0;   // m AGL; constant above
+    WindProfile profile = WindProfile::LogLaw;
+    Real surfaceRoughness = 0.03;    // m, z0 (0.03: open grass / airfield)
+    Real powerLawExponent = 1.0 / 7.0;  // WindProfile::PowerLaw only
+    Real boundaryLayerTop = 600.0;   // m AGL
+    Real veer = 0;                   // rad, wind turning surface -> top (+ clockwise)
+    std::vector<WindLevel> windsAloft;  // above the boundary layer, by MSL
     Real groundElevation = 0;        // m MSL of the surface the profile refers to
     Real updraft = 0;                // m/s uniform vertical air velocity (+ up)
-    TurbulenceField::Params turbulence;
+    TurbulenceParams turbulence;     // mechanical turbulence is on by default
+    std::vector<DiscreteGust> gusts;
+    std::vector<Microburst> microbursts;
+    // Convection: thermals (and the convective turbulence that goes with
+    // them) when thermals.convectiveVelocity > 0.
+    ThermalParams thermals;
+    std::vector<Ridge> ridges;       // ridge lift and mountain waves
+    // Spatial and temporal variation of the low-level wind.
+    std::vector<RoughnessPatch> roughnessPatches;  // in order; later ones win
+    std::vector<WindStation> stations;  // replace windSpeed/windFromDirection when present
+    Real stationInfluence = 5000;    // m, softening length of the station interpolation
+    std::vector<WindShift> windShifts;  // fronts and gust fronts
+    std::vector<Obstacle> obstacles;    // building / hangar wakes
     // One stratiform cloud layer (m MSL) with its liquid water content
     // (g/m^3; stratus ~0.1-0.5, cumulus up to ~1-2). Supercooled where the
     // air is below 0 C: an icing layer. cloudTop <= cloudBase: no cloud.
@@ -152,8 +145,8 @@ struct SimpleWeatherParams {
     Real cloudLiquidWater = 0;
 };
 
-// Standard atmosphere + surface wind with a boundary-layer profile + optional
-// world-space turbulence. Deterministic; suitable for offline play and tests.
+// Standard atmosphere + surface wind with a boundary-layer profile, winds
+// aloft and world-space turbulence (MIL-HDBK-1797 statistics). Deterministic; suitable for offline play and tests.
 class SimpleWeather final : public AtmosphereField {
 public:
     using Params = SimpleWeatherParams;
@@ -161,13 +154,30 @@ public:
     explicit SimpleWeather(const Params& p);
     const Params& params() const { return p_; }
     const StandardAtmosphere& atmosphere() const { return atm_; }
-    AirSample sample(const Vec3& positionNed, Real altitudeMsl, Real time) const override;
+    AirSample sample(const Vec3& positionNed, Real altitudeMsl, Real time) const override { return sample(positionNed, altitudeMsl, time, 0); }
+    AirSample sample(const Vec3& positionNed, Real altitudeMsl, Real time, Real extent) const override;
+    // Mean wind (no turbulence or events) at a height over the reference
+    // site, and at a place and time with the spatial variation.
     Vec3 meanWindAt(Real heightAgl) const;
+    Vec3 meanWindAt(const Vec3& positionNed, Real altitudeMsl, Real time) const;
+    Real roughnessAt(Real north, Real east) const;
+    SurfaceWind surfaceWindAt(Real north, Real east, Real time) const;
+    const BoundaryLayer& boundaryLayer() const { return boundaryLayer_; }
+    const AtmosphericTurbulence& turbulence() const { return turbulence_; }
+    const ThermalField& thermals() const { return thermals_; }
 
 private:
+    struct LocalWind {
+        Vec3 wind;
+        TurbulenceLocal turbulence;
+    };
+    LocalWind localWind(const Vec3& positionNed, Real heightAgl, Real altitudeMsl, Real time) const;
     Params p_;
+    bool spatial_ = false;
     StandardAtmosphere atm_;
-    TurbulenceField turbulence_;
+    BoundaryLayer boundaryLayer_;
+    AtmosphericTurbulence turbulence_;
+    ThermalField thermals_;
 };
 
 }  // namespace avd

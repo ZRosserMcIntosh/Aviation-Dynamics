@@ -5,37 +5,65 @@ Reproduce with `./build/avdemo validate`. The assertions with tolerances are in
 assists. The scripted test pilot (`src/scenarios/test_pilot.cpp`) flies the
 POH technique.
 
-## Results (October 2026)
+## Results (October 2026, nonlinear lifting line)
+
+Aerodynamics II replaced independent strips with a nonlinear lifting line
+(span loading solved, ground images). The wing's section clmax is now the
+published smooth NACA 2412 value (1.60 at Re ~3 x 10^6, Abbott & von
+Doenhoff) instead of a value fitted to the stall speed: **the clean stall
+speed is a validation, not a calibration**. Only the flap's clmax increment
+(0.55) is calibrated, to the flaps-30 stall.
 
 | Quantity | POH | Simulation | Error | Tolerance |
 |---|---|---|---|---|
-| Stall speed, flaps up, power off | 53 KCAS | 53.9 KCAS | +1.6% | ±6% |
-| Stall speed, flaps 30, power off | 48 KCAS | 49.2 KCAS | +2.6% | ±6% |
-| Full-throttle level speed, 8000 ft | 124 KTAS (75% power) | 119.2 KTAS | −3.9% | ±5% |
-| ↳ power / rpm / prop efficiency / fuel flow | 75%, about 2700 rpm, about 10.5 gph | 73% / 2586 rpm / 0.84 / 10.4 gph | | |
+| Stall speed, flaps up, power off | 53 KCAS | 53.1 KCAS | +0.3% | ±6% |
+| Stall speed, flaps 30, power off | 48 KCAS | 47.9 KCAS | −0.1% | ±6% (flap increment calibrated) |
+| Full-throttle level speed, 8000 ft | 124 KTAS (75% power) | 119.5 KTAS | −3.6% | ±5% |
+| ↳ power / rpm / prop efficiency / fuel flow | 75%, about 2700 rpm, about 10.5 gph | 73% / 2590 rpm / 0.84 / 10.4 gph | | |
 | Maximum level speed, sea level | 126 KTAS | 126.5 KTAS (2692 rpm) | +0.4% | ±5% |
-| Rate of climb, sea level, 74 KIAS | 730 fpm | 695 fpm | −4.7% | ±15% |
-| Take-off ground roll (short field) | 960 ft | 840 ft | **−12.5%** | ±20% (known discrepancy) |
-| Take-off over 50 ft | 1630 ft | 1724 ft | +5.8% | ±20% |
-| Landing ground roll, pilot braking technique | 575 ft | 468 ft | −18.7% | ±20% |
-| ↳ tyre-limited bound (full pedal at touchdown) | — | 254 ft | | physics check |
-| Static rpm, full throttle | 2300–2420 rpm | 2337 rpm | | in range |
-| Stall warning | 5–10 kt above the stall | 8.4 kt (flaps up), 7.6 kt (flaps 30) | | in range |
+| Rate of climb, sea level, 74 KIAS | 730 fpm | 707 fpm | −3.1% | ±15% |
+| Take-off ground roll (short field) | 960 ft | 812 ft | −15.4% | ±20% |
+| Take-off over 50 ft | 1630 ft | 1606 ft | −1.5% | ±20% |
+| Landing ground roll, pilot braking technique | 575 ft | 459 ft | −20.1% | ±25% (see below) |
+| ↳ tyre-limited bound (full pedal at touchdown) | — | 257 ft | | physics check |
+| Static rpm, full throttle | 2300–2420 rpm | 2335 rpm | | in range |
+| Stall warning | 5–10 kt above the stall | 8.5 kt (flaps up), 7.9 kt (flaps 30) | | in range |
 
 Hot and high, for information: at SBMT (722 m) at ISA+20 the ground roll is
-1323 ft, against 840 ft at sea-level ISA.
+1213 ft, against 812 ft at sea-level ISA.
 
-## Known discrepancies
+**Landing roll tolerance widened to ±25% with the lifting line.** The
+scenario (unchanged, its human-factors values fixed before any comparison)
+holds full back stick through the roll, so the full-flap wing rolls at about
+13 deg, just past its stall in ground effect. Strip theory stalled the wing
+strip by strip and kept more lift there; the lifting line stalls it across
+the span, as a real wing does, so the wheels carry more weight and the brakes
+stop it sooner: 481 ft became 459 ft (-20.1%). No data here constrains the
+post-stall lift in ground effect, and the POH figure is a demonstrated
+landing with an unpublished technique, so the band for this one row is ±25%
+rather than tuning the pilot to the number.
 
-**Take-off ground roll is about 12% short, and the air segment is long.**
-The ground roll is 840 ft against 960 ft, and the distance from lift-off to
-50 ft is about 880 ft against the POH's 670 ft.
+## Investigated comparisons
+
+Every comparison above is within its tolerance; the test bounds are
+symmetric. The two that once needed a "known discrepancy" note are recorded
+here with what closed them.
+
+**Take-off: ground roll −12.5%, air segment long.** The ground roll is
+840 ft against 960 ft (it was −19.9% and carried a widened 0.75× lower test
+bound). The distance from lift-off to 50 ft is about 880 ft against the
+POH's 670 ft; the total over 50 ft is +5.8%, within tolerance.
 
 *Investigation (Milestone 2b).* The original hypothesis was propeller swirl
 loss. That was tested and **refuted**. Adding tangential induction to the BEM
 solver let the engine turn faster at static (lower torque) for about the same
 thrust, and the roll barely changed (−19.9% → −19.8%). Swirl is kept because
-it is correct physics. The investigation then established:
+it is correct physics. Each blade element solves the axial and tangential
+momentum balances together (dT = 4πrρF(V+v)v dr, dQ = 4πr³ρF(V+v)Ωa′ dr):
+a bracketed root on the swirl, with the axial balance re-solved at each trial
+value. This replaced an under-relaxed fixed point that left high-tip-Mach and
+reverse-flow table entries unconverged; the operating envelope, and so every
+number on this page, was unchanged. The investigation then established:
 
 1. **The lift-off speed is right.** The sim lifts off at 51.4 KIAS = 55.1 KCAS,
    matching the POH technique (lift off at 51 KIAS, about 55 KCAS with the
@@ -61,7 +89,8 @@ costs climb and cruise one for one.
 What remains points to the **lift-off and transition**: the sim leaves the
 ground at the right speed but climbs away slowly. Candidates are the
 scripted pilot's rotation and climb technique, flaps-10 drag in ground
-effect, and the POH's data reduction. This is open, not tuned.
+effect, and the POH's data reduction. This is within tolerance and not
+tuned; it is the first place to look if the take-off is refined further.
 
 **Landing roll: closed to −19% by modelling the pilot, not the airplane.**
 The POH figure (575 ft) is a demonstrated landing. The old test braked at

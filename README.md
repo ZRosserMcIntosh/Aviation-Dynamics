@@ -20,25 +20,26 @@ here.
 | Atmosphere | ISA-1976 with temperature/QNH deviation, moist density, power-law boundary-layer wind, frozen von Kármán turbulence with spatial gradients | `tests/test_foundations.cpp` |
 | Aerodynamics | Strip theory over lifting surfaces with a ±180° section polar, flaps, downwash lag, ground effect, prop slipstream and swirl, fuselage Munk moment, component drag build-up | `tests/test_components.cpp`, `tests/test_flight.cpp` |
 | Propulsion | Fixed-pitch propeller from blade-element tables with swirl and tip compressibility; piston engine with manifold pressure, mixture, friction, magnetos, starter, temperatures and oil-pressure physics | `tests/test_components.cpp` |
-| Systems | Fuel tanks/selector/shutoff with line volume, starvation and leaks; battery/alternator/bus with named loads and breakers; engine-driven vacuum | `tests/test_systems_scenarios.cpp` |
-| Ground and world | Spring-damper struts, tyre bristle model, brakes, nose-wheel steering, hard-point contacts, runway surfaces at Campo de Marte (SBMT); open-world tiles with terrain, surfaces and buildings (wingtip strikes) | `tests/test_flight.cpp`, `tests/test_world.cpp` |
+| Systems | Weight and balance (load sheet: ramp, take-off, landing and zero-fuel weights, CG envelope, station and combined placards); fuel tanks/selector/shutoff with line volume, starvation and leaks; battery/alternator/bus with named loads and breakers; engine-driven vacuum | `tests/test_systems_scenarios.cpp` |
+| Ground and world | Spring-damper struts, tyre bristle model, brakes, nose-wheel steering (pedals, and a tiller with a rate-limited actuator where fitted), hard-point contacts, runway surfaces at Campo de Marte (SBMT); open-world tiles with terrain, surfaces and buildings (wingtip strikes) | `tests/test_flight.cpp`, `tests/test_world.cpp` |
 | Instruments | Pitot-static (IAS/CAS/EAS/TAS, position error, blockages, icing and pitot heat), VSI capillary lag, vacuum attitude and heading gyros, turn coordinator and ball, pendulous wet compass with airframe deviation and a swung correction card, engine and system gauges, annunciators, VOR/LOC/GS receiver, transponder encoder | `tests/test_instruments.cpp` (37 cases) |
 | Validation | Against the C172S POH: stall, cruise, maximum speed, climb, take-off, landing | `avdemo validate`, `tests/test_validation.cpp` |
-| Browser | WASM build (wasi-sdk, no exceptions or RTTI), Node smoke test, interactive 2D cockpit with trimmed spawns, icing weather and flight replay (including native CSV) | `web/` |
+| Browser | WASM build (wasi-sdk, no exceptions or RTTI), Node smoke test, interactive 2D cockpit with trimmed spawns, an auto-trim that holds straight and level, icing weather and flight replay (including native CSV) | `web/` |
 
 Current results against the POH are in
 [docs/validation/c172s-validation.md](docs/validation/c172s-validation.md).
-That document also covers the two known discrepancies: the take-off ground roll
-is about 12% short (investigated; the remaining gap is in the lift-off and
-transition). The landing roll is now within tolerance (−19%) once the pilot's
-braking technique is modelled.
+Every comparison is within its tolerance. That document also records the two
+that were investigated: the take-off ground roll (−12.3%, after swirl and tip
+compressibility in the propeller; the residual is in the lift-off and
+transition) and the landing roll (−16% once the pilot's braking technique is
+modelled).
 
 ## Build and run
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/tests/avd_tests            # 107 test cases
+./build/tests/avd_tests            # 132 test cases
 ./build/avdemo validate            # POH comparison table
 ./build/avdemo flight              # SBMT circuit: quick start, take-off, stall, pattern, landing
 ./build/avdemo instruments [csv]   # truth versus display through a scripted flight

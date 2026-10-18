@@ -27,23 +27,24 @@ struct TrimVars {
     Real v[6];
 };
 
-bool solve4(Real a[4][4], Real b[4], Real x[4]) {
+// Gaussian elimination with partial pivoting on the leading n x n block.
+bool solveN(int n, Real a[4][4], Real b[4], Real x[4]) {
     int p[4] = {0, 1, 2, 3};
-    for (int c = 0; c < 4; ++c) {
+    for (int c = 0; c < n; ++c) {
         int best = c;
-        for (int r = c + 1; r < 4; ++r)
+        for (int r = c + 1; r < n; ++r)
             if (std::abs(a[p[r]][c]) > std::abs(a[p[best]][c])) best = r;
         std::swap(p[c], p[best]);
         if (std::abs(a[p[c]][c]) < 1e-14) return false;
-        for (int r = c + 1; r < 4; ++r) {
+        for (int r = c + 1; r < n; ++r) {
             const Real f = a[p[r]][c] / a[p[c]][c];
-            for (int k = c; k < 4; ++k) a[p[r]][k] -= f * a[p[c]][k];
+            for (int k = c; k < n; ++k) a[p[r]][k] -= f * a[p[c]][k];
             b[p[r]] -= f * b[p[c]];
         }
     }
-    for (int c = 3; c >= 0; --c) {
+    for (int c = n - 1; c >= 0; --c) {
         Real s = b[p[c]];
-        for (int k = c + 1; k < 4; ++k) s -= a[p[c]][k] * x[k];
+        for (int k = c + 1; k < n; ++k) s -= a[p[c]][k] * x[k];
         x[c] = s / a[p[c]][c];
     }
     return true;
@@ -60,9 +61,16 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
     ac.setElevatorTrim(0);
     ac.setCockpitControl("brakes.parking", 0);
     ac.setQuasiSteadyDownwash(true);
+    // Piston + propeller: the shaft speed is a fourth unknown (shaft
+    // acceleration = 0). Turbofans are held at their commanded fan speed.
+    const bool piston = ac.engineCount() > 0;
+    const bool ths = ac.hasTrimmableStabilizer();
+    ac.setTurbofansSteady(!piston);
+    const int n = piston ? 4 : 3;
 
     int unknown[4] = {Theta, Elevator, Omega, Throttle};
-    if (req.throttle >= 0) unknown[3] = req.solveTas ? Tas : Gamma;
+    if (!piston) unknown[2] = Throttle;
+    if (req.throttle >= 0) unknown[n - 1] = req.solveTas ? Tas : Gamma;
     TrimVars x{{0.04, 0.0, 2300 * kTwoPi / 60, req.throttle >= 0 ? req.throttle : 0.6, req.flightPath, req.tas}};
 
     const Real rho = StandardAtmosphere().at(req.altitude).density;
@@ -75,7 +83,16 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
         s.body.attitude = Quat::fromEuler(0, t.v[Theta], 0);
         s.shaftOmega[0] = t.v[Omega];
         in = PilotInput{};
-        in.pitch = t.v[Elevator];
+        // A trimmable stabiliser is trimmed stick free, and beyond its travel
+        // the stick does the rest (one continuous unknown, -2..2); otherwise
+        // the elevator is solved and the trim wheel set to it afterwards.
+        if (ths) {
+            const Real trimPart = clamp(t.v[Elevator], -1.0, 1.0);
+            ac.setElevatorTrim(trimPart);
+            in.pitch = t.v[Elevator] - trimPart;
+        } else {
+            in.pitch = t.v[Elevator];
+        }
         in.throttle = t.v[Throttle];
         in.mixture = mixture;
     };
@@ -90,7 +107,7 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
         r[0] = aBody.x / kStandardGravity;
         r[1] = aBody.z / kStandardGravity;
         r[2] = d.body.omega.y;
-        r[3] = d.shaftAccel[0] / 100.0;
+        r[3] = piston ? d.shaftAccel[0] / 100.0 : 0.0;
     };
 
     const Real step[6] = {1e-4, 1e-4, 1e-2, 1e-4, 1e-5, 1e-3};
@@ -101,35 +118,35 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
         res.residual = std::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2] + r[3] * r[3]);
         if (res.residual < 1e-7) { res.converged = true; break; }
         Real J[4][4];
-        for (int j = 0; j < 4; ++j) {
+        for (int j = 0; j < n; ++j) {
             TrimVars xp = x;
             xp.v[unknown[j]] += step[unknown[j]];
             Real rp[4];
             residual(xp, rp);
-            for (int i = 0; i < 4; ++i) J[i][j] = (rp[i] - r[i]) / step[unknown[j]];
+            for (int i = 0; i < n; ++i) J[i][j] = (rp[i] - r[i]) / step[unknown[j]];
         }
-        Real b[4] = {-r[0], -r[1], -r[2], -r[3]}, dx[4];
-        if (!solve4(J, b, dx)) break;
+        Real b[4] = {-r[0], -r[1], -r[2], -r[3]}, dx[4] = {};
+        if (!solveN(n, J, b, dx)) break;
         // Backtracking line search on the residual norm.
         Real lambda = 1.0;
         TrimVars best = x;
         Real bestNorm = res.residual;
         for (int ls = 0; ls < 8; ++ls, lambda *= 0.5) {
             TrimVars xt = x;
-            for (int j = 0; j < 4; ++j) {
+            for (int j = 0; j < n; ++j) {
                 const int u = unknown[j];
                 xt.v[u] += clamp(lambda * dx[j], -maxStep[u], maxStep[u]);
             }
-            xt.v[Elevator] = clamp(xt.v[Elevator], -1.0, 1.0);
+            xt.v[Elevator] = clamp(xt.v[Elevator], ths ? -2.0 : -1.0, ths ? 2.0 : 1.0);
             xt.v[Throttle] = clamp(xt.v[Throttle], 0.0, 1.0);
             xt.v[Omega] = std::max(xt.v[Omega], 20.0);
             xt.v[Tas] = std::max(xt.v[Tas], 10.0);
             Real rt[4];
             residual(xt, rt);
-            const Real n = std::sqrt(rt[0] * rt[0] + rt[1] * rt[1] + rt[2] * rt[2] + rt[3] * rt[3]);
-            if (n < bestNorm) {
+            const Real norm = std::sqrt(rt[0] * rt[0] + rt[1] * rt[1] + rt[2] * rt[2] + rt[3] * rt[3]);
+            if (norm < bestNorm) {
                 best = xt;
-                bestNorm = n;
+                bestNorm = norm;
                 break;
             }
         }
@@ -148,21 +165,28 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
     ac.settleDownwash();
     ac.setFlightState(s.body);
     DynamicState s2 = ac.state();
-    s2.shaftOmega[0] = x.v[Omega];
+    if (piston) s2.shaftOmega[0] = x.v[Omega];
     ac.setState(s2);
-    ac.prepareContext(in, ground, atm);
+    ac.prepareContext(in, ground, atm);  // turbofans: spools set to the trimmed throttle
+    ac.setTurbofansSteady(false);
 
     // Report engine/prop quantities at the trimmed point.
     res.theta = x.v[Theta];
     res.flightPath = x.v[Gamma];
     res.alpha = x.v[Theta] - x.v[Gamma];
-    res.elevator = x.v[Elevator];
+    res.elevator = ths ? x.v[Elevator] - clamp(x.v[Elevator], -1.0, 1.0) : x.v[Elevator];
+    res.trim = ths ? clamp(x.v[Elevator], -1.0, 1.0) : ac.trimForElevator(x.v[Elevator]);
     res.throttle = x.v[Throttle];
-    res.rpm = x.v[Omega] * 60 / kTwoPi;
+    res.rpm = piston ? x.v[Omega] * 60 / kTwoPi : 0.0;
     res.tas = x.v[Tas];
     res.state = ac.state();
     res.input = in;
-    {
+    if (!piston) {
+        for (int i = 0; i < ac.turbofanCount(); ++i) {
+            res.thrust += ac.turbofanState(i).thrust;
+            res.fuelFlow += ac.turbofanState(i).fuelFlow;
+        }
+    } else {
         const PistonEngine& e = ac.engine(0);
         const AirSample a = atm.sample(s.body.position, req.altitude, 0);
         PistonEngineInputs pin;
@@ -185,9 +209,8 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
 
 void startTrimmedFlight(Aircraft& ac, const FlightSetup& fs, const AtmosphereField& atm, const GroundQuery& ground,
                         TestPilot* pilot, TrimResult* out) {
-    const Real rho = StandardAtmosphere().at(fs.altitude).density;
     TrimRequest req;
-    req.tas = tasFromCas(ktToMs(fs.kias), rho);
+    req.tas = tasFromCas(ktToMs(fs.kias), StandardAtmosphere().at(fs.altitude));
     req.altitude = fs.altitude;
     req.flapDetent = fs.flapDetent;
     const TrimResult tr = trim(ac, req, atm);
@@ -205,12 +228,7 @@ void startTrimmedFlight(Aircraft& ac, const FlightSetup& fs, const AtmosphereFie
         pilot->lateral = TestPilot::Lateral::WingsLevel;
     }
     // Put the trimmed elevator into the trim wheel so the pilot starts hands-off.
-    Real elevUp = 0.4;
-    for (const auto& s : ac.definition().surfaces)
-        for (const auto& p : s.panels)
-            for (const auto& c : p.controls)
-                if (c.channel == ControlChannel::Elevator) elevUp = c.maxNegative;
-    ac.setElevatorTrim(tr.elevator * elevUp / ac.definition().controls.elevatorTrimRange);
+    ac.setElevatorTrim(tr.trim);
     ac.resetInstrumentsToTruth();
 }
 

@@ -21,7 +21,8 @@ multiplayer it lets an assisted aircraft outperform a real one.
   - stall prevention that limits nose-up stick near the critical angle of
     attack;
   - auto-coordination through the rudder;
-  - auto-trim through the trim actuator;
+  - auto-trim through the trim actuator, including a straight-and-level
+    hold that works like a two-axis autopilot (stick plus trim servo);
   - auto-mixture through the mixture lever.
 - Checklists (`ProcedureRunner`, Quick Start) operate the same cockpit
   controls a player clicks. An assisted engine start therefore takes real time

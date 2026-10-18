@@ -70,7 +70,7 @@ assists. Each change was made only after its physical cause was identified:
    maximum speed to within about 1%. The remaining scale factor is labelled
    `calibrated`.
 3. **Stall speeds.** clmax 1.48, a flap clmax ratio of 0.70 and span
-   efficiency 0.86 give +1.6% (flaps up) and +2.6% (flaps 30).
+   efficiency 0.86 give +1.9% (flaps up) and +2.8% (flaps 30).
 4. **Hands-off roll from engine torque.** Fixed with rigging (a rudder tab and
    aileron trim), solved numerically for cruise. The torque itself was not
    reduced.
@@ -78,5 +78,5 @@ assists. Each change was made only after its physical cause was identified:
    −1° and slipstream exposure 0.6. Both are in the plausible range for the
    C172's fixed stabiliser.
 
-Behaviour that was *not* tuned away is listed under known discrepancies in the
-validation report.
+Behaviour that was *not* tuned away is recorded under investigated
+comparisons in the validation report.

@@ -172,7 +172,7 @@ TEST_CASE("flight: wind changes ground speed and track, not airspeed") {
     SimpleWeather::Params wp;
     wp.windSpeed = 10;
     wp.windFromDirection = 0;       // headwind for a northbound aircraft
-    wp.boundaryLayerExponent = 0;   // uniform
+    wp.profile = WindProfile::Uniform;   // uniform
     Rig r(100, 1500, 0, &wp);
     r.ac.setFlightState({r.ac.state().body.position, r.ac.state().body.velocity + Vec3{-10, 0, 0},
                          r.ac.state().body.attitude, {}});
@@ -183,7 +183,7 @@ TEST_CASE("flight: wind changes ground speed and track, not airspeed") {
     SimpleWeather::Params cw;
     cw.windSpeed = 10;
     cw.windFromDirection = -kPi / 2;
-    cw.boundaryLayerExponent = 0;
+    cw.profile = WindProfile::Uniform;
     Rig c(100, 1500, 0, &cw);
     c.ac.setFlightState({c.ac.state().body.position, c.ac.state().body.velocity + Vec3{0, 10, 0},
                          c.ac.state().body.attitude, {}});
@@ -208,6 +208,143 @@ TEST_CASE("flight: turbulence disturbs the aircraft through the air, determinist
     }
     CHECK(maxP > degToRad(2));
     CHECK(maxNz > 0.05);
+    CHECK(!r.ac.faulted());
+}
+
+TEST_CASE("flight: the wind itself is bumpy near the ground and smooth above the boundary layer") {
+    // Same 15 kt surface wind, no turbulence class set: the mechanical
+    // turbulence of the surface layer shakes the airplane at 500 ft and is
+    // gone at 5000 ft. The test pilot holds wings level and altitude.
+    auto bumps = [](Real altitude, Real wind) {
+        SimpleWeather::Params wp;
+        wp.windSpeed = ktToMs(wind);
+        Rig r(100, altitude, 0, &wp);
+        r.pilot.lateral = TestPilot::Lateral::WingsLevel;
+        Real maxNz = 0, minAlt = 1e9;
+        for (int i = 0; i < 20 * 240; ++i) {
+            r.ac.step(kDefaultDt, r.pilot.update(r.ac, kDefaultDt), r.ground, r.atm);
+            if (i > 240) maxNz = std::max(maxNz, std::abs(r.ac.telemetry().loadFactor - 1));
+            minAlt = std::min(minAlt, r.ac.altitudeMsl());
+        }
+        CHECK(minAlt > altitude - 60);
+        return maxNz;
+    };
+    const Real calmLow = bumps(ftToM(500), 0), low = bumps(ftToM(500), 15);
+    const Real calmHigh = bumps(ftToM(5000), 0), high = bumps(ftToM(5000), 15);
+    CHECK(low > calmLow + 0.1);
+    CHECK(low < 1.0);  // light-to-moderate mechanical turbulence, not a structural event
+    CHECK_NEAR(high, calmHigh, 0.01);
+}
+
+TEST_CASE("flight: crossing a microburst -- headwind gain, then tailwind loss and sink") {
+    // The classic encounter: airspeed rises in the outflow headwind, then the
+    // downdraft and the tailwind take it away. A 15 m/s microburst (outflow
+    // ~11 m/s and downdraft ~12 m/s at this height) 6 km ahead of an airplane
+    // at 1000 ft, 100 KIAS, pilot holding wings level and altitude with
+    // fixed power: more sink than a C172 can out-climb.
+    SimpleWeather::Params wp;
+    wp.turbulence.mechanical = false;
+    Rig probe(100, ftToM(1000), 0, &wp);
+    const Vec3 p0 = probe.ac.telemetry().positionNed;
+    const Real hdg = probe.ac.telemetry().heading;
+    Microburst m;
+    m.peakOutflow = 15;
+    m.north = p0.x + 6000 * std::cos(hdg);
+    m.east = p0.y + 6000 * std::sin(hdg);
+    m.startTime = -100;  // already mature when the airplane is trimmed
+    m.growthTime = 1;
+    m.matureTime = 1000;
+    wp.microbursts.push_back(m);
+    Rig r(100, ftToM(1000), 0, &wp);
+    r.pilot.lateral = TestPilot::Lateral::WingsLevel;
+    const Real v0 = r.ac.telemetry().trueAirspeed, alt0 = r.ac.altitudeMsl();
+    Real vMax = v0, vMin = v0, minAlt = alt0, tMax = 0, tMin = 0, maxSink = 0;
+    for (int i = 0; i < 200 * 240; ++i) {
+        r.ac.step(kDefaultDt, r.pilot.update(r.ac, kDefaultDt), r.ground, r.atm);
+        const AircraftTelemetry& t = r.ac.telemetry();
+        if (t.trueAirspeed > vMax) { vMax = t.trueAirspeed; tMax = t.time; }
+        if (t.trueAirspeed < vMin) { vMin = t.trueAirspeed; tMin = t.time; }
+        minAlt = std::min(minAlt, r.ac.altitudeMsl());
+        maxSink = std::max(maxSink, t.air.wind.z);
+    }
+    // The outflow headwind grows slowly (~0.1 m/s^2) against the drag time
+    // constant: a modest gain (~5 kt). Then downdraft and tailwind together:
+    // a large loss of airspeed and height (~55 kt, ~250 m).
+    CHECK(msToKt(vMax - v0) > 3);    // headwind side
+    CHECK(msToKt(v0 - vMin) > 30);   // tailwind and downdraft side
+    CHECK(tMax < tMin);              // in that order
+    CHECK(maxSink > 6);              // the downdraft (NED +z)
+    CHECK(alt0 - minAlt > 100);      // more sink than a C172 can out-climb
+    CHECK(!r.ac.faulted());
+}
+
+TEST_CASE("flight: a vertical 1-cosine gust gives the Pratt gust load factor") {
+    // FAR 23/25 discrete gust: Delta n = Kg rho0 Ve a U / (2 W/S), with the
+    // gust alleviation factor Kg = 0.88 mu / (5.3 + mu), mu = 2 (W/S) /
+    // (rho c a g). Lift slope from Helmbold's relation for the wing aspect
+    // ratio. A 30 ft (9.1 m/s) gust over H = 12.5 MAC, hands off.
+    SimpleWeather::Params wp;
+    wp.turbulence.mechanical = false;
+    Rig probe(100, 1500, 0, &wp);
+    const Vec3 p0 = probe.ac.telemetry().positionNed;
+    const Real hdg = probe.ac.telemetry().heading;
+    const AircraftDefinition& g = ref();
+    const Real s = g.referenceArea, c = g.referenceChord, ar = sq(g.referenceSpan) / s;
+    const Real u = 5.0;  // m/s up: moderate, keeps the wing well below the stall
+    DiscreteGust gust;
+    gust.heading = hdg + kPi;  // front faces the airplane...
+    gust.frontSpeed = 0;       // ...fixed in space, 300 m ahead
+    gust.origin = p0 + Vec3{std::cos(hdg), std::sin(hdg), 0} * 300.0;
+    gust.length = 12.5 * c;
+    gust.amplitude = {0, 0, -u};
+    wp.gusts.push_back(gust);
+    Rig r(100, 1500, 0, &wp);
+    r.hands = r.trim.input;
+    r.hands.pitch = 0;
+    Real dnMax = 0;
+    for (int i = 0; i < 15 * 240; ++i) {
+        r.ac.step(kDefaultDt, r.hands, r.ground, r.atm);
+        dnMax = std::max(dnMax, r.ac.telemetry().loadFactor - 1);
+    }
+    const Real rho = r.ac.telemetry().air.state.density, v = r.ac.telemetry().trueAirspeed;
+    const Real ws = r.ac.massProperties().mass * kStandardGravity / s;
+    const Real a = kTwoPi * ar / (2 + std::sqrt(ar * ar + 4));
+    const Real mu = 2 * ws / (rho * c * a * kStandardGravity);
+    const Real kg = 0.88 * mu / (5.3 + mu);
+    const Real pratt = kg * rho * v * a * u / (2 * ws);
+    // The strips are quasi-steady (no Küssner lift growth, which Kg partly
+    // accounts for), so the sim reads ~15-20% above Pratt: known gap,
+    // docs/architecture/wind.md.
+    CHECK_RANGE(dnMax / pratt, 1.0, 1.35);
+}
+
+TEST_CASE("flight: a thermal lifts the airplane through the air") {
+    // A strong explicit thermal (w* 3 m/s, zi 1800 m) on the track at
+    // 3000 ft AGL. Holding airspeed at fixed power, the airplane climbs
+    // through the core and sinks in the ring around it.
+    SimpleWeather::Params wp;
+    wp.turbulence.mechanical = false;
+    Rig probe(100, ftToM(3000), 0, &wp);
+    const Vec3 p0 = probe.ac.telemetry().positionNed;
+    const Real hdg = probe.ac.telemetry().heading;
+    wp.thermals.convectiveVelocity = 3;
+    wp.thermals.depth = 1800;
+    wp.thermals.field = false;
+    wp.thermals.thermals.push_back({p0.x + 1500 * std::cos(hdg), p0.y + 1500 * std::sin(hdg), 1.0, -1e9, 0});
+    wp.thermals.convectiveTurbulence = false;  // would mask the single core
+    Rig r(100, ftToM(3000), 0, &wp);
+    r.pilot.lateral = TestPilot::Lateral::WingsLevel;
+    Real maxVs = 0, minVs = 0, maxUp = 0;
+    for (int i = 0; i < 60 * 240; ++i) {
+        r.ac.step(kDefaultDt, r.pilot.update(r.ac, kDefaultDt), r.ground, r.atm);
+        maxVs = std::max(maxVs, r.ac.telemetry().verticalSpeed);
+        minVs = std::min(minVs, r.ac.telemetry().verticalSpeed);
+        maxUp = std::max(maxUp, -r.ac.telemetry().air.wind.z);
+    }
+    const Real wPeak = -ThermalField(wp.thermals, {}).thermalVelocity(0, 0, ftToM(3000), 1).z;
+    CHECK_NEAR(maxUp, wPeak, 0.3 * wPeak);  // flew through the core
+    CHECK(maxVs > 0.4 * wPeak);              // and was carried up
+    CHECK(minVs < -0.15);                    // then the (broad, weaker) sink ring
     CHECK(!r.ac.faulted());
 }
 

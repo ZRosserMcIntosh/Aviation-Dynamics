@@ -58,7 +58,9 @@ struct SectionPolar {
     Real flatPlateCd = 1.9;           // cd at 90 deg (finite-aspect flat plate ~1.2-2.0)
 };
 
-enum class ControlChannel { Aileron, Elevator, Rudder, Flap, None };
+// Spoiler: a panel on the upper surface raised by the speedbrake (lift dump);
+// max_positive is its full deflection, chord_fraction its chord.
+enum class ControlChannel { Aileron, Elevator, Rudder, Flap, Spoiler, None };
 
 // A plain flap-type control surface occupying part of a panel's span.
 struct ControlSurfaceDef {
@@ -75,6 +77,9 @@ struct ControlSurfaceDef {
     Table1D effectivenessVsDeflection;
     Real clMaxIncrementRatio = 0.6;   // dclmax / dcl (flaps raise clmax less than cl)
     Real profileDragPerRad2 = 0.3;    // extra section cd per rad^2 of deflection
+    // Fowler flaps move aft as they deflect: chord added at full positive
+    // deflection, as a fraction of the chord (0 for plain and split flaps).
+    Real chordExtension = 0;
 };
 
 // One trapezoidal panel. A wing is a list of panels; `mirrored` panels are
@@ -112,6 +117,11 @@ struct LiftingSurfaceDef {
     // aerodynamics are a separate model (Milestone 7).
     Real thicknessRatio = 0.12;
     Real kornFactor = 0.87;           // 0.87 conventional, ~0.95 supercritical
+    // Span loading from a nonlinear lifting line (horseshoe vortices solved
+    // together, ground images) instead of independent strips with the
+    // Helmbold slope: tip stall, swept-wing pitch-up, winglets, roll damping.
+    bool liftingLine = false;
+    bool trimmableStabilizer = false;  // its incidence follows the stabiliser trim
 };
 
 // Slender-body fuselage: Munk moment (destabilising pitch/yaw) and crossflow
@@ -129,6 +139,9 @@ struct DragItemDef {
     std::string name;
     Vec3 position;
     Real dragArea = 0;                // Cd*A, m^2 (along the local airflow)
+    // Transonic drag rise of a body (fuselage, nacelles): above this Mach the
+    // drag area grows by 1 + 60 (M - Mcrit)^2, ~2.4x at Mcrit + 0.15. 0 = none.
+    Real criticalMach = 0;
 };
 
 // ---- Propulsion -----------------------------------------------------------
@@ -180,6 +193,58 @@ struct PistonEngineDef {
     Real oilViscosityTemperatureScale = 38.9; // K: pressure x e when oil is this much colder
     int fuelFeed = 0;                 // index of the fuel feed this engine draws from
     PropellerDef propeller;
+};
+
+// Two-spool high-bypass turbofan (docs/architecture/propulsion.md). Net
+// thrust at full throttle lapses with altitude and Mach number after Mattingly
+// ("Elements of Gas Turbine Propulsion", eq. 2.54a, high bypass ratio):
+//   F/F0 = delta0 (1 - 0.49 sqrt(M))                       theta0 <= TR
+//        = delta0 (1 - 0.49 sqrt(M) - 3 (theta0 - TR)/(1.5 + M))  theta0 > TR
+// with delta0, theta0 the free-stream total pressure and temperature ratios.
+// Part throttle follows the fan speed N1; the spools lag the throttle, and
+// fuel flow is thrust times a TSFC that rises with Mach number.
+struct TurbofanDef {
+    std::string name = "engine";
+    Vec3 position;                    // thrust line point (nozzle exit), structural frame
+    Vec3 thrustAxis{1, 0, 0};         // unit, body
+    Real staticThrust = 75000;        // N, sea-level ISA, take-off rating, M = 0
+    Real bypassRatio = 4.4;
+    Real throttleRatio = 1.0;         // TR: theta0 at which the engine reaches its temperature limit
+    Real lapseMachCoefficient = 0.49; // the 0.49 in the lapse law
+    Real idleN1 = 0.22;               // fan speed, fraction of take-off N1
+    Real idleN2 = 0.6;                // core speed, fraction
+    Real idleThrustFraction = 0.035;  // of the available thrust, at idle N1
+    Real thrustExponent = 1.8;        // thrust fraction vs normalised N1 above idle
+    Real accelerationTime = 5.0;      // s, idle to 95 % thrust
+    Real decelerationTime = 4.0;      // s, take-off to idle
+    Real startTime = 35.0;            // s, starter engaged to stabilised idle
+    Real tsfcStatic = 1.10e-5;        // kg/(N s) at M = 0, sea level (0.39 lb/lbf/h)
+    Real tsfcMachSlope = 0.9;         // TSFC grows by this fraction per unit Mach
+    Real idleFuelFlow = 0.045;        // kg/s, sea-level ground idle
+    Real ittIdle = 720;               // K
+    Real ittTakeoff = 1150;           // K
+    Real oilPressureIdle = 2.4e5;     // Pa
+    Real oilPressureMax = 4.1e5;      // Pa
+    int fuelFeed = 0;
+};
+
+// Retractable landing gear and speedbrakes (both optional).
+struct GearRetractionDef {
+    bool retractable = false;
+    Real transitTime = 8.0;           // s, either way
+    Real dragArea = 0;                // m^2 of CdA, all legs down and doors open
+    Real maxExtendedIas = 0;          // m/s (VLE), exceedance reporting
+};
+
+struct SpeedbrakeDef {
+    bool present = false;
+    int detents = 3;                  // RET, ..., FULL
+    Real dragArea = 0;                // m^2 of CdA fully deployed
+    Real liftLossFraction = 0;        // wing lift spoiled when fully deployed (lift dump)
+    // (dragArea and liftLossFraction are the lumped model for aircraft
+    // without spoiler panels; with spoiler controls on the wing the panels
+    // carry the drag and the lift loss where they are.)
+    Real rate = 0.5;                  // deployment fraction per second
 };
 
 // ---- Fuel -----------------------------------------------------------------
@@ -244,10 +309,18 @@ struct GearDef {
     Real maxBrakeForceCoefficient = 0;  // brake force capacity / normal load (0 = no brake)
     int brakeGroup = -1;              // 0 = left, 1 = right
     Real maxSteerAngle = 0;           // rad, by the rudder pedals
+    // Tiller (nose-wheel steering handwheel on transport aircraft): wheel angle
+    // at full tiller (0 = no tiller). Tiller and pedal commands add, limited
+    // to the larger of the two authorities.
+    Real tillerSteerAngle = 0;        // rad
+    // Slew-rate limit of a powered steering actuator (0 = direct mechanical
+    // linkage, the wheel follows the command at once).
+    Real steerRate = 0;               // rad/s
     Real castorAngle = 0;             // rad, free castoring range beyond pedal steering
     Real corneringStiffness = 4e4;    // N/rad
     Real relaxationLength = 0.3;      // m
     Real longitudinalStiffness = 2e5; // N/m (bristle model for braking/stiction)
+    Real tyrePressure = 0;            // Pa, inflation (wet-runway friction, hydroplaning); 0 = unknown
 };
 
 // Hard points that should never touch the ground (tail, wingtips, prop tip,
@@ -270,12 +343,23 @@ struct FlightControlsDef {
     bool flapsElectric = true;
     Real flapMotorCurrent = 10;       // A
     Real elevatorTrimRange = 0.2;     // rad of equivalent elevator offset at full trim
+    // Trimmable horizontal stabiliser (jets): the trim moves the whole
+    // tailplane's incidence instead of offsetting the elevator, rad of travel
+    // each way (0: elevator-offset trim). The tailplane surface is marked
+    // trimmable_stabilizer.
+    Real stabilizerNoseUp = 0, stabilizerNoseDown = 0;
     Real elevatorTrimRate = 0.1;      // trim fraction per second (manual wheel)
     // Fixed rigging (ground-adjustable tabs, aileron rigging), as pilot-sense
     // control offsets -1..1. Light aircraft are rigged to fly hands-off near
     // cruise power despite engine torque and slipstream; Calibrated.
     Real riggingAileron = 0;
     Real riggingRudder = 0;
+    // Rudder travel limiter (transport/business jets): full travel up to this
+    // EAS, then travel scaled by (V/EAS)^2 so the yaw authority stays roughly
+    // constant with dynamic pressure (floor 15 %). 0 = none.
+    Real rudderLimiterIas = 0;        // m/s
+    GearRetractionDef gear;
+    SpeedbrakeDef speedbrake;
 };
 
 // ---- Sensors & instruments --------------------------------------------------
@@ -294,7 +378,17 @@ struct StallWarningDef {
     bool present = true;
     int surface = 0;                  // lifting surface carrying the vane/reed
     int strip = -1;                   // strip index (-1 = middle)
+    // An angle-of-attack computer (jets) calibrated to the wing's real stall:
+    // it protects the strip closest to its stall anywhere on the surface,
+    // not one vane's strip (a swept wing stalls outboard first).
+    bool computed = false;
     Real alphaMargin = 0.07;          // rad below the strip's stall angle
+    // Stick pusher (T-tail jets: keeps the airplane out of a locked-in deep
+    // stall): airborne, at this margin below the vane strip's stall angle the
+    // elevator is pushed to at most `pusherElevator` until the angle of attack
+    // is 5 deg lower again. 0 = no pusher.
+    Real pusherMargin = 0;            // rad
+    Real pusherElevator = -0.5;       // elevator command (-1..1, nose down)
 };
 
 struct VacuumDef {
@@ -316,6 +410,7 @@ struct StructuralLimitsDef {
     Real limitLoadPositive = 3.8;     // g, flaps up
     Real limitLoadNegative = -1.52;
     Real limitLoadFlaps = 3.0;
+    Real maxOperatingMach = 0;        // MMO (0 = none), exceedance reporting
 };
 
 // ---- Loading stations --------------------------------------------------
@@ -323,8 +418,15 @@ struct StructuralLimitsDef {
 struct PayloadStationDef {
     std::string name;
     Vec3 position;
-    Real maxMass = 0;
+    Real maxMass = 0;                 // placard limit (a limit of approval, not a physical stop)
     Real initial = 0;
+};
+
+// A placarded limit on the sum of several stations (e.g. two baggage areas).
+struct StationGroupLimitDef {
+    std::string name;
+    std::vector<int> stations;
+    Real maxMass = 0;
 };
 
 struct AircraftDefinition {
@@ -342,9 +444,16 @@ struct AircraftDefinition {
     Vec3 emptyCg;
     Vec3 emptyInertiaDiag;            // Ixx, Iyy, Izz about the empty CG
     Real emptyIxz = 0;
+    // True when the published empty mass already includes the unusable fuel
+    // (and full oil), as a POH "standard empty weight" does; the tanks carry
+    // that fuel, so the airframe item is reduced by it rather than counting it twice.
+    bool emptyIncludesUnusableFuel = false;
+    Real maxRampMass = 0;             // 0 = not published
     Real maxTakeoffMass = 0;
     Real maxLandingMass = 0;
+    Real maxZeroFuelMass = 0;         // 0 = not published / not applicable
     std::vector<PayloadStationDef> stations;
+    std::vector<StationGroupLimitDef> stationGroupLimits;
     // CG envelope: forward/aft limit (structural x) vs mass.
     Table1D cgForwardLimitVsMass, cgAftLimitVsMass;
 
@@ -357,6 +466,7 @@ struct AircraftDefinition {
     std::vector<DragItemDef> dragItems;
 
     std::vector<PistonEngineDef> engines;
+    std::vector<TurbofanDef> turbofans;
     FuelSystemDef fuel;
     ElectricalDef electrical;
     std::vector<GearDef> gear;

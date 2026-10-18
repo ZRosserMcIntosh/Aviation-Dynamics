@@ -5,7 +5,7 @@ exceptions or RTTI, and the WASI imports are stubs because the core does no
 I/O. The C ABI is in `avd_web.cpp`.
 
 ```sh
-WASI_SDK=/path/to/wasi-sdk web/build_wasi.sh   # → web/dist/avd.wasm, avd.mjs, tupi_t180.json
+WASI_SDK=/path/to/wasi-sdk web/build_wasi.sh   # → web/dist/avd.wasm, avd.mjs, tupi_t180.json, top_g.json
 node web/smoke_test.mjs                        # take-off, Quick Start, ILS reception, instruments
 node web/cockpit/build_page.mjs                # → web/dist/cockpit.html (one self-contained file)
 node web/cockpit/browser_test.mjs              # headless Chromium check of the bundled page (needs playwright)
@@ -31,10 +31,22 @@ call is clamped to 0.25 s. It returns the number of steps run.
 | Function | Meaning |
 |---|---|
 | `avd_reset(mode)` | Reset scenario: 0 cold and dark on runway 12, 1 engine running on runway 12, 2 on final for runway 12 (3 km), 3 cruising over the city. Sets NAV 1 to 110.30 active and 113.70 standby, OBS and bug 122, COM standby 132.80, transponder ALT |
-| `avd_set_weather(windMs, windFromDeg, turbulenceMs, isaDevC, humidity)` | Weather (rebuilds the field) |
-| `avd_set_input(pitch, roll, yaw, throttle, mixture, brakeL, brakeR, trimRate, starter)` | Raw pilot input in −1..1 or 0..1. Starter is held while 1 |
+| `avd_reset_air(east, north, heightAboveField, headingDeg, kias, flap)` | Trimmed, level, hands-off spawn anywhere in the world (ENU metres from the world anchor, height in m above the field elevation, true track (the spawn crabs into the mean wind to make it good), 55–350 KIAS, flap detent 0–3). Read the levers with `avd_trim_throttle()` / `avd_trim_mixture()` |
+| `avd_set_weather(windMs, windFromDeg, turbulenceMs, isaDevC, humidity)` | Weather (rebuilds the field). The wind is the airfield report; it brings its own mechanical turbulence, weaker wind and stronger gusts over the city around SBMT, backing with height, and Cantareira ridge lift. `turbulenceMs` is an extra RMS on top |
+| `avd_set_wind_detail(severity, wStarMs, ziM)` | Turbulence class (0 none, 1 light, 2 moderate, 3 severe; MIL-HDBK-1797) and thermals (w*, convective-layer depth m AGL; w* 0 = none) |
+| `avd_set_wind_hazard(kind)` | 0 none, 1 microburst 2 km before the runway in use (12 m/s outflow), 2 gust front from the SW reaching the field in ~5 min; placed at the current sim time |
+| `avd_set_input(pitch, roll, yaw, throttle, mixture, brakeL, brakeR, trimRate, starter)` | Raw pilot input in −1..1 or 0..1. Starter is held while 1. On an aircraft with a tiller, yaw turns the tiller on the ground below 5 kt |
 | `avd_set_assist(p)` | 0 Arcade, 1 Sport, 2 Simulation |
-| `avd_quick_start()` / `avd_procedure_status()` | Run the Quick Start checklist through the cockpit. Status: 0 idle, 1 running, 2 done, 3 failed; the message is in the text buffer |
+| `avd_set_airport(id)` / `avd_airport_text()` | Spawn airport: 0 Campo de Marte (SBMT, runway 12), 1 Congonhas (SBSP, runway 35L, the default). Kept across aircraft loads; takes effect at the next reset. Text: `ICAO\|name\|runway\|reciprocal`. `avd_runway()` describes the runway in use |
+| `avd_set_station(i, kg)` / `avd_set_tank(i, litres)` | Planned load, applied to every new spawn (trimmed spawns trim at that weight). No upper limit on stations (placards are reported, not enforced); tanks hold at most their capacity |
+| `avd_loadsheet(planned)` / `avd_loadsheet_names()` | Weight and balance of the planned load (1) or the aircraft now (0); layout below. `A.loadsheet(planned)` returns it as an object |
+| `avd_set_runway_water(mm)` | Water on the airfield: 0 dry, under 3 mm wet (14 CFR 25.109 wet braking), 3 mm and more standing water (hydroplaning above 9·√p kt) |
+| `avd_wind_grid(hx, hy, hz, nx, ny, nz)` | Wind around the aircraft minus the wind at the CG, body axes, on an nx·ny·nz grid (≤ 16·12·8) over ±hx, ±hy, ±hz m: eddies, thermals and shear for the airflow view; each value averaged over the grid spacing (smaller eddies would alias). `A.windGrid(...)` |
+| `avd_wind_box(cE, cN, cU, hE, hN, hU, nx, ny, nz)` | The wind (ENU m/s, the air's own velocity) on an nx·ny·nz grid (≤ 24·24·12) over the ENU box centre ± half sizes, x fastest; each value averaged over the grid spacing so smaller eddies do not alias. Moves the airflow view's smoke. `A.windBox(c, h, nx, ny, nz)` |
+| `avd_set_wake(on)` | The aircraft's wake (default on): shed into the air and felt when flown into (its own gates older than 4 s, e.g. after a 360). Off: neither |
+| `avd_wake()` | The wake's vortex segments: [0] count, [1] largest \|Γ\| m²/s, [2] ground height (ENU up m, −1e9 without), then from [8] nine doubles a segment: ends a and b (ENU m), circulation (m²/s, right-handed about a→b), Lamb–Oseen core radius m, age s; bound, attached, shed and ground-image segments, at most 4,096. `A.wake()` returns `{ n, gmax, ground, seg }` (a view: copy what you keep) |
+| `avd_set_level_hold(on)` | Straight-and-level hold (auto-trim that keeps the airplane straight and level with the stick released), with any preset; kept when the preset changes |
+| `avd_quick_start()` / `avd_procedure_status()` | Run the Quick Start checklist through the cockpit (turbofan aircraft: power up, then each engine's fuel control switch to RUN in turn). Status: 0 idle, 1 running, 2 done, 3 failed; the message is in the text buffer |
 | `avd_cockpit_count()` / `avd_cockpit_text(i)` / `avd_cockpit_cycle(i)` | Switch registry: `id\|label\|pos0;pos1…\|current` |
 | `avd_altimeter_adjust(hundredthsInHg)` | Kollsman knob |
 | `avd_dg_adjust(deg)` / `avd_dg_sync()` / `avd_heading_bug(deg)` | Heading indicator knobs |
@@ -47,6 +59,10 @@ call is clamped to 0.25 s. It returns the number of steps run.
 | `avd_trim_throttle()` / `avd_trim_mixture()` | Lever positions of the last trimmed spawn (modes 2 and 3), so the host starts hands-off |
 | `avd_compass_card()` | 12 doubles: compass reading (deg) on magnetic headings 0, 30, … 330 from a compass swing (the FOR/STEER card) |
 | `avd_events()` | Event lines since the last call (text buffer) |
+| `avd_ai_cage()` | Attitude indicator caging knob: squares the gyro to the case and clears a tumble (use wings level) |
+| `avd_jet()` | 64 doubles for turbofan aircraft: [0] engines, [1] gear position, [2] gear lever, [3] speedbrake position, [4] speedbrake detent, [5] Mach, [6] fuel kg, [7] fuel flow kg/h; per engine at 8 + 8i: N1 %, N2 %, ITT °C, fuel flow kg/h, thrust kN, running, starting, fuel switch; [24] MMO, [25] VMO kt, [26] TAS kt, [27] flap deg, [28] trim, [29] weight on wheels, [30–31] oil psi; [32] 1-g stall CAS kt (current flap, weight and Mach, from the trimmed CLmax), [33] the same at take-off flap, [34] at landing flap, [35] gross mass kg, [36] flight-path angle deg, [37] track true deg, [38] wind from true deg, [39] wind kt, [40] radio altitude ft, [41] SAT °C, [42] load factor, [43] α deg, [44] generators online, [45] bus volts, [46] stall warning, [47] VFE kt for the current flap (0 flaps up), [48] VLE kt, [49] take-off flap deg, [50] landing flap deg, [51] stick pusher active |
+| `avd_flow()` | Airflow-visualisation snapshot (1,208 doubles): header [0] strips, [1] engines, [2] TAS m/s, [3] α, [4] β, [5] ρ, [6–8] CG (FRD), [9] speed of sound, [10–12] body rates p, q, r (rad/s); per lifting strip at 16 + 18i (up to 64): quarter-chord position, span axis, normal (FRD body), chord, area, cl, local α, dynamic pressure, stall α, surface index, attached-flow fraction (1 attached, below 0.5 separated: stalled or behind a raised spoiler), bound circulation Γ m²/s; per engine at 1168 + 10k: position, thrust axis, disc/nozzle radius, slipstream velocity increment, thrust N, kind (0 propeller, 1 turbofan) |
+| `avd_bodies()` | Bluff bodies in the airflow: [0] count, then ten doubles a body (up to 32): position (structural frame m), long axis, size (wheel diameter or the panel's projected height, m), length along the axis m, drag area m², kind (0 gear leg, 1 spoiler panel). Extended gear and raised spoiler panels; the airflow view draws their wakes. `A.bodies()` returns `{ n, b }` (a view: copy what you keep) |
 
 ## `avd_state()`: 64 doubles
 
@@ -85,6 +101,33 @@ Indices and fields:
 | 52 | fuel total (l) |
 | 53 | altitude MSL (ft) |
 | 54 | assist active |
+| 55 | straight-and-level hold engaged |
+| 56 | yaw input on the nose-wheel tiller (below 5 kt on the ground) |
+| 57 | aircraft has a tiller |
+| 58 | straight-and-level hold in underspeed protection (descending to keep flying speed) |
+| 59, 60 | wind at the aircraft, smoothed over 3 s: from (deg true), speed (kt) |
+| 61, 62 | ground track (deg true), drift (track − heading, deg, + right) |
+| 63 | water on the airfield (mm) |
+
+## `avd_loadsheet(planned)`: 256 doubles
+
+Masses in kg, x in the structural frame (m, forward positive; the 172's POH
+arm in inches is −x / 0.0254).
+
+| Index | Field | Index | Field |
+|---|---|---|---|
+| 0 | basic empty mass (as published) | 12–15 | limits: max ramp, take-off, landing, zero fuel (0 = not published) |
+| 1 | basic empty CG x | 16 | fuel density (kg/L) |
+| 2 | payload | 17–19 | number of stations, tanks, combined limits |
+| 3, 4 | zero-fuel mass, CG x | 20, 21 | points in the forward and aft CG limit tables |
+| 5, 6 | fuel on board (tanks and lines), usable fuel | 22 | trapped fuel (unusable and lines) |
+| 7, 8 | gross mass, CG x | | |
+| 9, 10 | forward and aft CG limits at the gross mass | | |
+| 11 | flags: 1 over ramp, 2 over take-off, 4 over landing, 8 over zero fuel, 16 CG forward of limit, 32 CG aft of limit, 64 a station over its placard, 128 a combined limit exceeded, 256 a tank over capacity | | |
+
+From index 24: per station (kg, placard kg, x), per tank (litres, capacity,
+unusable, x), per combined limit (kg, limit kg), then the forward and aft CG
+limit tables as (mass, x) pairs.
 
 ## `avd_cockpit()`: 96 doubles
 

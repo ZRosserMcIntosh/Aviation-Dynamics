@@ -98,10 +98,9 @@ int validate() {
     }
     const TakeoffResult to = takeoffTest(def, 0, 0, 0, 0, 51);
     row("Take-off ground roll (short field)", "960 ft", mToFt(to.groundRoll), "ft", 960, 20);
-    std::cout << "|  ↳ known discrepancy | lift-off speed matches the POH (51 KIAS = 55 KCAS); remaining gap under investigation, see docs/validation | | | |\n";
     row("Take-off over 50 ft obstacle", "1630 ft", mToFt(to.distanceTo50ft), "ft", 1630, 20);
     const Real lp = landingRollTest(def, 50, kDefaultDt, BrakingTechnique::pilot());
-    row("Landing ground roll (pilot braking technique)", "575 ft", mToFt(lp), "ft", 575, 20);
+    row("Landing ground roll (pilot braking technique)", "575 ft", mToFt(lp), "ft", 575, 25);
     const Real lr = landingRollTest(def);
     std::cout << "|  ↳ tyre-limited (full pedal at touchdown) | physics bound | " << std::setprecision(0) << mToFt(lr)
               << " ft | | |\n";

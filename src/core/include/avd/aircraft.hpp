@@ -50,6 +50,7 @@ struct PilotInput {
     Real pitch = 0;        // -1..1, + stick aft (nose up)
     Real roll = 0;         // -1..1, + roll right
     Real yaw = 0;          // -1..1, + right pedal
+    Real tiller = 0;       // -1..1, + steer right (nose-wheel tiller, where fitted)
     Real throttle = 0;     // 0..1
     Real mixture = 1;      // 0 (idle cut-off) .. 1 (full rich)
     Real brakeLeft = 0, brakeRight = 0;  // 0..1 toe brakes
@@ -75,6 +76,7 @@ enum class FlightEventType {
     EngineStarted, EngineStopped, FuelStarvation, StallWarningOn, StallWarningOff,
     Touchdown, Liftoff, Overspeed, OverG, FlapOverspeed, PropStrike, HardPointContact,
     BatteryDepleted, AlternatorOffline, AlternatorOnline, CockpitControlChanged,
+    MachOverspeed, GearOverspeed,
 };
 
 struct FlightEvent {
@@ -122,10 +124,14 @@ struct AircraftTelemetry {
     Real flapAngle = 0, elevatorTrim = 0;
     bool onGround = false;
     bool stallWarning = false;
+    bool stickPusher = false;                // stall protection pushing the nose down
     int stalledStrips = 0;
     Real busVoltage = 0;
     AirSample air;
     std::array<EngineTelemetry, kMaxEngines> engines{};
+    std::array<TurbofanState, kMaxEngines> turbofans{};
+    Real gearPosition = 1;                   // 0 up and locked .. 1 down and locked
+    Real speedbrake = 0;                     // 0 retracted .. 1 fully deployed
     std::array<GearTelemetry, kMaxGear> gear{};
     ControlDeflections controls;
 };
@@ -154,8 +160,11 @@ public:
     void setColdAndDark();
     // Initial-condition setters (spawn/trim): flaps already at a detent, trim position.
     void setFlapsImmediately(int detent);
+    void setGearImmediately(bool down) { gearDown_ = down; gearPos_ = down || !def_.controls.gear.retractable ? 1.0 : 0.0; syncCockpitPositions(); }
     void setElevatorTrim(Real trim) { trim_ = clamp(trim, -1.0, 1.0); }
     Real elevatorTrim() const { return trim_; }
+    // True if any gear leg is steered by a tiller (GearDef::tillerSteerAngle).
+    bool hasTiller() const;
     Real flapAngle() const { return flapAngle_; }
 
     // Re-anchor the local tangent frame (long-distance flight): position,
@@ -172,6 +181,11 @@ public:
     const MassProperties& massProperties() const { return mass_; }
     const AeroOutputs& aero() const { return aeroOut_; }
     const AeroModel& aeroModel() const { return *aeroModel_; }
+    bool hasTrimmableStabilizer() const { return def_.controls.stabilizerNoseUp > 0 || def_.controls.stabilizerNoseDown > 0; }
+    // Trim wheel position (-1..1) that gives the same pitching control as an
+    // elevator (stick) input e: the elevator offset, or for a trimmable
+    // stabiliser the tailplane angle making the same tail lift.
+    Real trimForElevator(Real e) const;
     AeroModel& aeroModel() { return *aeroModel_; }
     const InstrumentPanel& instruments() const { return instruments_; }
     InstrumentPanel& instruments() { return instruments_; }
@@ -194,6 +208,15 @@ public:
     int engineCount() const { return static_cast<int>(engines_.size()); }
     const PistonEngine& engine(int i) const { return engines_[i]; }
     const Propeller& propeller(int i) const { return props_[i]; }
+    int turbofanCount() const { return static_cast<int>(turbofans_.size()); }
+    const TurbofanEngine& turbofan(int i) const { return turbofans_[i]; }
+    const TurbofanState& turbofanState(int i) const { return turboState_[i]; }
+    // Trim/spawn: turbofans lit and held at the commanded fan speed (no spool lag).
+    void setTurbofansSteady(bool on) { turbofanSteady_ = on; }
+    Real gearPosition() const { return gearPos_; }
+    // Propeller slipstream of engine i at the last recorded evaluation (visualisation).
+    const SlipstreamState& slipstream(int i) const { return slip_[i]; }
+    Real speedbrakePosition() const { return speedbrakePos_; }
 
     // ---- Loading -------------------------------------------------------------
     void setStationMass(int station, Real kg);
@@ -247,10 +270,12 @@ private:
         std::array<GroundPlane, kMaxGear> gearGround{};
         std::array<GroundPlane, kMaxContacts> contactGround{};
         Real wingHeightAgl = 1e9;
+        Vec3 groundUpBody;  // ground normal (up) in body axes; zero without ground
         ControlDeflections controls;
         std::array<PistonEngineInputs, kMaxEngines> engineIn{};
+        std::array<TurbofanInputs, kMaxEngines> turboIn{};
         Real brakeLeft = 0, brakeRight = 0;
-        Real steer = 0;  // pedal, -1..1
+        std::array<Real, kMaxGear> steer{};  // wheel steering angle (rad)
     };
 
     void rebuildCockpit();
@@ -268,6 +293,7 @@ private:
     std::unique_ptr<AeroModel> aeroModel_;
     std::vector<PistonEngine> engines_;
     std::vector<Propeller> props_;
+    std::vector<TurbofanEngine> turbofans_;
     FuelSystem fuel_;
     ElectricalSystem electrical_;
     VacuumSystem vacuum_;
@@ -289,6 +315,15 @@ private:
     Real trim_ = 0;  // -1..1
     bool parkingBrake_ = false;
     bool flapMoving_ = false;
+    std::array<bool, kMaxEngines> turboFuel_{};     // fuel control switches at RUN
+    std::array<TurbofanState, kMaxEngines> turboState_{};
+    bool turbofanSteady_ = false;
+    bool gearDown_ = true;
+    Real gearPos_ = 1;
+    int speedbrakeDetent_ = 0;
+    Real speedbrakePos_ = 0;
+    bool machOverWas_ = false;
+    std::array<Real, kMaxGear> steerAngle_{};  // steering actuator position (rad)
 
     // Derived/lagged.
     std::array<Real, 8> downwashLag_{};
@@ -302,6 +337,7 @@ private:
     mutable bool contactTouched_[kMaxContacts] = {};
     bool contactWas_[kMaxContacts] = {};
     Real groundStateTimer_ = 0;  // debounce for touchdown/lift-off events
+    bool pusher_ = false, gearOverspeedWas_ = false;
     bool wasOnGround_ = false, stallWarningWas_ = false, overspeedWas_ = false, overGWas_ = false;
     bool flapOverspeedWas_ = false;
     std::array<bool, kMaxEngines> runningWas_{};

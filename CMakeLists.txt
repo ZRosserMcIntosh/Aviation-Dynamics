@@ -27,6 +27,7 @@ add_library(avd_core
   src/core/src/table.cpp
   src/core/src/geodesy.cpp
   src/core/src/atmosphere.cpp
+  src/core/src/wind.cpp
   src/core/src/mass.cpp
   src/core/src/aero.cpp
   src/core/src/propulsion.cpp
@@ -38,6 +39,8 @@ add_library(avd_core
   src/core/src/aircraft_loader.cpp
   src/core/src/aircraft.cpp
   src/core/src/assists.cpp
+  src/core/src/loading.cpp
+  src/core/src/wake.cpp
   src/core/src/procedures.cpp
   src/core/src/telemetry.cpp
   src/core/src/navigation.cpp

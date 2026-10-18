@@ -44,6 +44,16 @@ int engineIndexFromId(const std::string& id) {
     return n - 1;
 }
 
+// "engine<N>.fuel" -> N-1 (turbofan fuel control switch), or -1.
+int turbofanIndexFromId(const std::string& id) {
+    if (id.rfind("engine", 0) != 0) return -1;
+    int n = 0;
+    std::size_t i = 6;
+    for (; i < id.size() && id[i] >= '0' && id[i] <= '9'; ++i) n = n * 10 + (id[i] - '0');
+    if (i == 6 || id.compare(i, std::string::npos, ".fuel") != 0) return -1;
+    return n - 1;
+}
+
 }  // namespace
 
 Aircraft::Aircraft(const AircraftDefinition& def, const LocalFrame& frame)
@@ -61,6 +71,7 @@ Aircraft::Aircraft(const AircraftDefinition& def, const LocalFrame& frame)
         engines_.emplace_back(e);
         props_.emplace_back(e.propeller);
     }
+    for (const TurbofanDef& e : def_.turbofans) turbofans_.emplace_back(e);
     stationMass_.resize(def_.stations.size());
     for (std::size_t i = 0; i < def_.stations.size(); ++i) stationMass_[i] = def_.stations[i].initial;
     magnetos_.fill(Magnetos::Off);
@@ -77,6 +88,16 @@ void Aircraft::refreshMass() {
     empty.name = "empty airframe";
     empty.mass = def_.emptyMass;
     empty.position = def_.emptyCg;
+    if (def_.emptyIncludesUnusableFuel) {
+        // The tanks hold the unusable fuel; take it out of the airframe item.
+        Vec3 moment = empty.position * empty.mass;
+        for (const FuelTankDef& t : def_.fuel.tanks) {
+            const Real m = t.unusable * def_.fuel.density;
+            empty.mass -= m;
+            moment = moment - t.position * m;
+        }
+        empty.position = moment * (1.0 / empty.mass);
+    }
     empty.inertia = inertiaTensor(def_.emptyInertiaDiag.x, def_.emptyInertiaDiag.y, def_.emptyInertiaDiag.z, def_.emptyIxz);
     massItems_.push_back(empty);
     for (std::size_t i = 0; i < def_.stations.size(); ++i) {
@@ -97,11 +118,19 @@ void Aircraft::refreshMass() {
 }
 
 void Aircraft::setStationMass(int station, Real kg) {
-    stationMass_[station] = clamp(kg, 0.0, def_.stations[station].maxMass);
+    // No upper clamp: the placard is a limit of approval, not physics. An
+    // overloaded station is flagged by the load sheet (avd/loading.hpp).
+    stationMass_[station] = std::isfinite(kg) ? std::max(kg, 0.0) : 0.0;
     refreshMass();
 }
 
 Vec3 Aircraft::datumPosition() const { return s_.body.position - s_.body.attitude.rotate(mass_.cg); }
+
+bool Aircraft::hasTiller() const {
+    for (const GearDef& g : def_.gear)
+        if (g.tillerSteerAngle > 0) return true;
+    return false;
+}
 
 // -------------------------------------------------------------- cockpit ----
 
@@ -115,6 +144,11 @@ void Aircraft::rebuildCockpit() {
         cockpit_.push_back({n + ".ignition", "Engine " + std::to_string(i + 1) + " Ignition Switch (hold START to crank)",
                             {"OFF", "R", "L", "BOTH"}, 0});
     }
+    for (std::size_t i = 0; i < def_.turbofans.size(); ++i) {
+        const std::string n = "engine" + std::to_string(i + 1);
+        cockpit_.push_back({n + ".fuel", "Engine " + std::to_string(i + 1) + " Fuel Control Switch (RUN starts the engine)",
+                            {"CUTOFF", "RUN"}, 0});
+    }
     if (!def_.fuel.selector.empty()) {
         CockpitControl c{"fuel.selector", "Fuel Selector Valve", {}, 0};
         for (const auto& p : def_.fuel.selector) c.positions.push_back(p.name);
@@ -125,6 +159,14 @@ void Aircraft::rebuildCockpit() {
     {
         CockpitControl c{"flaps.lever", "Wing Flap Lever", {}, 0};
         for (Real d : def_.controls.flapDetents) c.positions.push_back(std::to_string(static_cast<int>(std::lround(d * 180 / kPi))) + " deg");
+        cockpit_.push_back(c);
+    }
+    if (def_.controls.gear.retractable) cockpit_.push_back({"gear.lever", "Landing Gear Lever", {"UP", "DOWN"}, 1});
+    if (def_.controls.speedbrake.present) {
+        CockpitControl c{"speedbrake.lever", "Speedbrake Lever", {}, 0};
+        const int n = def_.controls.speedbrake.detents;
+        for (int k = 0; k < n; ++k)
+            c.positions.push_back(k == 0 ? "RET" : (k == n - 1 ? "FULL" : std::to_string(k * 100 / (n - 1)) + " %"));
         cockpit_.push_back(c);
     }
     cockpit_.push_back({"brakes.parking", "Parking Brake", {"OFF", "SET"}, 0});
@@ -152,6 +194,9 @@ int Aircraft::cockpitControl(const std::string& id) const {
     if (id == "fuel.auxpump") return fuel_.auxPumpOn();
     if (id == "flaps.lever") return flapDetent_;
     if (id == "brakes.parking") return parkingBrake_;
+    if (id == "gear.lever") return def_.controls.gear.retractable ? (gearDown_ ? 1 : 0) : -1;
+    if (id == "speedbrake.lever") return def_.controls.speedbrake.present ? speedbrakeDetent_ : -1;
+    if (const int t = turbofanIndexFromId(id); t >= 0) return t < turbofanCount() ? (turboFuel_[t] ? 1 : 0) : -1;
     if (const int e = engineIndexFromId(id); e >= 0 || id.rfind("engine", 0) == 0) {
         if (e < 0 || e >= engineCount()) return -1;
         const Magnetos m = magnetos_[e];
@@ -168,6 +213,8 @@ bool Aircraft::setCockpitControl(const std::string& id, int position) {
     const int idx = cockpitControlIndex(id);
     if (idx < 0 || position < 0 || position >= static_cast<int>(cockpit_[idx].positions.size())) return false;
     if (cockpitControl(id) == position) return true;  // already there: no change, no event
+    // Weight on wheels: a solenoid locks the gear handle down on the ground.
+    if (id == "gear.lever" && position == 0 && tel_.onGround) return false;
     if (id == "electrical.battery") electrical_.setBatterySwitch(position == 1);
     else if (id == "electrical.alternator") electrical_.setAlternatorSwitch(position == 1);
     else if (id == "electrical.avionics") electrical_.setAvionicsSwitch(position == 1);
@@ -176,6 +223,9 @@ bool Aircraft::setCockpitControl(const std::string& id, int position) {
     else if (id == "fuel.auxpump") fuel_.setAuxPump(position == 1);
     else if (id == "flaps.lever") flapDetent_ = position;
     else if (id == "brakes.parking") parkingBrake_ = position == 1;
+    else if (id == "gear.lever") gearDown_ = position == 1;
+    else if (id == "speedbrake.lever") speedbrakeDetent_ = position;
+    else if (turbofanIndexFromId(id) >= 0) turboFuel_[turbofanIndexFromId(id)] = position == 1;
     else if (engineIndexFromId(id) >= 0) magnetos_[engineIndexFromId(id)] = static_cast<Magnetos>(position);
     else if (id.rfind("electrical.load.", 0) == 0) electrical_.setLoadSwitch(electrical_.loadIndex(id.substr(16)), position == 1);
     cockpit_[idx].position = position;
@@ -196,6 +246,7 @@ void Aircraft::setFlightState(const RigidBodyState& s) {
     s_ = DynamicState{};
     s_.body = s;
     s_.body.attitude.normalize();
+    pusher_ = false;
     for (int i = 0; i < engineCount(); ++i) s_.shaftOmega[i] = engineState_[i].omega;
     faulted_ = false;
     updateTelemetry();
@@ -214,6 +265,15 @@ void Aircraft::setColdAndDark() {
         engineState_[i] = {};
         runningWas_[i] = false;
     }
+    for (int i = 0; i < turbofanCount(); ++i) {
+        turboFuel_[i] = false;
+        turboState_[i] = {};
+        runningWas_[i] = false;
+    }
+    gearDown_ = true;
+    gearPos_ = 1;
+    speedbrakeDetent_ = 0;
+    speedbrakePos_ = 0;
     parkingBrake_ = true;
     for (std::size_t i = 0; i < def_.electrical.loads.size(); ++i)
         electrical_.setLoadSwitch(static_cast<int>(i), def_.electrical.loads[i].initiallyOn);
@@ -243,10 +303,18 @@ void Aircraft::setEngineRunning(bool running, Real rpm) {
         engineState_[i].egt = 900; engineState_[i].cht = 420; engineState_[i].oilTemperature = 360;
         runningWas_[i] = true;
     }
+    for (int i = 0; i < turbofanCount(); ++i) {
+        turboFuel_[i] = true;
+        TurbofanInputs ti;
+        ti.fuelOn = ti.fuelAtEngine = true;
+        turbofans_[i].setSteady(turboState_[i], ti);
+        turboState_[i].itt = def_.turbofans[i].ittIdle;
+        runningWas_[i] = true;
+    }
     vacuum_.step(0, rpm);
     // Establish bus voltage (battery, then the alternator's field) for the spawn.
     ElectricalInputs ei;
-    ei.alternatorRpm = rpm;
+    ei.alternatorRpm = turbofanCount() > 0 ? 2400.0 : rpm;
     electrical_.step(0, ei);
     electrical_.step(0, ei);
     for (int i = 0; i < engineCount(); ++i) {
@@ -309,12 +377,14 @@ void Aircraft::prepareContext(const PilotInput& in, const GroundQuery& ground, c
     buildContext(in, ground, atm, 0);
 }
 
-void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, const AtmosphereField& atm, Real) {
+void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, const AtmosphereField& atm, Real dt) {
     Context& c = ctx_;
     const Quat& q = s_.body.attitude;
     const Vec3& pos = s_.body.position;
     const Real alt = frame_.origin().height - pos.z;
-    c.air = atm.sample(pos, alt, time_);
+    // The air as the airframe sees it: turbulence shorter than the span is
+    // averaged over it (the strips extrapolate the gradient linearly).
+    c.air = atm.sample(pos, alt, time_, def_.referenceSpan);
     c.gravity = {0, 0, wgs84::normalGravity(frame_.origin().latitude, alt)};
 
     auto plane = [&](const Vec3& p) {
@@ -349,6 +419,7 @@ void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, con
         const Vec3 w = pos + q.rotate(aeroModel_->surfaceCentroid(0) - mass_.cg);
         const GroundPlane gp = plane(w);
         c.wingHeightAgl = gp.valid ? dot(w - gp.point, gp.normal) : 1e9;
+        c.groundUpBody = gp.valid ? q.inverseRotate(gp.normal) : Vec3{};
     }
 
     // Flight controls. Trim acts as an equivalent elevator offset (the
@@ -359,10 +430,34 @@ void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, con
             for (const auto& cs : p.controls)
                 if (cs.channel == ControlChannel::Elevator) elevUp = cs.maxNegative;
     c.controls.aileron = clamp(in.roll + def_.controls.riggingAileron, -1.0, 1.0);
-    c.controls.elevator = clamp(in.pitch + trim_ * def_.controls.elevatorTrimRange / elevUp, -1.0, 1.0);
+    if (hasTrimmableStabilizer()) {
+        // The trim moves the tailplane; the stick keeps the whole elevator.
+        c.controls.stabilizer = trim_ * (trim_ > 0 ? def_.controls.stabilizerNoseUp : def_.controls.stabilizerNoseDown);
+        c.controls.elevator = clamp(in.pitch, -1.0, 1.0);
+    } else {
+        c.controls.elevator = clamp(in.pitch + trim_ * def_.controls.elevatorTrimRange / elevUp, -1.0, 1.0);
+    }
+    if (pusher_) c.controls.elevator = std::min(c.controls.elevator, def_.stallWarning.pusherElevator);
     c.controls.rudder = clamp(in.yaw + def_.controls.riggingRudder, -1.0, 1.0);
+    if (def_.controls.rudderLimiterIas > 0) {
+        const Real eas = length(s_.body.velocity - c.air.wind) * std::sqrt(c.air.state.density / isa::kSeaLevelDensity);
+        if (eas > def_.controls.rudderLimiterIas)
+            c.controls.rudder *= std::max(0.15, sq(def_.controls.rudderLimiterIas / eas));
+    }
     c.controls.flap = flapAngle_;
-    c.steer = clamp(in.yaw, -1.0, 1.0);  // nose-wheel steering follows the pedals, not the tab
+    c.controls.speedbrake = speedbrakePos_;
+    c.controls.spoiler = def_.controls.speedbrake.present && !aeroModel_->hasSpoilers() ? speedbrakePos_ * def_.controls.speedbrake.liftLossFraction : 0.0;
+    // Wheel steering follows the pedals (not the rudder tab) plus the tiller,
+    // through the steering actuator's slew limit where it is powered.
+    for (std::size_t i = 0; i < def_.gear.size(); ++i) {
+        const GearDef& g = def_.gear[i];
+        const Real authority = std::max(g.maxSteerAngle, g.tillerSteerAngle);
+        const Real cmd = clamp(g.maxSteerAngle * clamp(in.yaw, -1.0, 1.0) + g.tillerSteerAngle * clamp(in.tiller, -1.0, 1.0),
+                               -authority, authority);
+        if (g.steerRate > 0 && dt > 0) steerAngle_[i] = approach(steerAngle_[i], cmd, g.steerRate * dt);
+        else steerAngle_[i] = cmd;
+        c.steer[i] = steerAngle_[i];
+    }
     c.brakeLeft = parkingBrake_ ? 1.0 : clamp(in.brakeLeft, 0.0, 1.0);
     c.brakeRight = parkingBrake_ ? 1.0 : clamp(in.brakeRight, 0.0, 1.0);
 
@@ -376,6 +471,21 @@ void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, con
         e.ambientTemperature = c.air.state.temperature;
         e.ambientDensity = c.air.state.density;
         e.starterPowered = false;
+    }
+    const Real airspeed = length(s_.body.velocity - c.air.wind);
+    for (int i = 0; i < turbofanCount(); ++i) {
+        TurbofanInputs& e = c.turboIn[i];
+        e.throttle = clamp(in.throttle, 0.0, 1.0);
+        e.fuelOn = turboFuel_[i];
+        e.fuelAtEngine = fuel_.fuelAtEngine();
+        e.ambientPressure = c.air.state.pressure;
+        e.ambientTemperature = c.air.state.temperature;
+        e.mach = airspeed / c.air.state.speedOfSound;
+        e.starterPowered = false;
+        if (turbofanSteady_) {
+            e.fuelOn = e.fuelAtEngine = true;
+            turbofans_[i].setSteady(turboState_[i], e);
+        }
     }
 }
 
@@ -443,6 +553,43 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
         }
     }
 
+    // ---- Turbofans: net thrust on the thrust line (spool speeds from the step) ----
+    for (int i = 0; i < turbofanCount(); ++i) {
+        const TurbofanDef& ed = def_.turbofans[i];
+        TurbofanInputs ti = c.turboIn[i];
+        const Vec3 vAir = vBody - windBody;
+        ti.mach = length(vAir) / c.air.state.speedOfSound;
+        TurbofanState ts = turboState_[i];
+        turbofans_[i].evaluate(ts, ti);
+        const Vec3 r = ed.position - cg;
+        const Vec3 thrust = normalized(ed.thrustAxis) * ts.thrust;
+        force += thrust;
+        moment += cross(r, thrust);
+    }
+    // ---- Landing gear and speedbrake drag areas ----
+    // Where they are: extended gear drags below the CG (nose down), a lumped
+    // speedbrake on the wing. Spoiler panels are in the aerodynamics instead.
+    {
+        const Vec3 vAir = vBody - windBody;
+        const Real qv = 0.5 * rho * length(vAir);
+        const Real gearCda = def_.controls.gear.dragArea * (def_.controls.gear.retractable ? gearPos_ : 0.0);
+        if (gearCda > 0 && !def_.gear.empty()) {
+            const Real share = gearCda / static_cast<Real>(def_.gear.size());
+            for (const GearDef& gd : def_.gear) {
+                const Vec3 at = gd.attach + Vec3{0, 0, 0.5 * gd.length * gearPos_} - cg;
+                const Vec3 f = vAir * (-qv * share);
+                force += f;
+                moment += cross(at, f);
+            }
+        }
+        if (def_.controls.speedbrake.present && !aeroModel_->hasSpoilers() && speedbrakePos_ > 0) {
+            const Vec3 at = (aeroModel_->surfaceCount() > 0 ? aeroModel_->surfaceCentroid(0) : cg) - cg;
+            const Vec3 f = vAir * (-qv * def_.controls.speedbrake.dragArea * speedbrakePos_);
+            force += f;
+            moment += cross(at, f);
+        }
+    }
+
     // ---- Aerodynamics ----
     AeroInputs ai;
     ai.velocityBody = vBody;
@@ -454,6 +601,7 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
     ai.cg = cg;
     ai.controls = c.controls;
     ai.heightAboveGround = c.wingHeightAgl;
+    ai.groundUpBody = c.groundUpBody;
     ai.slipstreams = slip_.data();
     ai.slipstreamCount = engineCount();
     ai.downwashLagged = quasiSteadyDownwash_ ? nullptr : downwashLag_.data();
@@ -468,7 +616,8 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
         GearTelemetry gt;
         d.tyreLateralRate[i] = -s.tyreLateral[i] * 20;
         d.tyreLongitudinalRate[i] = -s.tyreLongitudinal[i] * 20;
-        if (gp.valid) {
+        const bool legDown = !def_.controls.gear.retractable || gearPos_ > 0.98;
+        if (gp.valid && legDown) {
             const Vec3 rb = g.attach - cg;
             const Vec3 pAttach = s.body.position + q.rotate(rb);
             const Vec3 a = q.rotate({0, 0, 1});
@@ -483,12 +632,12 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
                 Real fs = g.preload + g.stiffness * x + (xdot > 0 ? g.dampingCompression : g.dampingRebound) * xdot;
                 if (x > g.maxCompression) fs += 20 * g.stiffness * (x - g.maxCompression);
                 const Real N = std::max(fs, 0.0);
-                const Real steer = g.maxSteerAngle * c.steer;
+                const Real steer = c.steer[i];
                 Vec3 f = q.rotate({std::cos(steer), std::sin(steer), 0});
                 f = normalized(f - n * dot(f, n));
                 const Vec3 l = cross(n, f);
                 const Real vLong = dot(vPt, f), vLat = dot(vPt, l);
-                const Real mu = gp.surface.friction;
+                const Real mu = wetTyreFriction(gp.surface, vLong, g.tyrePressure);
                 const Real brake = g.brakeGroup == 0 ? c.brakeLeft : (g.brakeGroup == 1 ? c.brakeRight : 0.0);
                 const Real limLong = std::min(N * (g.rollingResistance * gp.surface.rollingResistance +
                                                    brake * g.maxBrakeForceCoefficient),
@@ -571,6 +720,23 @@ DynamicState advance(const DynamicState& s, const Aircraft::Derivatives& d, Real
 }
 }  // namespace
 
+Real Aircraft::trimForElevator(Real e) const {
+    Real elevUp = 0.4, elevDown = 0.4, tau = 0.5;
+    for (const auto& s : def_.surfaces)
+        for (const auto& p : s.panels)
+            for (const auto& c : p.controls)
+                if (c.channel == ControlChannel::Elevator) {
+                    elevUp = c.maxNegative;
+                    elevDown = c.maxPositive;
+                    tau = flapEffectiveness(c.chordFraction);
+                }
+    if (!hasTrimmableStabilizer()) return clamp(e * elevUp / std::max(def_.controls.elevatorTrimRange, 1e-6), -1.0, 1.0);
+    // Same tail lift: stabiliser angle = elevator angle x its effectiveness.
+    const Real angle = tau * e * (e > 0 ? elevUp : elevDown);
+    const Real range = angle > 0 ? def_.controls.stabilizerNoseUp : def_.controls.stabilizerNoseDown;
+    return clamp(angle / std::max(range, 1e-6), -1.0, 1.0);
+}
+
 void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, const AtmosphereField& atm) {
     if (!(dt > 0) || faulted_) return;
     buildContext(in, ground, atm, dt);
@@ -588,6 +754,12 @@ void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, co
     const int pumpLoad = electrical_.loadIndex("fuel_pump");
     ElectricalInputs ei;
     ei.alternatorRpm = engineCount() > 0 ? s_.shaftOmega[0] * 60 / kTwoPi : 0;
+    // Turbofan starter-generators: crank while starting, generate above ~45 % N2.
+    for (int i = 0; i < turbofanCount(); ++i) {
+        if (turboState_[i].starting && turboState_[i].n2 < 0.45) starterCurrent += 250;
+        // Scaled so the generator comes on line at 45 % N2 (a windmilling core does not hold the bus).
+        ei.alternatorRpm = std::max(ei.alternatorRpm, turboState_[i].n2 * 2000);
+    }
     ei.starterCurrent = starterCurrent;
     ei.flapMotorCurrent = flapMoving_ && def_.controls.flapsElectric ? def_.controls.flapMotorCurrent : 0;
     ei.auxPumpCurrent = fuel_.auxPumpOn() ? 5.0 : 0.0;
@@ -595,6 +767,18 @@ void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, co
     for (int i = 0; i < engineCount(); ++i)
         c.engineIn[i].starterPowered = c.engineIn[i].magnetos == Magnetos::Start &&
                                        electrical_.busVoltage() >= kMinStarterVoltage;
+    for (int i = 0; i < turbofanCount(); ++i) {
+        c.turboIn[i].starterPowered = electrical_.busVoltage() >= kMinStarterVoltage;
+        if (!turbofanSteady_) turbofans_[i].step(turboState_[i], c.turboIn[i], dt);
+    }
+    if (def_.controls.gear.retractable)
+        gearPos_ = approach(gearPos_, gearDown_ ? 1.0 : 0.0, dt / def_.controls.gear.transitTime);
+    if (def_.controls.speedbrake.present) {
+        const Real target = static_cast<Real>(speedbrakeDetent_) / std::max(def_.controls.speedbrake.detents - 1, 1);
+        speedbrakePos_ = approach(speedbrakePos_, target, def_.controls.speedbrake.rate * dt);
+        c.controls.speedbrake = speedbrakePos_;
+        c.controls.spoiler = aeroModel_->hasSpoilers() ? 0.0 : speedbrakePos_ * def_.controls.speedbrake.liftLossFraction;
+    }
     const bool flapPowered = !def_.controls.flapsElectric ||
                              (electrical_.powered(18) && (flapLoad < 0 || electrical_.loadSwitch(flapLoad)));
     if (flapPowered) flapAngle_ = approach(flapAngle_, flapTarget, def_.controls.flapRate * dt);
@@ -664,6 +848,10 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
         demand += engineState_[i].fuelFlow;
         rotating = rotating || s_.shaftOmega[i] > 50 * kTwoPi / 60;
     }
+    for (int i = 0; i < turbofanCount(); ++i) {
+        demand += turboState_[i].fuelFlow;
+        rotating = rotating || turboState_[i].n2 > 0.1;  // engine-driven boost pump
+    }
     const bool auxPump = fuel_.auxPumpOn() && electrical_.powered(18);
     fuel_.step(dt, demand, rotating || auxPump);
     refreshMass();
@@ -692,15 +880,31 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
     if (def_.stallWarning.present && aeroModel_->surfaceCount() > def_.stallWarning.surface) {
         const int first = aeroModel_->firstStrip(def_.stallWarning.surface);
         const int end = aeroModel_->endStrip(def_.stallWarning.surface);
-        const int idx = def_.stallWarning.strip >= 0 ? first + def_.stallWarning.strip : (first + end) / 2;
+        int idx = def_.stallWarning.strip >= 0 ? first + def_.stallWarning.strip : (first + end) / 2;
+        if (def_.stallWarning.computed) {
+            Real least = 1e9;
+            for (int i = first; i < end; ++i) {
+                const StripTelemetry& s = aeroOut_.strips[i];
+                if (s.q > 30 && s.stallAlpha - s.alpha < least) {
+                    least = s.stallAlpha - s.alpha;
+                    idx = i;
+                }
+            }
+        }
         if (idx < end) {
             const StripTelemetry& st = aeroOut_.strips[idx];
             vane = st.q > 30 && st.alpha > st.stallAlpha - def_.stallWarning.alphaMargin;
+            if (def_.stallWarning.pusherMargin > 0) {
+                const Real onAt = st.stallAlpha - def_.stallWarning.pusherMargin;
+                if (st.q > 30 && !tel_.onGround && st.alpha > onAt) pusher_ = true;
+                else if (pusher_ && (st.alpha < onAt - 0.0873 || tel_.onGround)) pusher_ = false;  // 5 deg hysteresis
+            }
         }
     }
     stallVane_ = vane;
     instruments_.update(dt, sensorInputs());
     tel_.stallWarning = vane;
+    tel_.stickPusher = pusher_;
 
     // ---- Events ----
     for (int i = 0; i < engineCount(); ++i) {
@@ -708,6 +912,12 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
             pushEvent(engineState_[i].running ? FlightEventType::EngineStarted : FlightEventType::EngineStopped,
                       s_.shaftOmega[i] * 60 / kTwoPi, i);
         runningWas_[i] = engineState_[i].running;
+    }
+    for (int i = 0; i < turbofanCount(); ++i) {
+        if (turboState_[i].running != runningWas_[i])
+            pushEvent(turboState_[i].running ? FlightEventType::EngineStarted : FlightEventType::EngineStopped,
+                      turboState_[i].n2 * 100, i);
+        runningWas_[i] = turboState_[i].running;
     }
     if (fuel_.starving() && !starvingWas_) pushEvent(FlightEventType::FuelStarvation);
     starvingWas_ = fuel_.starving();
@@ -734,6 +944,10 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
                       ias > def_.limits.neverExceedIas - (overspeedWas_ ? hyst : 0.0);
     if (over && !overspeedWas_) pushEvent(FlightEventType::Overspeed, ias);
     overspeedWas_ = over;
+    const bool machOver = def_.limits.maxOperatingMach > 0 &&
+                          tel_.mach > def_.limits.maxOperatingMach - (machOverWas_ ? 0.005 : 0.0);
+    if (machOver && !machOverWas_ && !over) pushEvent(FlightEventType::MachOverspeed, tel_.mach);
+    machOverWas_ = machOver;
     const Real nLim = flapAngle_ > 0.01 ? def_.limits.limitLoadFlaps : def_.limits.limitLoadPositive;
     const Real gHyst = overGWas_ ? 0.1 : 0.0;
     const bool overG = tel_.loadFactor > nLim - gHyst || tel_.loadFactor < def_.limits.limitLoadNegative + gHyst;
@@ -744,6 +958,11 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
     const bool flapOver = flapAngle_ > 0.01 && vfe > 0 && ias > vfe - (flapOverspeedWas_ ? hyst : 0.0);
     if (flapOver && !flapOverspeedWas_) pushEvent(FlightEventType::FlapOverspeed, ias);
     flapOverspeedWas_ = flapOver;
+    const Real vle = def_.controls.gear.maxExtendedIas;
+    const bool gearOver = def_.controls.gear.retractable && vle > 0 && gearPos_ > 0.01 &&
+                          ias > vle - (gearOverspeedWas_ ? hyst : 0.0);
+    if (gearOver && !gearOverspeedWas_) pushEvent(FlightEventType::GearOverspeed, ias);
+    gearOverspeedWas_ = gearOver;
     if (electrical_.alternatorOnline() != altOnlineWas_)
         pushEvent(electrical_.alternatorOnline() ? FlightEventType::AlternatorOnline : FlightEventType::AlternatorOffline);
     altOnlineWas_ = electrical_.alternatorOnline();
@@ -810,6 +1029,14 @@ SensorInputs Aircraft::sensorInputs() const {
         in.egt = e.egt;
         in.cht = e.cht;
         in.fuelFlow = e.fuelFlow;
+    } else if (turbofanCount() > 0) {
+        // Engine gauges read engine 1: N2 % as "rpm", ITT as EGT, total fuel flow.
+        const TurbofanState& t = turboState_[0];
+        in.engineRpm = t.n2 * 100;
+        in.oilPressure = t.oilPressure;
+        in.egt = t.itt;
+        in.fuelFlow = 0;
+        for (int i = 0; i < turbofanCount(); ++i) in.fuelFlow += turboState_[i].fuelFlow;
     }
     in.fuelDensity = def_.fuel.density;
     in.tankCount = std::min(static_cast<int>(def_.fuel.tanks.size()), 4);
@@ -874,6 +1101,9 @@ void Aircraft::updateTelemetry() {
         t.engines[i].prop = propState_[i];
         t.engines[i].rpm = s_.shaftOmega[i] * 60 / kTwoPi;
     }
+    for (int i = 0; i < turbofanCount(); ++i) t.turbofans[i] = turboState_[i];
+    t.gearPosition = gearPos_;
+    t.speedbrake = speedbrakePos_;
     t.controls = ctx_.controls;
 }
 

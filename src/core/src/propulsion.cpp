@@ -5,7 +5,8 @@
 //  - BEM with Prandtl tip loss: Glauert; McCormick, "Aerodynamics,
 //    Aeronautics and Flight Mechanics", ch. 6; momentum relation
 //    dT = 4 pi r rho F (V + v) v dr, and the angular-momentum relation
-//    dQ = 2 pi r^2 rho F (V + v) w dr for the far-wake swirl velocity w; the
+//    dQ = 2 pi r^2 rho F (V + v) w dr for the far-wake swirl velocity w
+//    (w = 2 a' Omega r, i.e. dQ = 4 pi r^3 rho F (V + v) Omega a' dr); the
 //    blade sees half of it (tangential speed Omega r - w/2). Swirl matters
 //    most at low advance ratio (take-off), where the blade torque is high.
 //  - Piston engine air flow and fmep: Heywood, "Internal Combustion Engine
@@ -153,17 +154,47 @@ void Propeller::bem(const PropellerDef& def, Real v, Real omega, Real rho, Real&
                 return vi;
             };
             // Swirl from the torque balance (blade torque = wake angular
-            // momentum), under-relaxed fixed point. Converges in a few
-            // iterations for propeller loadings; capped to keep ut > 0.
-            Real wt = 0, vi = 0;
-            for (int it = 0; it < 40; ++it) {
+            // momentum, wt = 2 a' Omega r): bracketed root of
+            // g(wt) = wt - dQ / (2 pi r^2 rho F ua dr) on [0, wMax], the axial
+            // balance re-solved at each trial swirl, so both inductions
+            // satisfy their momentum relations together. A fixed-point
+            // iteration oscillates where drag rise dominates the torque (tip
+            // Mach > 1) and as ua -> 0 (flow from behind); the bracket does not.
+            // wMax keeps ut >= 0.4 Omega r. Windmilling (dQ < 0): no swirl.
+            const Real wMax = 1.2 * ut0;
+            Real vi = 0;
+            auto swirlResidual = [&](Real wt) {
                 vi = solveAxial(wt);
                 element(vi, wt, dT, dQ, dTm, dQm);
                 const Real ua = v + vi;
-                const Real denom = 2 * kPi * r * r * rho * tipLoss * std::max(ua, 1e-3) * dr;
-                Real wtNew = ua > 1e-3 ? std::clamp(dQ / denom, 0.0, 1.2 * ut0) : 0.0;
-                if (std::abs(wtNew - wt) < 1e-4 * (1 + ut0)) { wt = wtNew; break; }
-                wt += 0.7 * (wtNew - wt);
+                if (ua <= 1e-3 || dQ <= 0) return wt;
+                return wt - dQ / (2 * kPi * r * r * rho * tipLoss * ua * dr);
+            };
+            Real lo = 0, hi = wMax;
+            Real glo = swirlResidual(lo);
+            Real wt = 0;
+            if (glo < 0) {
+                Real ghi = swirlResidual(hi);
+                wt = hi;  // momentum swirl beyond the cap: hold the cap
+                if (ghi > 0) {
+                    int side = 0;
+                    const Real tol = 1e-6 * (1 + ut0);
+                    for (int it = 0; it < 60 && hi - lo > tol; ++it) {
+                        const Real x = (lo * ghi - hi * glo) / (ghi - glo);
+                        const Real gx = swirlResidual(x);
+                        if (gx == 0) { lo = hi = x; break; }
+                        if (gx < 0) {
+                            lo = x; glo = gx;
+                            if (side == -1) ghi *= 0.5;
+                            side = -1;
+                        } else {
+                            hi = x; ghi = gx;
+                            if (side == 1) glo *= 0.5;
+                            side = 1;
+                        }
+                    }
+                    wt = 0.5 * (lo + hi);
+                }
             }
             vi = solveAxial(wt);
             element(vi, wt, dT, dQ, dTm, dQm);
@@ -326,6 +357,155 @@ void PistonEngine::updateThermal(PistonEngineState& s, Real dt, Real coolingAirs
     const Real relief = def_.oilReliefPressure;
     const Real target = unrestricted < relief ? unrestricted : std::min(relief + 0.25 * (unrestricted - relief), 1.5 * relief);
     s.oilPressure += (target - s.oilPressure) * std::min(dt / 0.8, 1.0);
+}
+
+// ------------------------------------------------------------- turbofan ----
+
+TurbofanEngine::TurbofanEngine(const TurbofanDef& def) : def_(def) {
+    // Spools accelerate slowly near idle and quickly near the top (the core's
+    // surge margin limits fuel scheduling at low speed): tau = tauUp (1.6 - n1).
+    // Calibrate tauUp so that idle -> 95 % of take-off thrust takes the
+    // definition's acceleration time.
+    const Real f95 = (0.95 - def_.idleThrustFraction) / (1 - def_.idleThrustFraction);
+    Real n95 = def_.idleN1 + (1 - def_.idleN1) * std::pow(f95, 1.0 / def_.thrustExponent);
+    n95 = std::min(n95, 0.999);
+    auto timeFor = [&](Real tau) {
+        Real n = def_.idleN1, t = 0;
+        const Real h = 0.002;
+        while (n < n95 && t < 120) {
+            n += (1.0 - n) / (tau * (1.6 - n)) * h;
+            t += h;
+        }
+        return t;
+    };
+    Real lo = 0.01, hi = 20;
+    for (int i = 0; i < 40; ++i) {
+        const Real mid = 0.5 * (lo + hi);
+        (timeFor(mid) < def_.accelerationTime ? lo : hi) = mid;
+    }
+    tauUp_ = 0.5 * (lo + hi);
+}
+
+Real TurbofanEngine::availableThrust(Real pressure, Real temperature, Real mach) const {
+    const Real m = std::max(mach, 0.0);
+    const Real k = 1 + 0.2 * m * m;
+    const Real delta0 = pressure / isa::kSeaLevelPressure * std::pow(k, 3.5);
+    const Real theta0 = temperature / isa::kSeaLevelTemperature * k;
+    Real lapse = 1 - def_.lapseMachCoefficient * std::sqrt(m);
+    if (theta0 > def_.throttleRatio) lapse -= 3 * (theta0 - def_.throttleRatio) / (1.5 + m);
+    return def_.staticThrust * delta0 * std::max(lapse, 0.0);
+}
+
+Real TurbofanEngine::thrustFraction(Real n1) const {
+    const Real i = def_.idleN1;
+    if (n1 <= i) return def_.idleThrustFraction * sq(std::max(n1, 0.0) / i);
+    const Real x = clamp((n1 - i) / (1 - i), 0.0, 1.2);
+    return def_.idleThrustFraction + (1 - def_.idleThrustFraction) * std::pow(x, def_.thrustExponent);
+}
+
+Real TurbofanEngine::n2FromN1(Real n1) const {
+    if (n1 <= def_.idleN1) return n1 * def_.idleN2 / def_.idleN1;
+    return def_.idleN2 + (1 - def_.idleN2) * std::sqrt((n1 - def_.idleN1) / (1 - def_.idleN1));
+}
+
+Real TurbofanEngine::n1FromN2(Real n2) const {
+    if (n2 <= def_.idleN2) return n2 * def_.idleN1 / def_.idleN2;
+    return def_.idleN1 + (1 - def_.idleN1) * sq((n2 - def_.idleN2) / (1 - def_.idleN2));
+}
+
+void TurbofanEngine::evaluate(TurbofanState& s, const TurbofanInputs& in) const {
+    const Real thetaAmb = in.ambientTemperature / isa::kSeaLevelTemperature;
+    const Real deltaAmb = in.ambientPressure / isa::kSeaLevelPressure;
+    const bool lit = s.running || (s.starting && s.n2 >= 0.2 && in.fuelOn && in.fuelAtEngine);
+    if (lit) {
+        s.thrustFraction = thrustFraction(s.n1);
+        s.thrust = availableThrust(in.ambientPressure, in.ambientTemperature, in.mach) * s.thrustFraction;
+        const Real tsfc = def_.tsfcStatic * (1 + def_.tsfcMachSlope * std::max(in.mach, 0.0)) * std::sqrt(thetaAmb);
+        const Real idleFlow = def_.idleFuelFlow * deltaAmb * std::sqrt(thetaAmb);
+        s.fuelFlow = std::max(tsfc * s.thrust, idleFlow * std::min(1.0, s.n2 / def_.idleN2));
+        const Real tf = std::max(s.thrustFraction - def_.idleThrustFraction, 0.0) / (1 - def_.idleThrustFraction);
+        s.itt = def_.ittIdle + (def_.ittTakeoff - def_.ittIdle) * tf + 0.7 * (in.ambientTemperature - isa::kSeaLevelTemperature);
+        if (s.starting) s.itt += 150 * std::max(0.0, 1 - std::abs(s.n2 - 0.35) / 0.2);  // light-off peak
+    } else {
+        s.thrustFraction = 0;
+        s.thrust = 0;  // windmilling drag neglected (Estimated)
+        s.fuelFlow = 0;
+    }
+    s.oilPressure = s.n2 < 0.05 ? 0.0
+                                : def_.oilPressureIdle * std::min(1.0, s.n2 / def_.idleN2) +
+                                      (def_.oilPressureMax - def_.oilPressureIdle) *
+                                          clamp((s.n2 - def_.idleN2) / (1 - def_.idleN2), 0.0, 1.0);
+}
+
+void TurbofanEngine::step(TurbofanState& s, const TurbofanInputs& in, Real dt) const {
+    const bool fuel = in.fuelOn && in.fuelAtEngine;
+    // Windmilling: ram air turns the fan (and, more slowly, the core) with the
+    // engine unlit: ~25 % N1 and ~20 % N2 at cruise Mach.
+    const Real windmillN1 = std::min(0.3, 0.32 * std::max(in.mach, 0.0));
+    const Real windmillN2 = std::min(0.24, 0.28 * std::max(in.mach, 0.0));
+    if (s.running && !fuel) {
+        s.running = false;  // shut down or flamed out
+        s.starting = false;
+    }
+    // Start: the starter cranks the core, or in flight a fast enough windmilling
+    // core (>= 12 % N2) relights on its own.
+    const bool windmillStart = s.n2 >= 0.12 && windmillN2 >= 0.12;
+    if (!in.fuelOn) s.startAborted = false;  // fuel switch cycled: the starter may try again
+    if (!s.running && in.fuelOn && !s.starting && ((in.starterPowered && !s.startAborted) || windmillStart) && s.n2 < def_.idleN2) {
+        s.starting = true;
+        s.startTimer = 0;
+    }
+    if (s.starting && !in.fuelOn) s.starting = false;
+    if (s.running) {
+        const Real cmd = commandedN1(in.throttle);
+        const Real tau = cmd > s.n1 ? tauUp_ * (1.6 - s.n1) : def_.decelerationTime / 3.0;
+        s.n1 += (cmd - s.n1) * std::min(dt / tau, 1.0);
+        s.n2 = n2FromN1(s.n1);
+    } else if (s.starting) {
+        // Starter cranks the core to ~25 %, light-off from 20 % with fuel,
+        // then the lit core accelerates to idle.
+        // Without fire the core is only turned by the starter (to ~25 %) or the
+        // ram air, so above that it runs down and the turbine cools; a start
+        // that has not lit within the start time is aborted (FADEC no-light-off
+        // protection), which also ends a "start" on an engine with no fuel.
+        const Real crank = 0.25 / (0.35 * def_.startTime);
+        const bool litNow = (s.n2 >= 0.2 || windmillStart) && fuel;
+        s.startTimer += dt;
+        if (litNow) {
+            s.n2 = std::min(s.n2 + (def_.idleN2 - 0.2) / (0.65 * def_.startTime) * dt, def_.idleN2);
+        } else if (in.starterPowered && s.n2 < 0.25) {
+            s.n2 = std::min(s.n2 + crank * dt, 0.25);
+        } else {
+            const Real turned = std::max(in.starterPowered ? 0.25 : 0.0, windmillN2);
+            s.n2 += (std::min(turned, s.n2) - s.n2) * std::min(dt / 6.0, 1.0);
+            s.itt += (in.ambientTemperature - s.itt) * std::min(dt / 12.0, 1.0);
+        }
+        s.n1 = n1FromN2(s.n2);
+        if (s.n2 >= def_.idleN2 - 1e-6) {
+            s.running = true;
+            s.starting = false;
+            s.n1 = def_.idleN1;
+        }
+        if (!litNow && (!in.starterPowered || s.startTimer > def_.startTime)) {
+            s.starting = false;
+            s.startAborted = true;  // no automatic retry: cycle the fuel switch
+        }
+    } else {
+        // Spooling down toward windmill speed; ITT falls quickly once the fire is out.
+        s.n1 += (windmillN1 - s.n1) * std::min(dt / 6.0, 1.0);
+        s.n2 += (windmillN2 - s.n2) * std::min(dt / 6.0, 1.0);
+        s.itt += (in.ambientTemperature - s.itt) * std::min(dt / 12.0, 1.0);
+    }
+    evaluate(s, in);
+}
+
+void TurbofanEngine::setSteady(TurbofanState& s, const TurbofanInputs& in) const {
+    s.running = true;
+    s.starting = false;
+    s.startAborted = false;
+    s.n1 = commandedN1(in.throttle);
+    s.n2 = n2FromN1(s.n1);
+    evaluate(s, in);
 }
 
 }  // namespace avd

@@ -47,6 +47,7 @@
       $('status').textContent = 'This browser could not start the WebAssembly flight model: ' + e.message;
       return;
     }
+    A.avd_set_airport(0);  // this panel's scenarios are Campo de Marte runway 12
     const errors = A.load(aircraftJson);
     if (errors.length) { $('status').textContent = 'Aircraft data rejected: ' + errors[0]; return; }
     await (document.fonts?.ready ?? Promise.resolve());
@@ -83,6 +84,7 @@
       if (e.code === 'Period') cycleTo('flaps.lever', +1);
       if (e.code === 'KeyP') A.avd_cockpit_cycle(controlIndex('brakes.parking'));
       if (e.code === 'KeyH') A.avd_dg_sync();
+      if (e.code === 'KeyL') { levelHold.checked = !levelHold.checked; applyLevelHold(true); }
     });
     addEventListener('keyup', (e) => { if (keyMap[e.code]) keys.delete(keyMap[e.code]); });
     addEventListener('blur', () => keys.clear());
@@ -203,6 +205,13 @@
     scen.value = String(store.get('scenario', 1));
     const assist = $('assist');
     assist.value = String(store.get('assist', 1));
+    const levelHold = $('level-hold');
+    levelHold.checked = store.get('levelHold', false);
+    function applyLevelHold(announce) {
+      A.avd_set_level_hold(levelHold.checked ? 1 : 0);
+      store.set('levelHold', levelHold.checked);
+      if (announce) log(levelHold.checked ? 'Auto-trim on: release the stick and it holds straight and level.' : 'Auto-trim off.');
+    }
     function reset() {
       const mode = +scen.value;
       store.set('scenario', mode);
@@ -210,6 +219,7 @@
       applyCloud();
       A.avd_reset(mode);
       A.avd_set_assist(+assist.value);
+      applyLevelHold(false);
       // Airborne spawns are trimmed by the C++ trim solver: start the levers
       // where it left them, so the airplane flies hands-off.
       input.throttle = mode >= 2 ? A.avd_trim_throttle() : 0.12;
@@ -222,14 +232,24 @@
     $('reset').addEventListener('click', reset);
     scen.addEventListener('change', reset);
     assist.addEventListener('change', () => { A.avd_set_assist(+assist.value); store.set('assist', +assist.value); });
+    levelHold.addEventListener('change', () => applyLevelHold(true));
     $('quickstart').addEventListener('click', () => { A.avd_quick_start(); log('Quick Start: working through the checklist…'); });
     function applyWeather() {
       A.avd_set_weather(+$('wind').value * 0.5144, +$('winddir').value, +$('turb').value, +$('temp').value, 0.6);
+      // Thermals: w* with a convective layer 1500 m deep.
+      A.avd_set_wind_detail(+$('turbclass').value, +$('thermals').value, 1500);
       $('wind-v').textContent = `${$('wind').value} kt from ${String($('winddir').value).padStart(3, '0')}°`;
       $('turb-v').textContent = (+$('turb').value).toFixed(1) + ' m/s';
+      $('thermals-v').textContent = +$('thermals').value ? (+$('thermals').value).toFixed(2) + ' m/s' : 'off';
       $('temp-v').textContent = 'ISA ' + (+$('temp').value >= 0 ? '+' : '') + $('temp').value + ' °C';
     }
-    for (const id of ['wind', 'winddir', 'turb', 'temp']) $(id).addEventListener('input', applyWeather);
+    for (const id of ['wind', 'winddir', 'turb', 'temp', 'thermals']) $(id).addEventListener('input', applyWeather);
+    $('turbclass').addEventListener('change', applyWeather);
+    $('hazard').addEventListener('change', () => {
+      A.avd_set_wind_hazard(+$('hazard').value);
+      log(['Wind hazard cleared.', 'Microburst 2 km before runway 12: 12 m/s outflow, strong downdraft.',
+           'Gust front from the south-west, over the field in about 5 minutes: 27 kt from 225°.'][+$('hazard').value]);
+    });
     // Icing layer: stratus from 1,500 to 3,600 ft above the field, 0.4 g/m^3 of
     // cloud water. Supercooled when the temperature slider makes it freezing.
     function applyCloud() {
@@ -785,7 +805,8 @@
       $('stack').classList.toggle('dark', !c[K.avionics]);
       const proc = A.procedure();
       $('status').textContent = replay ? 'Replay (read-only): “Back to live” returns to the simulation.' : paused ? 'Paused — Space resumes.' : proc.status === 1 ? `Quick Start: ${proc.message}` :
-        `Throttle ${(input.throttle * 100).toFixed(0)} % · mixture ${(input.mixture * 100).toFixed(0)} % · ${gamepadOn ? 'gamepad connected' : 'keyboard'}${s[49] ? ' · parking brake SET' : ''}`;
+        `Throttle ${(input.throttle * 100).toFixed(0)} % · mixture ${(input.mixture * 100).toFixed(0)} % · ${gamepadOn ? 'gamepad connected' : 'keyboard'}${s[49] ? ' · parking brake SET' : ''}` +
+        (s[58] ? ' · auto-trim: TOO SLOW, descending to keep flying speed' : s[55] ? ' · holding straight and level' : levelHold.checked ? ' · auto-trim armed' : '') + (s[56] ? ' · Q/E on the tiller' : '');
       if (showDebug) {
         const f = (v, d) => (v === null ? '—' : v.toFixed(d));
         const row = (n, truth, shown, unit, d = 0) => `<tr><th>${n}</th><td>${f(truth, d)}</td><td>${f(shown, d)}</td><td>${unit}</td></tr>`;

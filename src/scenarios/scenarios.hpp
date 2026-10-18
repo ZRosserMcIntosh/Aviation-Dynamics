@@ -40,6 +40,10 @@ struct TrimRequest {
 struct TrimResult {
     bool converged = false;
     Real theta = 0, alpha = 0, elevator = 0, throttle = 0, rpm = 0, tas = 0, flightPath = 0;
+    // Trim wheel position that flies the trimmed point hands-off (with a
+    // trimmable stabiliser the trim is solved directly, and elevator is the
+    // stick still needed beyond the stabiliser's travel, usually 0).
+    Real trim = 0;
     Real brakePower = 0, thrust = 0, propEfficiency = 0, fuelFlow = 0;
     Real residual = 0;
     DynamicState state;
@@ -101,5 +105,14 @@ void startTrimmedFlight(Aircraft& ac, const FlightSetup& s, const AtmosphereFiel
 
 // Convert IAS (~CAS) to TAS at density rho (incompressible; < 1% error below 150 kt).
 inline Real tasFromCas(Real cas, Real rho) { return cas * std::sqrt(isa::kSeaLevelDensity / rho); }
+// Compressible CAS -> TAS (what the airspeed indicator is calibrated for): the
+// impact pressure of CAS at sea level, then the Mach number giving that impact
+// pressure at this static pressure.
+inline Real tasFromCas(Real cas, const AirState& air) {
+    constexpr Real a0 = 340.294;
+    const Real qc = isa::kSeaLevelPressure * (std::pow(1 + 0.2 * (cas / a0) * (cas / a0), 3.5) - 1);
+    const Real mach = std::sqrt(5 * (std::pow(qc / air.pressure + 1, 2.0 / 7.0) - 1));
+    return mach * air.speedOfSound;
+}
 
 }  // namespace avd::scenarios

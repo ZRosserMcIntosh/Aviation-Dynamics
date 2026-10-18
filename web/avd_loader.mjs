@@ -46,7 +46,40 @@ export default async function createAvdModule(wasmBytes) {
   A.cockpitState = () => new Float64Array(memory.buffer, ex.avd_cockpit(), 96);
   A.markings = () => Array.from(new Float64Array(memory.buffer, ex.avd_markings(), 96));
   A.compassCard = () => Array.from(new Float64Array(memory.buffer, ex.avd_compass_card(), 12));
+  A.flow = () => new Float64Array(memory.buffer, ex.avd_flow(), 16 + 64 * 18 + 40);
+  A.jet = () => new Float64Array(memory.buffer, ex.avd_jet(), 64);
   A.runway = () => Array.from(new Float64Array(memory.buffer, ex.avd_runway(), 6));
+  A.windGrid = (hx, hy, hz, nx, ny, nz) => new Float64Array(memory.buffer, ex.avd_wind_grid(hx, hy, hz, nx, ny, nz), 3 * nx * ny * nz);
+  // The wake's vortex segments: { n, gmax, ground, seg } with 9 numbers a
+  // segment (a and b ENU m, circulation m^2/s, core radius m, age s). A view
+  // into the module's memory: copy what you keep.
+  A.wake = () => {
+    const h = new Float64Array(memory.buffer, ex.avd_wake(), 8);
+    const n = h[0] | 0;
+    return { n, gmax: h[1], ground: h[2], seg: new Float64Array(memory.buffer, h.byteOffset + 64, n * 9) };
+  };
+  // The wind (ENU m/s) on a grid over centre +- half size (ENU m), x fastest.
+  A.windBox = (c, h, nx, ny, nz) => new Float64Array(memory.buffer, ex.avd_wind_box(c[0], c[1], c[2], h[0], h[1], h[2], nx, ny, nz), 3 * nx * ny * nz);
+  // Bluff bodies (gear legs, spoiler panels): { n, b } with 10 numbers a body.
+  A.bodies = () => { const h = new Float64Array(memory.buffer, ex.avd_bodies(), 1 + 32 * 10); return { n: h[0] | 0, b: h.subarray(1) }; };
+  A.airport = () => { const [icao, name, runway, reciprocal] = A.text(ex.avd_airport_text()).split('|'); return { icao, name, runway, reciprocal }; };
+  // Weight and balance: planned (next spawn) or current. Masses in kg, x in
+  // the structural frame (m, forward positive), fuel in litres.
+  A.loadsheet = (planned = true) => {
+    const b = Array.from(new Float64Array(memory.buffer, ex.avd_loadsheet(planned ? 1 : 0), 256));
+    const [sn, tn, gn] = A.text(ex.avd_loadsheet_names()).split('|').map((x) => (x ? x.split(';') : []));
+    let k = 24;
+    const take = (n) => b.slice(k, (k += n));
+    const stations = Array.from({ length: b[17] }, (_, i) => { const [kg, max, x] = take(3); return { name: sn[i], kg, max, x }; });
+    const tanks = Array.from({ length: b[18] }, (_, i) => { const [litres, capacity, unusable, x] = take(4); return { name: tn[i], litres, capacity, unusable, x }; });
+    const groups = Array.from({ length: b[19] }, (_, i) => { const [kg, max] = take(2); return { name: gn[i], kg, max }; });
+    const fwd = Array.from({ length: b[20] }, () => take(2)), aft = Array.from({ length: b[21] }, () => take(2));
+    return {
+      basicEmpty: b[0], basicEmptyX: b[1], payload: b[2], zeroFuel: b[3], zeroFuelX: b[4], fuelTotal: b[5], fuelUsable: b[6],
+      gross: b[7], cgX: b[8], cgFwdLimit: b[9], cgAftLimit: b[10], flags: b[11], trappedFuel: b[22],
+      limits: { ramp: b[12], takeoff: b[13], landing: b[14], zeroFuel: b[15] }, density: b[16], stations, tanks, groups, fwd, aft,
+    };
+  };
   A.events = () => { const n = ex.avd_events(); return n ? A.text(n).split('\n').filter(Boolean) : []; };
   A.cockpit = () => {
     const out = [];

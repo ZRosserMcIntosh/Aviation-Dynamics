@@ -208,6 +208,8 @@ public:
     PitotStaticFaults& faults() { return faults_; }
     const PitotStaticFaults& faults() const { return faults_; }
     void setAttitudeGyroFailed(bool f) { aiFailed_ = f; }
+    // Caging knob: square the attitude gyro to the case and clear a tumble.
+    void cageAttitude(const Quat& attitude);
     void setHeadingGyroFailed(bool f) { hiFailed_ = f; }
 
     // Standard relations (exposed for tests).
@@ -240,10 +242,15 @@ private:
     SecondOrder asiNeedle_, altNeedle_, vsiNeedle_;
     // Attitude gyro: spin-axis direction in local NED (ideally straight down).
     Vec3 aiAxis_{0, 0, 1};
+    Vec3 aiAxisBody_{0, 0, 1};          // the rotor axis in the case, last step (a stopped rotor moves with the case)
+    bool aiAxisBodyValid_ = false;
+    bool aiAtStop_ = false;
     Real aiSpin_ = 0;
     bool aiFailed_ = false;
     // Directional gyro: horizontal spin-axis azimuth (true, rad) and card offset.
     Real dgAxisAzimuth_ = 0, dgCardOffset_ = 0, dgSpin_ = 0;
+    Real dgLastHeading_ = 0;            // true heading last step (a stopped rotor turns with the case)
+    bool dgLastHeadingValid_ = false;
     bool hiFailed_ = false;
     // Turn coordinator.
     Real tcSpin_ = 0;

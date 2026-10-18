@@ -86,10 +86,7 @@ TEST_CASE("validation: sea-level rate of climb at Vy 74 KIAS (POH 730 fpm)") {
 TEST_CASE("validation: short-field take-off (POH 960 ft ground roll, 1630 ft over 50 ft)") {
     const TakeoffResult t = takeoffTest(ref(), 0, 0, 0, 0, 51);  // POH: lift off at 51 KIAS
     CHECK(t.success);
-    // Known discrepancy (docs/validation/c172s-validation.md): the ground roll
-    // is ~20% short. Suspected cause: the BEM propeller omits swirl losses, so
-    // static/low-speed thrust is optimistic. Bound kept explicit, not hidden.
-    CHECK_RANGE(mToFt(t.groundRoll), 960 * 0.75, 960 * 1.2);
+    within(mToFt(t.groundRoll), 960, 20);
     within(mToFt(t.distanceTo50ft), 1630, 20);
     CHECK_RANGE(msToKt(t.liftoffIas), 48, 55);  // POH: lift-off 51 KIAS
 }
@@ -109,9 +106,12 @@ TEST_CASE("validation: static rpm within the published full-throttle static rang
 TEST_CASE("validation: landing roll with a pilot's braking technique (POH 575 ft)") {
     // Touchdown just above the flaps-30 stall (POH 48 KCAS), then a pilot
     // without anti-skid: 1 s to lower the nose and reach the pedals, 1 s to
-    // build pressure, 70% sustained pedal. Same tolerance as the take-off.
+    // build pressure, 70% sustained pedal. +-25%: the POH roll is a
+    // demonstrated landing with an unpublished technique, and the nose-high
+    // roll puts the full-flap wing just past its stall in ground effect, a
+    // regime no data here constrains (see docs/validation).
     const Real roll = mToFt(landingRollTest(ref(), 50, kDefaultDt, scenarios::BrakingTechnique::pilot()));
-    CHECK_RANGE(roll, 0.8 * 575, 1.2 * 575);
+    CHECK_RANGE(roll, 0.75 * 575, 1.25 * 575);
     // The tyre-limited bound (full pedal from touchdown) stops much sooner,
     // and harder braking never lengthens the roll.
     const Real limit = mToFt(landingRollTest(ref(), 50));

@@ -63,8 +63,10 @@ costs about 30 µs natively (`avdemo bench`).
   gradient. The gradient gives the strip theory spatially varying gusts.
 - **Lifting surfaces.** Each panel is split into strips. Section lift and drag
   come from a full ±180° polar: the published linear range, Viterna-Corrigan
-  post-stall and reversed flow. The Helmbold 3D slope and a strip-local induced
-  angle give the span loading. Flaps change the zero-lift angle and clmax
+  post-stall and reversed flow. Wings use a nonlinear lifting line
+  (horseshoe vortices solved together, ground images, artificial viscosity
+  after the stall) for the span loading; tails use the Helmbold 3D slope with
+  a strip-local induced angle. Flaps change the zero-lift angle and clmax
   through τ. Compressibility uses Korn/Lock drag rise. Downwash at the tail is
   lagged by the transport time. Ground effect reduces induced angle near the
   ground.
@@ -84,7 +86,26 @@ costs about 30 µs natively (`avdemo bench`).
 - **Ground.** Struts are springs with damping and a preload. Tyres use a
   bristle model with rolling resistance. The model includes
   differential brakes, nose-wheel steering, and hard points for wingtips, tail
-  and propeller that report contact events.
+  and propeller that report contact events. Steering follows the rudder
+  pedals and, where a gear leg has one, a tiller (`tiller_steer_deg`); the two
+  commands add, limited to the larger authority. A powered steering actuator
+  has a slew-rate limit (`steer_rate_deg_per_s`); without one the wheel
+  follows a mechanical linkage at once.
+- **Wake.** `Wake` (`avd/wake.hpp`) is what the aircraft leaves in the air,
+  outside the integrated state. The aircraft owns no reference to it. Each
+  surface's trailing-edge circulation (Kutta–Joukowski from the strips' lift)
+  is shed at intervals of about half a span. The shed vortices form "gates" of
+  vortex rings that stay where they were shed. Each gate:
+  - rolls up into one vortex per same-sign run (Betz) over the Spreiter–Sacks
+    distance;
+  - moves with the local wind plus its own induction and ground images;
+  - grows Lamb–Oseen cores (Squire);
+  - decays in two phases after Holzäpfel's P2P model.
+
+  Older gates are thinned. `WakeField` wraps an `AtmosphereField` with wakes,
+  so an aircraft flying into one feels it through the ordinary air sample. The
+  sample uses the wake gradient averaged over the span. The host updates the
+  wake after each step, and the web build passes `WakeField` to the step.
 - **World.** `TiledWorldGround` provides the open-world ground: 500 m tiles
   with a terrain heightfield, surface classes and extruded buildings. Hard
   points inside a building are pushed out through the nearest wall, and the
@@ -135,7 +156,31 @@ forces or state. It has three presets:
   stall prevention (limits nose-up input near the critical angle of attack),
   and rudder-to-brake steering on the ground.
 - **Sport:** auto-mixture, auto-coordination and brake steering.
-- **Simulation:** none. `ProcedureRunner` executes checklists such as the
+- **Simulation:** none.
+
+Two options sit outside the presets:
+
+- **Straight-and-level hold** (`levelHold`, "Auto-trim: hold straight and
+  level" in the browser cockpit, key L), on top of any preset. With the stick
+  and trim released, more than 30 m above the ground, it levels the wings,
+  arrests any climb or descent, captures the heading and altitude, and holds
+  them. It works like a two-axis autopilot with auto-trim: a small stick input
+  makes the fast correction and the trim wheel integrates it away, so a power
+  change ends with the airplane retrimmed. The trim only runs once the
+  altitude is captured, so it does not wind up while the climb or descent is
+  being arrested. Underspeed protection: closer than about 4° to the wing's
+  stall angle, the hold lowers the nose as far as it takes to keep that
+  margin. It trades height for speed instead of stalling and climbs back once
+  there is power. It never moves the throttle. Any stick or trim input from
+  the player overrides it, and letting go captures new references.
+- **Tiller handover** (`tillerHandover`, every preset). This is an input
+  binding, not an assist. On the ground below 5 kt the yaw input (Q/E, the
+  gamepad rudder axis) turns the nose-wheel tiller instead of the pedals,
+  which is how crews steer heavy aircraft at walking pace. Above 5 kt it goes
+  back to the pedals and rudder, and returns to the tiller below 4 kt. It does
+  nothing on an aircraft without a tiller, such as the Tupi.
+
+`ProcedureRunner` executes checklists such as the
 Quick Start through the same cockpit controls a player would use.
 
 ## Error handling

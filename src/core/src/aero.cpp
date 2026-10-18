@@ -6,7 +6,11 @@
 //    Aerodynamics", ch. 5; McCormick, "Aerodynamics, Aeronautics and Flight
 //    Mechanics" (ground effect factor (16h/b)^2 / (1 + (16h/b)^2)).
 //  - 3-D lift slope: Helmbold equation as given in USAF DATCOM 4.1.3.2.
-//  - Post-stall: Viterna & Corrigan (1982), NASA CP-2230.
+//  - Post-stall: Viterna & Corrigan (1982), NASA CP-2230 (finite-wing CDmax
+//    = 1.11 + 0.018 AR).
+//  - Swept strips: simple sweep theory (the section works on the flow normal
+//    to its span; Anderson ch. 10, Raymer §12.4.1: CLmax ~ clmax cos(sweep)),
+//    flap increments with the hinge-line sweep (DATCOM 6.1.4.1).
 //  - Flap effectiveness tau and pitching moment: thin-airfoil theory (Abbott &
 //    von Doenhoff, "Theory of Wing Sections", §8).
 //  - Drag rise: Korn equation + Lock's fourth-power law (Mason, "Transonic
@@ -42,7 +46,7 @@ struct Viterna {
 };
 
 // Forward-flow half: alpha in [-pi/2, pi/2].
-SectionResult forwardSection(const SectionPolar& p, Real alpha, Real a, Real alpha0, Real clMaxE, Real clMinE) {
+SectionResult forwardSection(const SectionPolar& p, Real alpha, Real a, Real alpha0, Real clMaxE, Real clMinE, Real cdMax) {
     SectionResult r;
     const Real clLin = a * (alpha - alpha0);
     const Real alphaSp = alpha0 + clMaxE / a;
@@ -54,7 +58,7 @@ SectionResult forwardSection(const SectionPolar& p, Real alpha, Real a, Real alp
         const Real clAtt = std::min(clLin, clMaxE);
         const Real cdS = attachedCd(clMaxE);
         const Real as = std::min(alphaSp, kHalfPi - 0.05);
-        const Viterna v(as, clMaxE * (1 - p.postStallClDrop), cdS, p.flatPlateCd);
+        const Viterna v(as, clMaxE * (1 - p.postStallClDrop), cdS, cdMax);
         const Real av = std::max(alpha, as);
         const Real blend = 1 - smoothstep(alphaSp, alphaSp + w, alpha);
         r.cl = blend * clAtt + (1 - blend) * v.cl(av);
@@ -67,7 +71,7 @@ SectionResult forwardSection(const SectionPolar& p, Real alpha, Real a, Real alp
         const Real clAtt = std::max(clLin, clMinE);
         const Real cdS = attachedCd(clMinE);
         const Real as = std::min(-alphaSm, kHalfPi - 0.05);
-        const Viterna v(as, -clMinE * (1 - p.postStallClDrop), cdS, p.flatPlateCd);
+        const Viterna v(as, -clMinE * (1 - p.postStallClDrop), cdS, cdMax);
         const Real av = std::max(-alpha, as);
         const Real blend = 1 - smoothstep(-alphaSm, -alphaSm + w, -alpha);
         r.cl = blend * clAtt - (1 - blend) * v.cl(av);
@@ -84,13 +88,16 @@ SectionResult forwardSection(const SectionPolar& p, Real alpha, Real a, Real alp
 
 }  // namespace
 
-SectionResult evaluateSection(const SectionPolar& p, Real alpha, Real a, Real dAlpha0, Real dClMax) {
+Real finiteWingMaxDrag(Real aspectRatio) { return 1.11 + 0.018 * clamp(aspectRatio, 0.0, 50.0); }
+
+SectionResult evaluateSection(const SectionPolar& p, Real alpha, Real a, Real dAlpha0, Real dClMax, Real cdMax) {
     alpha = wrapPi(alpha);
+    if (cdMax <= 0) cdMax = p.flatPlateCd;
     SectionResult r;
     const Real dCl = -a * dAlpha0;
     if (std::abs(alpha) <= kHalfPi) {
         const Real alpha0 = p.zeroLiftAlpha + dAlpha0;
-        r = forwardSection(p, alpha, a, alpha0, p.clMax + dClMax, p.clMin + dCl);
+        r = forwardSection(p, alpha, a, alpha0, p.clMax + dClMax, p.clMin + dCl, cdMax);
     } else {
         // Reversed flow: the trailing edge leads. Treat as a weaker symmetric
         // section (common practice for wind-turbine/rotor polars).
@@ -98,7 +105,7 @@ SectionResult evaluateSection(const SectionPolar& p, Real alpha, Real a, Real dA
         SectionPolar rev = p;
         rev.zeroLiftAlpha = 0;
         rev.clAtCdMin = 0;
-        r = forwardSection(rev, ar, a, 0, 0.7 * p.clMax, -0.7 * p.clMax);
+        r = forwardSection(rev, ar, a, 0, 0.7 * p.clMax, -0.7 * p.clMax, cdMax);
         r.cl *= 0.7;
         r.cm = 0;  // attached weight 0: use the centre-of-pressure model below
         r.stalled = true;
@@ -110,6 +117,7 @@ SectionResult evaluateSection(const SectionPolar& p, Real alpha, Real a, Real dA
     const Real xcp = 0.25 + 0.5 * std::abs(alpha) / kPi;
     const Real cmPost = -cn * (xcp - 0.25);
     r.cm = attachedWeight * p.cm0 + (1 - attachedWeight) * cmPost;
+    r.attached = attachedWeight;
     return r;
 }
 
@@ -143,7 +151,7 @@ AeroModel::AeroModel(const AircraftDefinition& def) : fuselages_(def.fuselages),
         for (const PanelDef& p : def.surfaces[s].panels) {
             addPanel(static_cast<int>(s), p, +1);
             if (p.mirrored) addPanel(static_cast<int>(s), p, -1);
-            const Real area = 0.5 * (p.rootChord + p.tipChord) * p.span * (p.mirrored ? 2 : 1);
+            const Real area = 0.5 * (p.rootChord + p.tipChord) * (p.vertical ? p.span : p.span / std::cos(p.dihedral)) * (p.mirrored ? 2 : 1);
             sweepArea += p.sweep * area;
             spanSum += p.span;
             anyVertical = anyVertical || p.vertical;
@@ -164,6 +172,33 @@ AeroModel::AeroModel(const AircraftDefinition& def) : fuselages_(def.fuselages),
         // aspect ratio (end-plate effect of fuselage and tailplane; DATCOM 5.3).
         S.aspectRatio = S.area > 0 ? sq(S.span) / S.area * (anyVertical && !anyMirrored ? 1.55 : 1.0) : 0;
         S.liftSlope = liftCurveSlope3D(S.aspectRatio, S.sweep, S.def.section.liftSlope);
+    }
+    for (std::size_t si = 0; si < surfaces_.size(); ++si) {
+        Surface& S = surfaces_[si];
+        const int n = S.endStrip - S.firstStrip;
+        // Spanwise neighbours: strips sharing a bound-vortex end.
+        for (int i = S.firstStrip; i < S.endStrip; ++i)
+            for (int j = S.firstStrip; j < S.endStrip; ++j) {
+                if (i == j) continue;
+                if (length(strips_[i].boundA - strips_[j].boundB) < 1e-3) strips_[i].neighbourA = j;
+                if (length(strips_[i].boundB - strips_[j].boundA) < 1e-3) strips_[i].neighbourB = j;
+            }
+        llOffset_[si + 1] = llOffset_[si] + (S.def.liftingLine ? n * n : 0);
+        if (!S.def.liftingLine) continue;
+        S.controlSmoothing.assign(static_cast<std::size_t>(n * n), 0);
+        for (int i = 0; i < n; ++i) {
+            const Strip& a = strips_[static_cast<std::size_t>(S.firstStrip + i)];
+            const Real sigma = 1.0 * a.chord;
+            Real sum = 0;
+            for (int j = 0; j < n; ++j) {
+                const Strip& b = strips_[static_cast<std::size_t>(S.firstStrip + j)];
+                if (b.side != a.side) continue;
+                const Real w = std::exp(-dot(b.position - a.position, b.position - a.position) / (sigma * sigma));
+                S.controlSmoothing[static_cast<std::size_t>(i * n + j)] = w;
+                sum += w;
+            }
+            for (int j = 0; j < n; ++j) S.controlSmoothing[static_cast<std::size_t>(i * n + j)] /= sum;
+        }
     }
     for (Surface& S : surfaces_) {
         const int src = S.def.downwashSource;
@@ -200,12 +235,23 @@ void AeroModel::addPanel(int si, const PanelDef& p, int side) {
         s.side = side;
         s.position = root + tipOffset * t;
         s.chord = lerp(p.rootChord, p.tipChord, t);
-        s.area = s.chord * p.span / p.strips;
+        // Area on the panel's true span (a canted winglet's height counts, not
+        // its lateral projection); vertical panels' span is their height.
+        s.area = s.chord * (p.vertical ? p.span : p.span / std::cos(p.dihedral)) / p.strips;
+        s.width = length(tipOffset) / p.strips;
         const Real inc = lerp(p.rootIncidence, p.tipIncidence, t);
         s.chordAxis = chord0 * std::cos(inc) + normal0 * std::sin(inc);
         s.normalAxis = normal0 * std::cos(inc) - chord0 * std::sin(inc);
         s.liftAxis = cross(s.chordAxis, s.normalAxis);
         s.spanAxis = spanAxis;
+        const Real cs = dot(s.chordAxis, spanAxis);
+        s.cosSweep = std::sqrt(std::max(1 - cs * cs, 0.04));
+        s.chordNormal = normalized(s.chordAxis - spanAxis * cs);
+        s.normalNormal = normalized(cross(s.chordNormal, spanAxis));
+        if (dot(s.normalNormal, s.normalAxis) < 0) s.normalNormal = -s.normalNormal;
+        const Vec3 la = dot(spanAxis, s.liftAxis) >= 0 ? spanAxis : -spanAxis;
+        s.boundA = s.position - la * (0.5 * s.width);
+        s.boundB = s.position + la * (0.5 * s.width);
         for (const ControlSurfaceDef& c : p.controls) {
             if (t < c.spanStart || t > c.spanEnd || s.controlCount >= 3) continue;
             StripControl sc;
@@ -219,6 +265,9 @@ void AeroModel::addPanel(int si, const PanelDef& p, int side) {
             sc.effectiveness = c.effectivenessVsDeflection;
             sc.clMaxIncrementRatio = c.clMaxIncrementRatio;
             sc.profileDragPerRad2 = c.profileDragPerRad2;
+            sc.chordExtension = c.chordExtension;
+            sc.chordFraction = c.chordFraction;
+            if (c.channel == ControlChannel::Spoiler) hasSpoilers_ = true;
             s.controls[s.controlCount++] = sc;
         }
         strips_.push_back(s);
@@ -267,6 +316,58 @@ Vec3 AeroModel::slipstreamAt(const Vec3& position, const AeroInputs& in) const {
     return dv;
 }
 
+int AeroModel::spoilerBodies(Real speedbrake, BluffBody* out, int max) const {
+    int n = 0;
+    ControlDeflections d;
+    d.speedbrake = speedbrake;
+    for (const Strip& st : strips_) {
+        if (!st.attached) continue;
+        for (int c = 0; c < st.controlCount && n < max; ++c) {
+            const StripControl& sc = st.controls[c];
+            if (sc.channel != ControlChannel::Spoiler) continue;
+            const Real sd = std::sin(std::max(controlDeflection(sc, d), 0.0));
+            if (sd < 0.02) continue;
+            BluffBody& b = out[n++];
+            b.position = st.position - st.chordAxis * (0.3 * st.chord) + st.normalAxis * (0.06 * st.chord);
+            b.axis = st.spanAxis;
+            b.size = sc.chordFraction * st.chord * sd;
+            b.length = st.width;
+            b.dragArea = 0.45 * sc.chordFraction * sd * st.area;
+        }
+    }
+    return n;
+}
+
+std::array<Real, 6> AeroModel::controlEffects(const Strip& st, const ControlDeflections& d) const {
+    // Zero-lift shift, clmax increment per unit lift slope, cm, cd, chord extension.
+    std::array<Real, 6> e{};
+    for (int c = 0; c < st.controlCount; ++c) {
+        const StripControl& sc = st.controls[c];
+        const Real delta = controlDeflection(sc, d);
+        if (sc.channel == ControlChannel::Spoiler) {
+            // A spoiler separates the flow behind it: most of the section's
+            // lift is lost (~0.95 sin delta, at most 85 %), the aft loading
+            // with it (nose-up section moment), and it adds pressure drag on
+            // its projected height, well below a free flat plate's since the
+            // panel sits in the boundary layer (DATCOM 6.1.5.1 order).
+            const Real sd = std::sin(std::max(delta, 0.0));
+            const Real f = std::min(0.95 * sd, 0.85);
+            e[5] = 1 - (1 - e[5]) * (1 - f);
+            e[2] += 0.06 * f;
+            e[3] += 0.45 * sc.chordFraction * sd;
+            continue;
+        }
+        const Real eta = sc.effectiveness.empty() ? 1.0 : sc.effectiveness(std::abs(delta));
+        const Real dA = -sc.tau * eta * delta;
+        e[0] += dA;
+        e[1] += sc.clMaxIncrementRatio * -dA;
+        e[2] += sc.cmFactor * eta * delta;
+        e[3] += sc.profileDragPerRad2 * delta * delta;
+        if (sc.chordExtension > 0 && delta > 0 && sc.maxPositive > 0) e[4] += sc.chordExtension * std::min(delta / sc.maxPositive, 1.0);
+    }
+    return e;
+}
+
 Real AeroModel::controlDeflection(const StripControl& c, const ControlDeflections& d) const {
     Real u = 0;
     switch (c.channel) {
@@ -274,10 +375,204 @@ Real AeroModel::controlDeflection(const StripControl& c, const ControlDeflection
         case ControlChannel::Elevator: u = -d.elevator; break;
         case ControlChannel::Rudder: u = -d.rudder; break;
         case ControlChannel::Flap: return clamp(d.flap, -c.maxNegative, c.maxPositive);
+        case ControlChannel::Spoiler: return clamp(d.speedbrake, 0.0, 1.0) * c.maxPositive;
         case ControlChannel::None: return 0;
     }
     u = clamp(u, -1.0, 1.0);  // mechanical stops
     return u >= 0 ? u * c.maxPositive : u * c.maxNegative;
+}
+
+void AeroModel::prepare(AeroOutputs& out) const {
+    out.strips.assign(strips_.size(), {});
+    out.llFlow.assign(strips_.size(), {});
+    out.llInduced.assign(strips_.size(), {});
+    out.llInfluence.assign(static_cast<std::size_t>(llOffset_[surfaces_.size()]), {});
+    int nMax = 0;
+    for (const Surface& S : surfaces_)
+        if (S.def.liftingLine) nMax = std::max(nMax, S.endStrip - S.firstStrip);
+    out.llJacobian.assign(static_cast<std::size_t>(nMax * nMax), 0);
+    out.llResidual.assign(static_cast<std::size_t>(nMax), 0);
+    out.llGamma.assign(static_cast<std::size_t>(nMax), 0);
+    out.llSeparated.assign(static_cast<std::size_t>(nMax), 0);
+    out.llGrad.assign(static_cast<std::size_t>(nMax), {});
+    out.llControl.assign(strips_.size(), {});
+    out.llValid.fill(false);
+}
+
+namespace {
+
+
+// Air velocity at p induced by a horseshoe vortex of unit circulation: bound
+// from a to b, trailing legs to infinity along u (Phillips & Snyder 2000, eq. 4).
+Vec3 horseshoe(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& u) {
+    const Vec3 r1 = p - a, r2 = p - b;
+    const Real n1 = length(r1), n2 = length(r2);
+    Vec3 v;
+    const Real tiny = 1e-9;
+    const Real d2 = n2 * (n2 - dot(u, r2));
+    if (d2 > tiny) v += cross(u, r2) / d2;
+    const Real db = n1 * n2 * (n1 * n2 + dot(r1, r2));
+    if (db > tiny) v += cross(r1, r2) * ((n1 + n2) / db);
+    const Real d1 = n1 * (n1 - dot(u, r1));
+    if (d1 > tiny) v -= cross(u, r1) / d1;
+    return v / (4 * kPi);
+}
+
+// Solve the dense system J x = r in place (partial pivoting); false if singular.
+bool solveDense(Real* J, Real* r, int n) {
+    for (int c = 0; c < n; ++c) {
+        int p = c;
+        for (int i = c + 1; i < n; ++i)
+            if (std::abs(J[i * n + c]) > std::abs(J[p * n + c])) p = i;
+        if (std::abs(J[p * n + c]) < 1e-12) return false;
+        if (p != c) {
+            for (int k = 0; k < n; ++k) std::swap(J[c * n + k], J[p * n + k]);
+            std::swap(r[c], r[p]);
+        }
+        for (int i = c + 1; i < n; ++i) {
+            const Real f = J[i * n + c] / J[c * n + c];
+            if (f == 0) continue;
+            for (int k = c; k < n; ++k) J[i * n + k] -= f * J[c * n + k];
+            r[i] -= f * r[c];
+        }
+    }
+    for (int i = n - 1; i >= 0; --i) {
+        Real sum = r[i];
+        for (int k = i + 1; k < n; ++k) sum -= J[i * n + k] * r[k];
+        r[i] = sum / J[i * n + i];
+    }
+    return true;
+}
+
+}  // namespace
+
+template <class GammaOf>
+void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, AeroOutputs& out, GammaOf&& gammaOf) const {
+    const Surface& S = surfaces_[static_cast<std::size_t>(si)];
+    const Vec3* vFree = out.llFlow.data() + n0;
+    Vec3* induced = out.llInduced.data() + n0;
+    for (int k = 0; k < n; ++k) induced[k] = {};
+    // The trailing legs run downstream along the surface's mean flow.
+    Vec3 sum;
+    for (int k = 0; k < n; ++k) sum += vFree[k];
+    // At (near) rest the mean flow has no meaningful direction (a slipstream
+    // alone, a gust); with the air from behind the lifting-line picture does
+    // not apply: the legs then trail straight aft along the body.
+    const Vec3 aft{-1, 0, 0};
+    Vec3 u = length(sum) > 3.0 * n ? normalized(-sum) : aft;
+    if (dot(u, aft) < 0.2) u = aft;
+    // Ground images (a flat ground below, within a few spans).
+    const bool ground = S.def.groundEffect && dot(in.groundUpBody, in.groundUpBody) > 0.5 && in.heightAboveGround < 3 * S.span;
+    const Real h = ground ? in.heightAboveGround : 1e9;
+    // Near the ground the wake cannot trail down through it: legs parallel
+    // to the ground (and so to their images), blending in below one span.
+    if (ground) {
+        const Vec3 flat = u - in.groundUpBody * dot(u, in.groundUpBody);
+        if (length(flat) > 0.1) {
+            const Real k = smoothstep(S.span, 0.25 * S.span, h);
+            u = normalized(u * (1 - k) + normalized(flat) * k);
+        }
+    }
+    Vec3* V = out.llInfluence.data() + llOffset_[static_cast<std::size_t>(si)];
+    const std::size_t s = static_cast<std::size_t>(si);
+    const bool rebuild = !out.llValid[s] || dot(u, out.llDir[s]) < 0.99999 ||
+                         (h < 1e8 || out.llHeight[s] < 1e8 ? std::abs(h - out.llHeight[s]) > std::max(0.01 * std::min(h, out.llHeight[s]), 0.02) : false);
+    if (rebuild) {
+        const Vec3 up = in.groundUpBody;
+        const Vec3 ref = surfaces_[0].centroid;
+        auto mirror = [&](const Vec3& p) { return p - up * (2 * (h + dot(p - ref, up))); };
+        const Vec3 ui = u - up * (2 * dot(u, up));
+        for (int i = 0; i < n; ++i) {
+            const Vec3& p = strips_[static_cast<std::size_t>(n0 + i)].position;
+            for (int j = 0; j < n; ++j) {
+                const Strip& sj = strips_[static_cast<std::size_t>(n0 + j)];
+                Vec3 v = horseshoe(p, sj.boundA, sj.boundB, u);
+                if (h < 1e8) v -= horseshoe(p, mirror(sj.boundA), mirror(sj.boundB), ui);
+                V[i * n + j] = v;
+            }
+        }
+        out.llDir[s] = u;
+        out.llHeight[s] = h;
+        out.llValid[s] = true;
+    }
+    // Newton on R_i = G_i - g_i(v_i - sum_j V_ij G_j), from the last solution.
+    Real* G = out.llGamma.data();
+    Real* R = out.llResidual.data();
+    Real* J = out.llJacobian.data();
+    Real* sep = out.llSeparated.data();
+    constexpr Real kViscosity = 0.5;
+    Vec3* grad = out.llGrad.data();
+    for (int k = 0; k < n; ++k) G[k] = strips_[static_cast<std::size_t>(n0 + k)].attached ? out.strips[static_cast<std::size_t>(n0 + k)].gamma : 0;
+    auto flowAt = [&](int i) {
+        Vec3 w = vFree[i];
+        for (int j = 0; j < n; ++j) w -= V[i * n + j] * G[j];
+        return w;
+    };
+    std::array<Vec3, 64> wSave{};
+    for (int it = 0; it < 24; ++it) {
+        Real rMax = 0, gMax = 1e-3;
+        for (int i = 0; i < n; ++i) {
+            if (!strips_[static_cast<std::size_t>(n0 + i)].attached) {
+                R[i] = G[i];
+                continue;
+            }
+            const Vec3 w = flowAt(i);
+            wSave[static_cast<std::size_t>(std::min(i, 63))] = w;
+            Real att = 1;
+            const Real g = gammaOf(i, w, &att);
+            // Artificial viscosity where the flow has separated (Chattot
+            // 2004): a stalled strip's circulation is pulled toward its
+            // neighbours', so the loss of its lift cannot feed the runaway
+            // upwash of a single strip (the lifting line has no unique
+            // post-stall solution without it). Attached flow is untouched.
+            sep[i] = kViscosity * (1 - att);
+            const Strip& sti = strips_[static_cast<std::size_t>(n0 + i)];
+            const Real ga = sti.neighbourA >= 0 ? G[sti.neighbourA - n0] : 0, gb = sti.neighbourB >= 0 ? G[sti.neighbourB - n0] : 0;
+            R[i] = G[i] - g - sep[i] * (ga + gb - 2 * G[i]);
+            rMax = std::max(rMax, std::abs(R[i]));
+            gMax = std::max({gMax, std::abs(G[i]), std::abs(g)});
+        }
+        out.llIterations = it;
+        // Tight: the result must not depend on the warm start (trim and
+        // linearisation difference the forces).
+        if (rMax < 1e-9 * gMax + 1e-10) break;
+        // Jacobian dR_i/dG_j = delta_ij + grad(g_i) . V_ij (g's gradient in the
+        // strip's flow by finite differences).
+        for (int i = 0; i < n; ++i) {
+            if (!strips_[static_cast<std::size_t>(n0 + i)].attached) {
+                grad[i] = {};
+                continue;
+            }
+            const Vec3 w = i < 64 ? wSave[static_cast<std::size_t>(i)] : flowAt(i);
+            const Real g = gammaOf(i, w, nullptr);
+            const Real dh = 1e-3 * std::max(length(w), 1.0);
+            grad[i] = Vec3{gammaOf(i, w + Vec3{dh, 0, 0}, nullptr) - g, gammaOf(i, w + Vec3{0, dh, 0}, nullptr) - g, gammaOf(i, w + Vec3{0, 0, dh}, nullptr) - g} / dh;
+        }
+        for (int i = 0; i < n; ++i) {
+            for (int j = 0; j < n; ++j) J[i * n + j] = (i == j ? 1.0 : 0.0) + dot(grad[i], V[i * n + j]);
+            if (sep[i] > 0) {
+                const Strip& sti = strips_[static_cast<std::size_t>(n0 + i)];
+                J[i * n + i] += 2 * sep[i];
+                if (sti.neighbourA >= 0) J[i * n + sti.neighbourA - n0] -= sep[i];
+                if (sti.neighbourB >= 0) J[i * n + sti.neighbourB - n0] -= sep[i];
+            }
+        }
+        Real stepMax = 0;
+        if (solveDense(J, R, n)) {
+            for (int i = 0; i < n; ++i) stepMax = std::max(stepMax, std::abs(R[i]));
+            // Damped where the polar's negative post-stall slope would overshoot.
+            const Real scale = stepMax > 0.5 * gMax + 1 ? (0.5 * gMax + 1) / stepMax : 1.0;
+            for (int i = 0; i < n; ++i) G[i] -= scale * R[i];
+        } else {
+            for (int i = 0; i < n; ++i) G[i] -= 0.5 * R[i];
+        }
+    }
+    for (int i = 0; i < n; ++i) {
+        Vec3 a;
+        for (int j = 0; j < n; ++j) a += V[i * n + j] * G[j];
+        induced[i] = a;
+        out.strips[static_cast<std::size_t>(n0 + i)].gamma = G[i];
+    }
 }
 
 void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
@@ -317,86 +612,189 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             eps = in.downwashLagged ? in.downwashLagged[si] : so.downwash;
         }
 
-        // Pass 1: strip coefficients; accumulate per-side lift for induced angle.
-        Real liftSide[2] = {0, 0}, qaSide[2] = {0, 0}, alphaSum = 0, areaSum = 0;
+        const bool ll = S.def.liftingLine;
+        // Induced angle from the strip's own loading (local lifting-line
+        // approximation): d(cl * alpha_i)/dcl = 2 alpha_i, which is what makes
+        // aileron yaw adverse and asymmetric stall yaw into the dropping wing.
+        // With the lifting line the induced flow is solved instead.
+        const Real inducedPerCl = ll ? 0.0 : 1.0 / (kPi * arEff * S.def.spanEfficiency);
+        // With the lifting line the planform's own induced drag is solved; the
+        // surface's Oswald e also carries fuselage interference and the
+        // viscous drag due to lift: the remainder (1/e - 1) / (pi AR) CL^2.
+        const Real liftDragK = ll ? std::max(1 / S.def.spanEfficiency - 1, 0.0) / (kPi * S.aspectRatio) : 0.0;
+        // Finite-wing post-stall drag (Viterna), never above the 2-D flat plate.
+        const Real cdMax = std::min(S.def.section.flatPlateCd, finiteWingMaxDrag(S.aspectRatio));
+
+        // Section evaluation of strip i at its velocity relative to the air v
+        // (body axes; with the lifting line, including the induced flow).
+        struct StripEval {
+            Real alpha = 0, cs = 1, an = 0, q = 0, qFree = 0, cdWave = 0, extension = 0, stallAlpha = 0;
+            Real gamma = 0;  // bound circulation the section's lift implies (Kutta-Joukowski)
+            Vec3 vPerp;
+            SectionResult sec;
+            bool active = false;
+        };
+        auto evalStrip = [&](const Strip& st, const Vec3& v) {
+            StripEval e;
+            const Vec3 vPerp = v - st.spanAxis * dot(v, st.spanAxis);
+            const Real vp2 = dot(vPerp, vPerp);
+            if (vp2 < 1e-8) return e;
+            e.active = true;
+            e.vPerp = vPerp;
+            // Simple sweep theory: the section works on the flow normal to its
+            // span. Its streamwise-defined polar maps there with the sweep:
+            // angles, slope and lift limits over cos(sweep), so that q_n cl_n
+            // = q CL (linear range unchanged), an untwisted wing's zero-lift
+            // angle is the section's at any sweep, and CLmax ~ clmax cos(sweep).
+            const Real cs = st.cosSweep;
+            e.cs = cs;
+            Real alpha = std::atan2(-dot(vPerp, st.normalNormal), dot(vPerp, st.chordNormal));
+            if (S.horizontal) alpha -= eps / cs;
+            if (S.def.trimmableStabilizer) alpha -= in.controls.stabilizer / cs;  // leading edge down: nose up
+            SectionPolar sp = S.def.section;
+            sp.zeroLiftAlpha /= cs;
+            sp.clMax /= cs;
+            sp.clMin /= cs;
+            sp.clAtCdMin /= cs;
+            // Lifting line: the normal section's own 2-D slope (Prandtl-Glauert
+            // on the normal Mach number); the finite span is in the induced
+            // flow. Strip theory: the surface's 3-D slope.
+            const Real an = ll ? S.def.section.liftSlope / std::sqrt(1 - std::min(vp2 / sq(in.speedOfSound), 0.81)) : a3 / cs;
+            e.an = an;
+            // Controls on this strip (deflections normal to the hinge line),
+            // spread spanwise over half a chord on a lifting-line surface.
+            const std::array<Real, 6> ctl = ll ? out.llControl[static_cast<std::size_t>(&st - strips_.data())] : controlEffects(st, in.controls);
+            const Real dAlpha0 = ctl[0], dClMax = ctl[1] * an, dCm = ctl[2], dCd = ctl[3], extension = ctl[4], spoiled = ctl[5];
+            e.sec = evaluateSection(sp, alpha, an, dAlpha0, dClMax, cdMax);
+            e.sec.cm += dCm;
+            e.sec.cd += dCd;
+            if (spoiled > 0) {
+                e.sec.cl *= 1 - spoiled;
+                e.sec.attached = std::min(e.sec.attached, 1 - spoiled);
+            }
+            // Spoilers / lift dump on the main wing: a fraction of the
+            // section lift is spoiled (the drag is carried by a drag area).
+            if (si == 0 && in.controls.spoiler > 0) e.sec.cl *= 1 - in.controls.spoiler;
+            // Compressibility drag rise (Korn + Lock), on the normal flow:
+            // Korn's equation is written for the free-stream Mach number and
+            // the streamwise lift coefficient (cl_streamwise = cl_n cos^2), and
+            // Lock's increment is streamwise (normal: divide by cos^2).
+            const Real m = std::sqrt(vp2) / in.speedOfSound / cs;
+            const Real mdd = S.def.kornFactor / cs - S.def.thicknessRatio / (cs * cs) - std::abs(e.sec.cl) / (10 * cs);
+            const Real mcrit = mdd - 0.1077;  // (0.1/80)^(1/3)
+            e.cdWave = m > mcrit ? 20 * std::pow(m - mcrit, 4) / (cs * cs) : 0;
+            e.alpha = alpha;
+            e.q = 0.5 * rho * vp2;
+            e.qFree = 0.5 * rho * dot(v, v);
+            e.extension = extension;
+            e.stallAlpha = (sp.zeroLiftAlpha + dAlpha0 + (sp.clMax + dClMax) / an) * cs;
+            // Kutta-Joukowski on the (swept) bound vortex: the strip's lift
+            // q S cl = rho |V x l| G, so G = V_perp cl (S / width) / 2.
+            e.gamma = 0.5 * std::sqrt(vp2) * e.sec.cl * st.area * (1 + extension) / std::max(st.width, 1e-6);
+            return e;
+        };
+
+        // Free flow at every strip (no induced flow yet).
+        const int n0 = S.firstStrip, n = S.endStrip - S.firstStrip;
+        if (ll) {
+            std::array<Real, 6>* raw = out.llControl.data() + n0;
+            std::array<std::array<Real, 6>, 64> local{};
+            for (int k = 0; k < n && k < 64; ++k) local[static_cast<std::size_t>(k)] = controlEffects(strips_[static_cast<std::size_t>(n0 + k)], in.controls);
+            for (int i = 0; i < n && i < 64; ++i) {
+                std::array<Real, 6> sm{};
+                for (int j = 0; j < n && j < 64; ++j) {
+                    const Real w = S.controlSmoothing[static_cast<std::size_t>(i * n + j)];
+                    if (w == 0) continue;
+                    for (int q = 0; q < 5; ++q) sm[static_cast<std::size_t>(q)] += w * local[static_cast<std::size_t>(j)][static_cast<std::size_t>(q)];
+                }
+                // A spoiler's separation is local, with a sharp edge (whose
+                // vortex is the point): not smoothed.
+                sm[5] = local[static_cast<std::size_t>(i)][5];
+                raw[i] = sm;
+            }
+        }
+        Vec3* vFree = out.llFlow.data() + n0;
+        for (int k = 0; k < n; ++k) {
+            const Strip& st = strips_[static_cast<std::size_t>(n0 + k)];
+            vFree[k] = st.attached ? localFlow(S, st, st.position - in.cg, in) : Vec3{};
+        }
+        if (ll)
+            solveLiftingLine(static_cast<int>(si), n0, n, in, out, [&](int k, const Vec3& v, Real* attached) {
+                const StripEval e = evalStrip(strips_[static_cast<std::size_t>(n0 + k)], v);
+                if (attached) *attached = e.active ? e.sec.attached : 1;
+                return e.gamma;
+            });
+
+        Real liftSum = 0, qaFree = 0, alphaSum = 0, areaSum = 0;
         for (int i = S.firstStrip; i < S.endStrip; ++i) {
             const Strip& st = strips_[i];
             StripTelemetry& tel = out.strips[i];
+            const Real gammaPrev = tel.gamma;
             tel = {};
-            if (!st.attached) continue;
+            tel.gamma = gammaPrev;
+            if (!st.attached) { tel.gamma = 0; continue; }
             const Vec3 r = st.position - in.cg;
-            const Vec3 v = localFlow(S, st, r, in);
-            const Vec3 vPerp = v - st.spanAxis * dot(v, st.spanAxis);
-            const Real vp2 = dot(vPerp, vPerp);
-            if (vp2 < 1e-8) continue;
-            Real alpha = std::atan2(-dot(vPerp, st.normalAxis), dot(vPerp, st.chordAxis));
-            if (S.horizontal) alpha -= eps;
-
-            // Controls on this strip.
-            Real dAlpha0 = 0, dClMax = 0, dCm = 0, dCd = 0;
-            for (int c = 0; c < st.controlCount; ++c) {
-                const StripControl& sc = st.controls[c];
-                const Real delta = controlDeflection(sc, in.controls);
-                const Real eta = sc.effectiveness.empty() ? 1.0 : sc.effectiveness(std::abs(delta));
-                const Real dA = -sc.tau * eta * delta;
-                dAlpha0 += dA;
-                dClMax += sc.clMaxIncrementRatio * (-a3 * dA);
-                dCm += sc.cmFactor * eta * delta;
-                dCd += sc.profileDragPerRad2 * delta * delta;
-            }
-            SectionResult sec = evaluateSection(S.def.section, alpha, a3, dAlpha0, dClMax);
-            sec.cm += dCm;
-            sec.cd += dCd;
-            // Compressibility drag rise (Korn + Lock).
-            const Real m = std::sqrt(vp2) / in.speedOfSound;
-            const Real cs = std::cos(S.sweep);
-            const Real mdd = S.def.kornFactor / cs - S.def.thicknessRatio / (cs * cs) -
-                             std::abs(sec.cl) / (10 * cs * cs * cs);
-            const Real mcrit = mdd - 0.1077;  // (0.1/80)^(1/3)
-            if (m > mcrit) sec.cd += 20 * std::pow(m - mcrit, 4);
-
-            const Real q = 0.5 * rho * vp2;
-            tel.alpha = alpha;
+            // With the lifting line, the strip's flow includes the induced
+            // velocity of every horseshoe (and its ground image).
+            const Vec3 v = vFree[i - n0] - (ll ? out.llInduced[static_cast<std::size_t>(i)] : Vec3{});
+            const StripEval e = evalStrip(st, v);
+            if (!e.active) continue;
+            const SectionResult& sec = e.sec;
+            const Real cs = e.cs, q = e.q, qFree = e.qFree;
+            const Vec3& vPerp = e.vPerp;
+            // A Fowler flap's chord extension: more lifting area.
+            const Real area = st.area * (1 + e.extension), chord = st.chord * (1 + e.extension);
+            // Angles reported streamwise-equivalent (normal-plane angle x
+            // cos(sweep)), so margins in radians mean the same on every wing.
+            tel.alpha = e.alpha * cs;
             tel.cl = sec.cl;
-            tel.cd = sec.cd;
+            tel.cd = sec.cd + e.cdWave;
             tel.cm = sec.cm;
             tel.q = q;
             tel.flowPerp = vPerp;
             tel.stalled = sec.stalled;
-            tel.stallAlpha = S.def.section.zeroLiftAlpha + dAlpha0 + (S.def.section.clMax + dClMax) / a3;
-            const int sideIdx = st.side > 0 ? 0 : 1;
-            liftSide[sideIdx] += q * st.area * sec.cl;
-            qaSide[sideIdx] += q * st.area;
-            alphaSum += alpha * st.area;
+            tel.attached = sec.attached;
+            tel.stallAlpha = e.stallAlpha;
+            if (ll) tel.gamma = e.gamma;
+            liftSum += q * area * sec.cl;
+            qaFree += qFree * area;
+            alphaSum += e.alpha * cs * st.area;
             areaSum += st.area;
             if (sec.stalled) ++so.stalledStrips;
-        }
-        const Real qaTot = qaSide[0] + qaSide[1];
-        so.cl = qaTot > 0 ? (liftSide[0] + liftSide[1]) / qaTot : 0;
-        so.alphaMean = areaSum > 0 ? alphaSum / areaSum : 0;
-        // Induced angle from the strip's own loading (local lifting-line
-        // approximation): d(cl * alpha_i)/dcl = 2 alpha_i, which is what makes
-        // aileron yaw adverse and asymmetric stall yaw into the dropping wing.
-        const Real inducedPerCl = 1.0 / (kPi * arEff * S.def.spanEfficiency);
-        // Pass 2: forces and moments.
-        for (int i = S.firstStrip; i < S.endStrip; ++i) {
-            const Strip& st = strips_[i];
-            const StripTelemetry& tel = out.strips[i];
-            if (!st.attached || tel.q <= 0) continue;
-            const Vec3 r = st.position - in.cg;
-            Vec3 dragDir = normalized(-tel.flowPerp);
+
+            // Forces. Lift is normal to both the strip's (spanwise-free) flow
+            // and its swept span axis; the unswept lateral axis would tilt it
+            // forward by ~sin(alpha) sin^2(sweep) and cancel induced drag.
+            // With the lifting line the flow already carries the induced
+            // velocity, so the lift tilts back by the induced angle: that is
+            // the induced drag.
+            Vec3 dragDir = normalized(-vPerp);
+            const Vec3 la = dot(st.spanAxis, st.liftAxis) >= 0 ? st.spanAxis : -st.spanAxis;
             if (S.horizontal && eps != 0) {
-                // Downwash tilts the local flow (rotate about the lift axis).
-                const Vec3 n = normalized(cross(st.liftAxis, dragDir));
-                dragDir = normalized(dragDir * std::cos(eps) + n * std::sin(eps));
+                // Downwash tilts the local flow (rotate about the span axis).
+                const Vec3 nrm = normalized(cross(la, dragDir));
+                dragDir = normalized(dragDir * std::cos(eps / cs) + nrm * std::sin(eps / cs));
             }
-            const Vec3 liftDir = normalized(cross(dragDir, st.liftAxis));
-            const Real ai = tel.cl * inducedPerCl;
-            const Real qa = tel.q * st.area;
-            const Vec3 f = liftDir * (qa * tel.cl) + dragDir * (qa * (tel.cd + tel.cl * ai));
+            const Vec3 liftDir = normalized(cross(dragDir, la));
+            // Induced angle in the normal plane from the streamwise CL (cl_n
+            // cos^2), fading as the flow separates (a stalled strip sheds its
+            // vorticity rather than trailing it).
+            const Real ai = sec.cl * cs * cs * (inducedPerCl + liftDragK) * sec.attached;
+            const Real qa = q * area;
+            // Attached profile drag is skin friction and pressure drag of the
+            // whole local flow (spanwise flow included); the separated part,
+            // the wave drag and the induced drag act on the normal flow.
+            const Real cdFriction = sec.attached * sec.cd;
+            const Real cdNormal = (1 - sec.attached) * sec.cd + e.cdWave;
+            const Vec3 f = liftDir * (qa * sec.cl) + dragDir * (qa * (cdNormal + sec.cl * ai)) +
+                           normalized(-v) * (qFree * area * cdFriction);
             out.force += f;
-            out.moment += cross(r, f) + st.liftAxis * (qa * st.chord * tel.cm);
+            out.moment += cross(r, f) + st.liftAxis * (qa * chord * sec.cm);
         }
+        // The surface's streamwise lift coefficient (on the free-stream q),
+        // the input of the downwash it makes.
+        so.cl = qaFree > 0 ? liftSum / qaFree : 0;
+        so.alphaMean = areaSum > 0 ? alphaSum / areaSum : 0;
     }
 
     // Fuselage: Munk moment and crossflow drag (free stream; slender-body
@@ -422,10 +820,57 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
         const Vec3 r = d.position - in.cg;
         Vec3 v = in.velocityBody + cross(in.omegaBody, r) - (in.windBody + in.windGradientBody * r);
         v += slipstreamAt(d.position, in);
-        const Vec3 f = v * (-0.5 * rho * d.dragArea * length(v));
+        Real area = d.dragArea;
+        if (d.criticalMach > 0) {
+            const Real m = std::min(length(v) / in.speedOfSound, 1.3);
+            if (m > d.criticalMach) area *= 1 + 60 * sq(m - d.criticalMach);
+        }
+        const Vec3 f = v * (-0.5 * rho * area * length(v));
         out.force += f;
         out.moment += cross(r, f);
     }
+}
+
+Real trimmedMaxLiftCoefficient(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach) {
+    const Real a = 340.3, v = std::max(mach, 0.15) * a;
+    AeroInputs in;
+    in.density = 1.225;
+    in.speedOfSound = a;
+    in.cg = cg;
+    in.controls.flap = flap;
+    AeroOutputs out;
+    model.prepare(out);
+    const Real q = 0.5 * in.density * v * v;
+    // Lift and pitching moment at alpha with the elevator at e (-1..1).
+    auto eval = [&](Real alpha, Real e, Real& lift) {
+        in.velocityBody = {v * std::cos(alpha), 0, v * std::sin(alpha)};
+        in.controls.elevator = e;
+        model.evaluate(in, out);
+        lift = out.force.x * std::sin(alpha) - out.force.z * std::cos(alpha);
+        return out.moment.y;
+    };
+    Real best = 0;
+    for (Real alphaDeg = 0; alphaDeg <= 30.0; alphaDeg += 0.25) {
+        const Real alpha = alphaDeg * kTwoPi / 360.0;
+        Real lift = 0, liftLo = 0, liftHi = 0;
+        const Real mLo = eval(alpha, -1, liftLo), mHi = eval(alpha, 1, liftHi);
+        if ((mLo > 0) == (mHi > 0)) {
+            // Cannot trim here: the elevator is out of authority (nose-up) or the
+            // pitch-down limit is reached; stop once the stick is fully back.
+            if (mHi < 0) break;
+            continue;
+        }
+        Real lo = -1, hi = 1, mlo = mLo;
+        for (int k = 0; k < 30; ++k) {
+            const Real mid = 0.5 * (lo + hi), m = eval(alpha, mid, lift);
+            if ((m > 0) == (mlo > 0)) { lo = mid; mlo = m; } else hi = mid;
+        }
+        eval(alpha, 0.5 * (lo + hi), lift);
+        const Real cl = lift / (q * refArea);
+        if (cl > best) best = cl;
+        else if (cl < best - 0.15) break;  // well past the peak
+    }
+    return best;
 }
 
 }  // namespace avd

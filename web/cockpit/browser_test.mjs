@@ -53,6 +53,15 @@ try {
   check(Math.abs(num(alt[0]) - num(alt[1])) < 60, `cruise: altimeter ${alt[1]} vs true ${alt[0]} ft`);
   check(Math.abs(num(ias[0]) - num(ias[1])) < 6, `cruise: ASI ${ias[1]} vs CAS ${ias[0]} kt`);
 
+  // Auto-trim: L toggles the straight-and-level hold; it engages hands-off.
+  await page.keyboard.press('KeyL');
+  await page.waitForTimeout(1500);
+  check(await page.isChecked('#level-hold'), 'L ticks "Auto-trim: hold straight and level"');
+  check(/holding straight and level/.test(await page.textContent('#status')), 'status shows the hold engaged');
+  await page.keyboard.press('KeyL');
+  await page.waitForTimeout(300);
+  check(!(await page.isChecked('#level-hold')), 'L again turns it off');
+
   // Kollsman knob: hover it on the canvas and scroll ten detents (0.10 inHg ≈ 90-100 ft).
   const box = await (await page.$('#panel')).boundingBox();
   const s = Math.min(box.width / 1200, box.height / 600);
@@ -72,6 +81,14 @@ try {
   const rotor = num(t['Gyro rotor: attitude'][0]);
   check(rotor < 99.5 && rotor > 50, `vacuum failure spins the attitude gyro down (${rotor}%)`);
   check((await page.$$eval('#log li', (l) => l.map((x) => x.textContent))).some((x) => /Vacuum pump: failed/.test(x)), 'failure is logged');
+
+  // Wind controls reach the model: a gust-front hazard is announced, and the
+  // thermals slider reports its setting.
+  await page.selectOption('#hazard', '2');
+  check((await page.$$eval('#log li', (l) => l.map((x) => x.textContent))).some((x) => /Gust front/.test(x)), 'wind hazard is set and logged');
+  await page.selectOption('#hazard', '0');
+  await page.$eval('#thermals', (e) => { e.value = '2'; e.dispatchEvent(new Event('input')); });
+  check((await page.textContent('#thermals-v')).includes('2.00'), 'thermals slider applies');
 
   // Final approach: localizer and glideslope are received on NAV 1.
   await page.selectOption('#scenario', '2');
