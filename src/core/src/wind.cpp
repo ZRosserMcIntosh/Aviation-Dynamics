@@ -16,6 +16,9 @@
 //  - Convective boundary layer: Lenschow, Wyngaard & Pennell (1980),
 //    sigma_w^2 / w*^2 = 1.8 (z/zi)^(2/3) (1 - 0.8 z/zi)^2; horizontal
 //    sigma ~ 0.6 w* (Caughey & Palmer 1979).
+//  - Discrete gusts: FAR 25.341 (1-cosine), MIL-F-8785C (ramp).
+//  - Microburst: Oseguera & Bowles, NASA TM-100632 (1988); hazard index
+//    F-factor: Bowles (1990), FAA AC 120-41 / TDWR.
 //  - von Kármán spectrum: E(k) ∝ (k/k_e)^4 / (1 + (k/k_e)^2)^(17/6),
 //    k_e = 1 / (1.339 L).
 #include "avd/wind.hpp"
@@ -287,6 +290,70 @@ void AtmosphericTurbulence::evaluate(const Vec3& x, Real agl, Real altitudeMsl, 
     vt = {vtv[0], vtv[1], vtv[2]};
     velocity = axes_ * vt;
     gradient = axes_ * gt;
+}
+
+// ======================================================== discrete events ==
+
+Vec3 DiscreteGust::velocity(const Vec3& x, Real t, const Vec3& advection) const {
+    if (t < startTime || length <= 0) return {};
+    const Vec3 n{std::cos(heading), std::sin(heading), 0};
+    const Real c = frontSpeed >= 0 ? frontSpeed : dot(advection, n);
+    // Distance behind the front (into the gust).
+    const Real xi = c * (t - startTime) - dot(x - origin, n);
+    if (xi <= 0) return {};
+    Real f = 0;
+    if (shape == Shape::OneMinusCosine) {
+        f = xi < 2 * length ? 0.5 * (1 - std::cos(kPi * xi / length)) : 0.0;
+    } else {
+        const Real hold = std::max(holdLength, 0.0);
+        if (xi < length) f = 0.5 * (1 - std::cos(kPi * xi / length));
+        else if (xi < length + hold) f = 1;
+        else if (xi < 2 * length + hold) f = 0.5 * (1 + std::cos(kPi * (xi - length - hold) / length));
+    }
+    return amplitude * f;
+}
+
+namespace {
+// Peak of (1 - exp(-x^2)) / x, at x = 1.1209.
+constexpr Real kRadialPeak = 0.638161;
+Real outflowShape(Real z, Real zs, Real eps) { return std::exp(-z / zs) - std::exp(-z / eps); }
+}  // namespace
+
+Real Microburst::peakOutflowHeight() const {
+    const Real zs = outflowDecayHeight, eps = surfaceLayerDepth;
+    return zs * eps * std::log(zs / eps) / (zs - eps);
+}
+
+Real Microburst::lambda() const {
+    if (radius <= 0 || outflowDecayHeight <= surfaceLayerDepth || surfaceLayerDepth <= 0) return 0;
+    const Real g = outflowShape(peakOutflowHeight(), outflowDecayHeight, surfaceLayerDepth);
+    return 2 * peakOutflow / (radius * kRadialPeak * g);
+}
+
+Real Microburst::strength(Real t) const {
+    const Real a = t - startTime;
+    if (a <= 0) return 0;
+    if (a < growthTime) return smoothstep(0.0, growthTime, a);
+    if (a < growthTime + matureTime) return 1;
+    return 1 - smoothstep(growthTime + matureTime, growthTime + matureTime + std::max(decayTime, 1e-6), a);
+}
+
+Vec3 Microburst::velocity(const Vec3& x, Real z, Real t) const {
+    const Real s = strength(t);
+    if (s <= 0 || z < 0) return {};
+    const Real lam = s * lambda();
+    const Real age = t - startTime;
+    const Real dx = x.x - (north + driftNorth * age), dy = x.y - (east + driftEast * age);
+    const Real q = (dx * dx + dy * dy) / (radius * radius);
+    const Real zs = outflowDecayHeight, eps = surfaceLayerDepth;
+    // u / r = lambda R^2 / 2 (1 - e^-q) / r^2 = lambda / 2 (1 - e^-q) / q.
+    const Real radialOverR = 0.5 * lam * (q > 1e-12 ? -std::expm1(-q) / q : 1.0) * outflowShape(z, zs, eps);
+    const Real wUp = -lam * std::exp(-q) * (zs * -std::expm1(-z / zs) - eps * -std::expm1(-z / eps));
+    return {radialOverR * dx, radialOverR * dy, -wUp};
+}
+
+Real windShearHazardFactor(Real tailwindRate, Real verticalAirVelocity, Real airspeed) {
+    return tailwindRate / kStandardGravity - verticalAirVelocity / std::max(airspeed, 1.0);
 }
 
 }  // namespace avd

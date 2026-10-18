@@ -118,6 +118,8 @@ struct SimpleWeatherParams {
     Real groundElevation = 0;        // m MSL of the surface the profile refers to
     Real updraft = 0;                // m/s uniform vertical air velocity (+ up)
     TurbulenceParams turbulence;     // mechanical turbulence is on by default
+    std::vector<DiscreteGust> gusts;
+    std::vector<Microburst> microbursts;
     // One stratiform cloud layer (m MSL) with its liquid water content
     // (g/m^3; stratus ~0.1-0.5, cumulus up to ~1-2). Supercooled where the
     // air is below 0 C: an icing layer. cloudTop <= cloudBase: no cloud.

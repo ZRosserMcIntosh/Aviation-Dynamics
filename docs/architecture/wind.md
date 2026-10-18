@@ -99,6 +99,60 @@ gradient includes the height derivative of σ and L, so gust gradients stay
 consistent near the ground. The tests check the gradient against finite
 differences.
 
+## Discrete events
+
+These are analytic fields added on top of the mean wind and turbulence. Their
+gradient comes from central differences. Each is a list in `SimpleWeather::Params`.
+
+**Discrete gust** (`gusts`). A vertical plane front with a horizontal normal,
+and a profile across it:
+
+- `OneMinusCosine`: U = U_ds/2 (1 − cos(π s / H)) over 0 ≤ s ≤ 2H
+  (FAR 25.341, with H the gust gradient distance);
+- `RampAndHold`: a 1-cosine ramp over H to a sustained value, held for
+  `holdLength`, then ramped back (MIL-F-8785C).
+
+The amplitude is any NED vector: vertical, head or side gust. The front is
+either fixed in space (`frontSpeed = 0`), moves at a given speed, or, by
+default, is frozen in the air and carried by the mean wind.
+
+*Check:* a 5 m/s vertical gust with H = 12.5 MAC gives a load factor within
+the range set by Pratt's gust formula
+Δn = K_g ρ V a U / (2 W/S), with K_g = 0.88 μ / (5.3 + μ). The sim reads
+about 18% above Pratt, as it should: the lifting strips are quasi-steady.
+There is no Küssner lift growth on gust entry, which K_g partly accounts for.
+That is a known gap in the aerodynamics.
+
+**Microburst** (`microbursts`). This is the Oseguera–Bowles analytic downburst
+(NASA TM-100632, 1988). It is axisymmetric and satisfies continuity exactly:
+
+    u = λR²/(2r) [1 − e^{−(r/R)²}] [e^{−z/z*} − e^{−z/ε}]
+    w = −λ e^{−(r/R)²} [z* (1 − e^{−z/z*}) − ε (1 − e^{−z/ε})]
+
+The parameters are:
+
+- shaft radius R (1000 m);
+- outflow decay height z* (600 m);
+- surface friction layer ε (30 m);
+- the peak radial outflow, which sets λ.
+
+The peak outflow is at r = 1.12 R and z = z* ε ln(z*/ε)/(z* − ε), about 95 m
+AGL with the defaults. Observed maxima are 50–100 m. The burst has a life
+cycle (growth, mature and decay times) and can drift.
+
+`windShearHazardFactor` is the FAA/TDWR hazard index
+F = (dW_x/dt)/g − w/V. Above 0.1 the shear is hazardous.
+
+*Checks:* the peak outflow and its location match the specification, the
+sampled gradient is trace-free (incompressible), and a 15 m/s burst gives
+F > 0.1 at 300 ft. A C172 crossing a 15 m/s burst at 1000 ft, holding wings
+level with fixed power, behaves as encounters do. It gains about 5 kt in the
+growing outflow headwind. Then the 9 m/s downdraft and the tailwind take
+about 55 kt and 250 m, more sink than the airplane can out-climb.
+
+**Shear layers.** Frontal and low-level-jet shear are expressed as
+closely spaced `windsAloft` levels (see above).
+
 ## Tests
 
 `tests/test_wind.cpp` checks:

@@ -180,4 +180,71 @@ private:
     bool active_ = false;
 };
 
+// ------------------------------------------------- discrete air-motion events --
+
+// A discrete gust: a plane front with a 1-cosine profile across it
+// (FAR 25.341: U = U_ds / 2 (1 - cos(pi s / H)), 0 <= s <= 2H), or the
+// MIL-F-8785C ramp to a sustained value. The front is a vertical plane with
+// horizontal normal `heading`; it moves along the normal at `frontSpeed`
+// (m/s; negative: carried with the mean wind, a frozen gust).
+struct DiscreteGust {
+    enum class Shape { OneMinusCosine, RampAndHold };
+    Shape shape = Shape::OneMinusCosine;
+    Vec3 origin;          // NED point on the front at startTime
+    Real heading = 0;     // rad, direction the front travels
+    Real frontSpeed = -1;
+    Real startTime = 0;   // s
+    Real length = 107;    // m, gust gradient distance H (350 ft)
+    Real holdLength = 1e9;  // RampAndHold: distance held before ramping back
+    Vec3 amplitude;       // NED air velocity at full strength ({0,0,-5}: 5 m/s up)
+    // Air velocity at x (NED) and time t; `advection`: mean wind used for a
+    // frozen gust.
+    Vec3 velocity(const Vec3& x, Real t, const Vec3& advection) const;
+};
+
+// Microburst: the Oseguera-Bowles (NASA TM-100632, 1988) axisymmetric
+// downburst, an exact solution of continuity:
+//   u = lambda R^2 / (2 r) [1 - exp(-(r/R)^2)] [exp(-z/z*) - exp(-z/eps)]
+//   w = -lambda exp(-(r/R)^2) [z* (1 - exp(-z/z*)) - eps (1 - exp(-z/eps))]
+// (z up, AGL). lambda is set from the peak horizontal outflow, which occurs
+// at r = 1.12 R and z = z* eps ln(z*/eps) / (z* - eps). The strength
+// follows a growth / mature / decay life cycle and the core may drift.
+struct Microburst {
+    Real north = 0, east = 0;   // core position at startTime, m NED
+    Real radius = 1000;         // R, m (downdraft shaft)
+    Real peakOutflow = 15;      // m/s, the peak radial wind
+    Real outflowDecayHeight = 600;  // z*, m: decay of the outflow with height
+    Real surfaceLayerDepth = 30;    // eps, m: friction layer under the outflow
+    Real startTime = 0;         // s
+    Real growthTime = 120;      // s to full strength
+    Real matureTime = 300;      // s held at full strength
+    Real decayTime = 300;       // s back to nothing
+    Real driftNorth = 0, driftEast = 0;  // m/s, motion of the core
+    Real strength(Real t) const;          // 0..1 life-cycle factor
+    Real lambda() const;                  // 1/s, at full strength
+    Real peakOutflowHeight() const;       // m AGL
+    // Air velocity (NED) at a horizontal position, height AGL and time.
+    Vec3 velocity(const Vec3& x, Real heightAgl, Real t) const;
+};
+
+// FAA/TDWR wind-shear hazard index along a flight path:
+// F = (dW_x/dt) / g - w / V, with W_x the tailwind component, w the vertical
+// air velocity (+ up) and V the airspeed. F > 0.1 is hazardous
+// (performance-decreasing) shear.
+Real windShearHazardFactor(Real tailwindRate, Real verticalAirVelocity, Real airspeed);
+
+// Velocity and its gradient (central differences, step h) of an analytic
+// field f(x) -> Vec3.
+template <class F>
+void sampleWithGradient(const F& f, const Vec3& x, Vec3& velocity, Mat3& gradient, Real h = 0.05) {
+    velocity = f(x);
+    const Vec3 e[3] = {{h, 0, 0}, {0, h, 0}, {0, 0, h}};
+    for (int j = 0; j < 3; ++j) {
+        const Vec3 d = (f(x + e[j]) - f(x - e[j])) / (2 * h);
+        gradient.m[0][j] = d.x;
+        gradient.m[1][j] = d.y;
+        gradient.m[2][j] = d.z;
+    }
+}
+
 }  // namespace avd

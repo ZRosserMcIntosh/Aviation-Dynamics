@@ -236,6 +236,88 @@ TEST_CASE("flight: the wind itself is bumpy near the ground and smooth above the
     CHECK_NEAR(high, calmHigh, 0.01);
 }
 
+TEST_CASE("flight: crossing a microburst -- headwind gain, then tailwind loss and sink") {
+    // The classic encounter: airspeed rises in the outflow headwind, then the
+    // downdraft and the tailwind take it away. A 15 m/s microburst (outflow
+    // ~11 m/s and downdraft ~12 m/s at this height) 6 km ahead of an airplane
+    // at 1000 ft, 100 KIAS, pilot holding wings level and altitude with
+    // fixed power: more sink than a C172 can out-climb.
+    SimpleWeather::Params wp;
+    wp.turbulence.mechanical = false;
+    Rig probe(100, ftToM(1000), 0, &wp);
+    const Vec3 p0 = probe.ac.telemetry().positionNed;
+    const Real hdg = probe.ac.telemetry().heading;
+    Microburst m;
+    m.peakOutflow = 15;
+    m.north = p0.x + 6000 * std::cos(hdg);
+    m.east = p0.y + 6000 * std::sin(hdg);
+    m.startTime = -100;  // already mature when the airplane is trimmed
+    m.growthTime = 1;
+    m.matureTime = 1000;
+    wp.microbursts.push_back(m);
+    Rig r(100, ftToM(1000), 0, &wp);
+    r.pilot.lateral = TestPilot::Lateral::WingsLevel;
+    const Real v0 = r.ac.telemetry().trueAirspeed, alt0 = r.ac.altitudeMsl();
+    Real vMax = v0, vMin = v0, minAlt = alt0, tMax = 0, tMin = 0, maxSink = 0;
+    for (int i = 0; i < 200 * 240; ++i) {
+        r.ac.step(kDefaultDt, r.pilot.update(r.ac, kDefaultDt), r.ground, r.atm);
+        const AircraftTelemetry& t = r.ac.telemetry();
+        if (t.trueAirspeed > vMax) { vMax = t.trueAirspeed; tMax = t.time; }
+        if (t.trueAirspeed < vMin) { vMin = t.trueAirspeed; tMin = t.time; }
+        minAlt = std::min(minAlt, r.ac.altitudeMsl());
+        maxSink = std::max(maxSink, t.air.wind.z);
+    }
+    // The outflow headwind grows slowly (~0.1 m/s^2) against the drag time
+    // constant: a modest gain (~5 kt). Then downdraft and tailwind together:
+    // a large loss of airspeed and height (~55 kt, ~250 m).
+    CHECK(msToKt(vMax - v0) > 3);    // headwind side
+    CHECK(msToKt(v0 - vMin) > 30);   // tailwind and downdraft side
+    CHECK(tMax < tMin);              // in that order
+    CHECK(maxSink > 6);              // the downdraft (NED +z)
+    CHECK(alt0 - minAlt > 100);      // more sink than a C172 can out-climb
+    CHECK(!r.ac.faulted());
+}
+
+TEST_CASE("flight: a vertical 1-cosine gust gives the Pratt gust load factor") {
+    // FAR 23/25 discrete gust: Delta n = Kg rho0 Ve a U / (2 W/S), with the
+    // gust alleviation factor Kg = 0.88 mu / (5.3 + mu), mu = 2 (W/S) /
+    // (rho c a g). Lift slope from Helmbold's relation for the wing aspect
+    // ratio. A 30 ft (9.1 m/s) gust over H = 12.5 MAC, hands off.
+    SimpleWeather::Params wp;
+    wp.turbulence.mechanical = false;
+    Rig probe(100, 1500, 0, &wp);
+    const Vec3 p0 = probe.ac.telemetry().positionNed;
+    const Real hdg = probe.ac.telemetry().heading;
+    const AircraftDefinition& g = ref();
+    const Real s = g.referenceArea, c = g.referenceChord, ar = sq(g.referenceSpan) / s;
+    const Real u = 5.0;  // m/s up: moderate, keeps the wing well below the stall
+    DiscreteGust gust;
+    gust.heading = hdg + kPi;  // front faces the airplane...
+    gust.frontSpeed = 0;       // ...fixed in space, 300 m ahead
+    gust.origin = p0 + Vec3{std::cos(hdg), std::sin(hdg), 0} * 300.0;
+    gust.length = 12.5 * c;
+    gust.amplitude = {0, 0, -u};
+    wp.gusts.push_back(gust);
+    Rig r(100, 1500, 0, &wp);
+    r.hands = r.trim.input;
+    r.hands.pitch = 0;
+    Real dnMax = 0;
+    for (int i = 0; i < 15 * 240; ++i) {
+        r.ac.step(kDefaultDt, r.hands, r.ground, r.atm);
+        dnMax = std::max(dnMax, r.ac.telemetry().loadFactor - 1);
+    }
+    const Real rho = r.ac.telemetry().air.state.density, v = r.ac.telemetry().trueAirspeed;
+    const Real ws = r.ac.massProperties().mass * kStandardGravity / s;
+    const Real a = kTwoPi * ar / (2 + std::sqrt(ar * ar + 4));
+    const Real mu = 2 * ws / (rho * c * a * kStandardGravity);
+    const Real kg = 0.88 * mu / (5.3 + mu);
+    const Real pratt = kg * rho * v * a * u / (2 * ws);
+    // The strips are quasi-steady (no Küssner lift growth, which Kg partly
+    // accounts for), so the sim reads ~15-20% above Pratt: known gap,
+    // docs/architecture/wind.md.
+    CHECK_RANGE(dnMax / pratt, 1.0, 1.35);
+}
+
 TEST_CASE("flight: fuel burn reduces mass exactly and moves the CG forward") {
     Rig r(100, 1500);
     const Real m0 = r.ac.massProperties().mass, f0 = r.ac.fuel().totalQuantity() + r.ac.fuel().lineQuantity();

@@ -191,6 +191,22 @@ AirSample SimpleWeather::sample(const Vec3& positionNed, Real altitudeMsl, Real 
         s.wind += u;
         s.windGradient = s.windGradient + g;
     }
+    // Discrete events: analytic fields, gradient by central differences.
+    if (!p_.gusts.empty() || !p_.microbursts.empty()) {
+        const Vec3 adv = boundaryLayer_.wind(p_.referenceHeight, p_.groundElevation + p_.referenceHeight);
+        auto events = [&](const Vec3& x) {
+            const Real h = agl - (x.z - positionNed.z);
+            Vec3 v;
+            for (const DiscreteGust& g : p_.gusts) v += g.velocity(x, time, adv);
+            for (const Microburst& m : p_.microbursts) v += m.velocity(x, h, time);
+            return v;
+        };
+        Vec3 v;
+        Mat3 g;
+        sampleWithGradient(events, positionNed, v, g);
+        s.wind += v;
+        s.windGradient = s.windGradient + g;
+    }
     return s;
 }
 

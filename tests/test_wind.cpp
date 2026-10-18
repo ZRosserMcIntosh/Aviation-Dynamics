@@ -211,3 +211,96 @@ TEST_CASE("turbulence: frozen, shared and advected with the wind") {
     steady.turbulence.mechanical = false;
     CHECK(!SimpleWeather(steady).turbulence().active());
 }
+
+// =========================================================== discrete events ==
+
+TEST_CASE("gust: 1-cosine and ramp-and-hold shapes, frozen in the moving air") {
+    DiscreteGust g;
+    g.heading = 0;        // front travels north
+    g.frontSpeed = 0;     // stationary front at the origin: air south of it gusts
+    g.length = 100;       // H
+    g.amplitude = {0, 0, -6};  // 6 m/s updraft
+    CHECK_NEAR(g.velocity({10, 0, 0}, 1, {}).z, 0, 1e-12);       // ahead of the front
+    CHECK_NEAR(g.velocity({-100, 0, 0}, 1, {}).z, -6, 1e-12);    // peak at s = H
+    CHECK_NEAR(g.velocity({-50, 0, 0}, 1, {}).z, -3, 1e-12);
+    CHECK_NEAR(g.velocity({-200.1, 0, 0}, 1, {}).z, 0, 1e-12);   // over after 2H
+    CHECK_NEAR(g.velocity({-100, 0, 0}, -1, {}).z, 0, 1e-12);    // before it starts
+    DiscreteGust r = g;
+    r.shape = DiscreteGust::Shape::RampAndHold;
+    r.holdLength = 500;
+    CHECK_NEAR(r.velocity({-400, 0, 0}, 1, {}).z, -6, 1e-12);
+    CHECK_NEAR(r.velocity({-650, 0, 0}, 1, {}).z, -3, 1e-12);
+    // Frozen gust: carried by a 10 m/s northerly-moving airmass.
+    DiscreteGust f = g;
+    f.frontSpeed = -1;
+    CHECK_NEAR(f.velocity({-100 + 50, 0, 0}, 5, {10, 0, 0}).z, -6, 1e-12);
+}
+
+TEST_CASE("microburst: Oseguera-Bowles outflow, downdraft, continuity and life cycle") {
+    Microburst m;
+    m.radius = 1000;
+    m.peakOutflow = 15;
+    m.startTime = 0;
+    m.growthTime = 60;
+    m.matureTime = 300;
+    m.decayTime = 120;
+    const Real zm = m.peakOutflowHeight();
+    CHECK_RANGE(zm, 80, 110);  // observed outflow maxima are ~50-100 m AGL
+    // Peak radial wind at r = 1.12 R, z = z_m equals the specification, and
+    // is the maximum over a scan.
+    const Real t = 100;
+    CHECK_NEAR(m.velocity({1120.9, 0, 0}, zm, t).x, 15, 0.001);
+    Real scanMax = 0;
+    for (Real r = 0; r < 4000; r += 50)
+        for (Real z = 5; z < 600; z += 5) scanMax = std::max(scanMax, m.velocity({r, 0, 0}, z, t).x);
+    CHECK(scanMax <= 15.0001);
+    // Outflow points away from the core; downdraft (NED +z) in the core,
+    // vanishing at the ground.
+    CHECK(m.velocity({0, 1500, 0}, 50, t).y > 5);
+    CHECK(m.velocity({-1500, 0, 0}, 50, t).x < -5);
+    CHECK(m.velocity({0, 0, 0}, 300, t).z > 5);
+    CHECK_NEAR(m.velocity({0, 0, 0}, 0, t).z, 0, 1e-12);
+    // Continuity: the sampled gradient is trace-free (incompressible).
+    SimpleWeather::Params p;
+    p.microbursts.push_back(m);
+    const SimpleWeather w(p);
+    for (const Vec3& x : {Vec3{300, 400, -60}, Vec3{-900, 200, -150}, Vec3{1500, -100, -20}}) {
+        const Mat3 g = w.sample(x, -x.z, t).windGradient;
+        CHECK(std::abs(g.m[0][0] + g.m[1][1] + g.m[2][2]) < 1e-5);
+        CHECK(gradientError(w, x, 0, t) < 1e-4);
+    }
+    // Life cycle: nothing before, full when mature, gone after.
+    CHECK_NEAR(m.strength(-1), 0, 1e-12);
+    CHECK_NEAR(m.strength(30), 0.5, 1e-12);
+    CHECK_NEAR(m.strength(200), 1, 1e-12);
+    CHECK_NEAR(m.strength(1000), 0, 1e-12);
+    // Drifting core.
+    Microburst d = m;
+    d.driftEast = 5;
+    CHECK_NEAR(d.velocity({0, 500, 0}, 300, 100).z, m.velocity({0, 0, 0}, 300, 100).z, 1e-9);
+}
+
+TEST_CASE("microburst: hazardous wind-shear F-factor on a low-level crossing") {
+    // TDWR/FAA hazard index along a straight path at 300 ft through the core
+    // of a 15 m/s microburst at 55 m/s airspeed: F > 0.1 is hazardous.
+    Microburst m;
+    m.peakOutflow = 15;
+    const Real v = 55, z = 300 * kFoot, dx = 5;
+    Real fMax = 0;
+    for (Real x = -3000; x < 3000; x += dx) {
+        // Flying north: tailwind = +x air velocity.
+        const Real wx0 = m.velocity({x, 0, 0}, z, 100).x, wx1 = m.velocity({x + dx, 0, 0}, z, 100).x;
+        const Real up = -m.velocity({x, 0, 0}, z, 100).z;
+        fMax = std::max(fMax, windShearHazardFactor((wx1 - wx0) / dx * v, up, v));
+    }
+    CHECK(fMax > 0.1);
+    // A weak one (5 m/s) stays below the alert threshold.
+    Microburst weak = m;
+    weak.peakOutflow = 5;
+    Real fWeak = 0;
+    for (Real x = -3000; x < 3000; x += dx) {
+        const Real wx0 = weak.velocity({x, 0, 0}, z, 100).x, wx1 = weak.velocity({x + dx, 0, 0}, z, 100).x;
+        fWeak = std::max(fWeak, windShearHazardFactor((wx1 - wx0) / dx * v, -weak.velocity({x, 0, 0}, z, 100).z, v));
+    }
+    CHECK(fWeak < 0.1);
+}
