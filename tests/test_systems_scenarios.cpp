@@ -24,6 +24,26 @@ const AircraftDefinition& ref() {
     return d;
 }
 
+// The reference airframe with a transport-style nose-wheel tiller fitted
+// (the roster has no heavy aircraft yet): pedals 10 deg, tiller 70 deg,
+// hydraulic actuator 20 deg/s.
+const AircraftDefinition& tillerRef() {
+    static const AircraftDefinition d = [] {
+        AircraftDefinition t = ref();
+        t.gear[0].tillerSteerAngle = degToRad(70);
+        t.gear[0].steerRate = degToRad(20);
+        return t;
+    }();
+    return d;
+}
+
+// Engine running on the ground, parking brake off.
+void readyToTaxi(Aircraft& ac, const GroundQuery& g, const AtmosphereField& atm) {
+    ac.setEngineRunning(true, 1000);
+    ac.placeOnGround(0, 0, 0, g, atm);
+    ac.setCockpitControl("brakes.parking", 0);
+}
+
 bool hasEvent(const std::vector<FlightEvent>& ev, FlightEventType t) {
     for (const auto& e : ev)
         if (e.type == t) return true;
@@ -97,6 +117,48 @@ TEST_CASE("ground: nose-wheel steering follows its geometry; differential brakin
     // Neutral pedals: mild left-turning tendency from the slipstream swirl.
     CHECK_RANGE(straight, -0.06, 0.005);
     CHECK(v2 / brake < v1 / steer);  // plus right brake: smaller turn radius
+}
+
+TEST_CASE("ground: a tiller steers far beyond the pedals through a rate-limited actuator") {
+    SimpleWeather atm;
+    FlatGround g(0);
+    {
+        Aircraft ac(tillerRef());
+        readyToTaxi(ac, g, atm);
+        PilotInput in;
+        in.yaw = 1;  // pedals alone: their own 10 deg
+        for (int i = 0; i < 2 * 240; ++i) ac.step(kDefaultDt, in, g, atm);
+        CHECK_NEAR(ac.telemetry().gear[0].steerAngle, degToRad(10), 1e-9);
+        in.yaw = 0;
+        in.tiller = 1;
+        for (int i = 0; i < 240; ++i) ac.step(kDefaultDt, in, g, atm);
+        CHECK_NEAR(ac.telemetry().gear[0].steerAngle, degToRad(30), degToRad(0.5));  // 10 deg + 1 s at 20 deg/s
+        in.yaw = 1;  // pedal + tiller add, limited to the tiller's authority
+        for (int i = 0; i < 4 * 240; ++i) ac.step(kDefaultDt, in, g, atm);
+        CHECK_NEAR(ac.telemetry().gear[0].steerAngle, degToRad(70), 1e-9);
+    }
+    // At walking pace (speed held at ~3 kt with the brakes) the tiller turns
+    // several times faster than the pedals.
+    auto turnRate = [&](Real yaw, Real tiller) {
+        Aircraft ac(tillerRef());
+        readyToTaxi(ac, g, atm);
+        PilotInput in;
+        in.throttle = 0.1;
+        Real r = 0;
+        for (int i = 0; i < 14 * 240; ++i) {
+            if (i > 8 * 240) {
+                in.yaw = yaw;
+                in.tiller = tiller;
+            }
+            in.brakeLeft = in.brakeRight = clamp((msToKt(ac.telemetry().groundSpeed) - 3) * 0.3, 0.0, 1.0);
+            ac.step(kDefaultDt, in, g, atm);
+            if (i > 11 * 240) r = std::max(r, ac.telemetry().omega.z);
+        }
+        return r;
+    };
+    const Real pedals = turnRate(1, 0), tiller = turnRate(0, 1);
+    CHECK(pedals > 0);
+    CHECK(tiller > 2.5 * pedals);
 }
 
 TEST_CASE("ground: steering hard at speed can overturn a tricycle") {
@@ -386,6 +448,114 @@ TEST_CASE("assists: stall prevention is a labelled aid acting only on stick inpu
     }
     CHECK(stalled <= 4);
     CHECK(assist.report().pitchLimited > 0);
+}
+
+TEST_CASE("assists: straight-and-level hold stops the climb, then holds heading and altitude by trim") {
+    Aircraft ac(ref());
+    SimpleWeather atm;
+    FlatGround g(0);
+    TestPilot tp;
+    TrimResult tr;
+    startTrimmedFlight(ac, {100, 1500, 0}, atm, g, &tp, &tr);
+    AssistConfig c = makePreset(AssistPreset::Simulation);
+    c.levelHold = true;
+    FlightAssist assist(c);
+    PilotInput raw = tr.input;
+    const Real trim0 = ac.elevatorTrim();
+    Real hMin = 1e9, hMax = -1e9, psiMin = 1e9, psiMax = -1e9;
+    bool heldWhileFlying = false;
+    for (int i = 0; i < 90 * 240; ++i) {
+        // Climbing right turn for 2 s, then hands off with 15% less power.
+        raw.roll = i < 1.5 * 240 ? 0.25 : 0.0;
+        raw.pitch = i < 2 * 240 ? 0.15 : 0.0;
+        raw.throttle = i < 2 * 240 ? tr.input.throttle : 0.85 * tr.input.throttle;
+        ac.step(kDefaultDt, assist.apply(raw, ac, kDefaultDt), g, atm);
+        heldWhileFlying = heldWhileFlying || (i < 2 * 240 && assist.report().levelHold);
+        const AircraftTelemetry& t = ac.telemetry();
+        if (i == 8 * 240) CHECK(std::abs(t.verticalSpeed) < fpmToMs(150));  // climb stopped within seconds
+        if (i > 60 * 240) {
+            hMin = std::min(hMin, t.altitudeMsl), hMax = std::max(hMax, t.altitudeMsl);
+            psiMin = std::min(psiMin, t.heading), psiMax = std::max(psiMax, t.heading);
+        }
+    }
+    const AircraftTelemetry& t = ac.telemetry();
+    CHECK(!heldWhileFlying);  // the player's stick always wins
+    CHECK(assist.report().levelHold);
+    CHECK(assist.report().active());
+    CHECK(t.heading > degToRad(5));          // the turn the player made is kept, not undone
+    CHECK(std::abs(t.roll) < degToRad(1));
+    CHECK(std::abs(t.verticalSpeed) < fpmToMs(30));
+    CHECK(hMax - hMin < ftToM(5));
+    CHECK(psiMax - psiMin < degToRad(0.5));
+    // Less power at the same altitude needs more nose-up trim; neutral stick holds it.
+    CHECK(ac.elevatorTrim() > trim0 + 0.02);
+    CHECK(std::abs(assist.report().pitchAdded) < 0.01);
+    // A new spawn starts from scratch: no altitude carried over from the last one.
+    Aircraft other(ref());
+    startTrimmedFlight(other, {100, 800, 0}, atm, g);
+    assist.reset();
+    for (int i = 0; i < 20 * 240; ++i) other.step(kDefaultDt, assist.apply(tr.input, other, kDefaultDt), g, atm);
+    CHECK(std::abs(other.telemetry().altitudeMsl - 800) < 15);
+}
+
+TEST_CASE("assists: straight-and-level hold stays off near the ground") {
+    auto engages = [](Real height) {
+        Aircraft ac(ref());
+        SimpleWeather atm;
+        FlatGround g(0);
+        TrimResult tr;
+        startTrimmedFlight(ac, {65, height, 2}, atm, g, nullptr, &tr);
+        AssistConfig c;
+        c.levelHold = true;
+        FlightAssist assist(c);
+        PilotInput raw = tr.input;
+        raw.pitch = raw.roll = raw.trimRate = 0;
+        ac.step(kDefaultDt, raw, g, atm);  // telemetry (height above ground) from a real step
+        assist.apply(raw, ac, kDefaultDt);
+        return assist.report().levelHold;
+    };
+    CHECK(!engages(20));  // in the flare band: never fights the landing
+    CHECK(engages(200));
+}
+
+TEST_CASE("assists: the yaw input steers the tiller only below 5 kt") {
+    SimpleWeather atm;
+    FlatGround g(0);
+    // Every preset, Simulation included: it is an input binding, not an assist.
+    for (AssistPreset p : {AssistPreset::Arcade, AssistPreset::Sport, AssistPreset::Simulation}) {
+        Aircraft ac(tillerRef());
+        readyToTaxi(ac, g, atm);
+        FlightAssist assist(makePreset(p));
+        PilotInput raw;
+        raw.yaw = 1;
+        raw.throttle = 0.15;
+        PilotInput out = assist.apply(raw, ac, kDefaultDt);
+        CHECK(assist.report().yawOnTiller);
+        CHECK(out.tiller == 1);
+        CHECK(out.yaw == 0);
+        CHECK(out.brakeRight == 0);  // the tiller turns it; no brake steering on top
+        // Roll straight (no yaw input) until well above 5 kt.
+        raw.yaw = 0;
+        for (int i = 0; i < 20 * 240 && ac.telemetry().groundSpeed < ktToMs(7); ++i)
+            ac.step(kDefaultDt, assist.apply(raw, ac, kDefaultDt), g, atm);
+        CHECK(ac.telemetry().groundSpeed >= ktToMs(7));
+        raw.yaw = 1;
+        out = assist.apply(raw, ac, kDefaultDt);
+        CHECK(!assist.report().yawOnTiller);
+        CHECK(out.tiller == 0);
+        CHECK(out.yaw > 0.4);  // on the pedals (Arcade shapes it)
+        CHECK(!assist.report().active() || p != AssistPreset::Simulation);
+    }
+    // The reference airplane has no tiller: the yaw input stays on the pedals.
+    Aircraft c172(ref());
+    readyToTaxi(c172, g, atm);
+    FlightAssist sim(makePreset(AssistPreset::Simulation));
+    PilotInput raw;
+    raw.yaw = 1;
+    const PilotInput out = sim.apply(raw, c172, kDefaultDt);
+    CHECK(!sim.report().yawOnTiller);
+    CHECK(out.yaw == 1);
+    CHECK(out.tiller == 0);
 }
 
 // -------------------------------------------------------- environment ----

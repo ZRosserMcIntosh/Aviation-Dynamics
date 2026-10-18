@@ -50,6 +50,7 @@ struct PilotInput {
     Real pitch = 0;        // -1..1, + stick aft (nose up)
     Real roll = 0;         // -1..1, + roll right
     Real yaw = 0;          // -1..1, + right pedal
+    Real tiller = 0;       // -1..1, + steer right (nose-wheel tiller, where fitted)
     Real throttle = 0;     // 0..1
     Real mixture = 1;      // 0 (idle cut-off) .. 1 (full rich)
     Real brakeLeft = 0, brakeRight = 0;  // 0..1 toe brakes
@@ -156,6 +157,8 @@ public:
     void setFlapsImmediately(int detent);
     void setElevatorTrim(Real trim) { trim_ = clamp(trim, -1.0, 1.0); }
     Real elevatorTrim() const { return trim_; }
+    // True if any gear leg is steered by a tiller (GearDef::tillerSteerAngle).
+    bool hasTiller() const;
     Real flapAngle() const { return flapAngle_; }
 
     // Re-anchor the local tangent frame (long-distance flight): position,
@@ -250,7 +253,7 @@ private:
         ControlDeflections controls;
         std::array<PistonEngineInputs, kMaxEngines> engineIn{};
         Real brakeLeft = 0, brakeRight = 0;
-        Real steer = 0;  // pedal, -1..1
+        std::array<Real, kMaxGear> steer{};  // wheel steering angle (rad)
     };
 
     void rebuildCockpit();
@@ -289,6 +292,7 @@ private:
     Real trim_ = 0;  // -1..1
     bool parkingBrake_ = false;
     bool flapMoving_ = false;
+    std::array<Real, kMaxGear> steerAngle_{};  // steering actuator position (rad)
 
     // Derived/lagged.
     std::array<Real, 8> downwashLag_{};

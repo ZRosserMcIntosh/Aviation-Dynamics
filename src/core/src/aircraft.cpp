@@ -103,6 +103,12 @@ void Aircraft::setStationMass(int station, Real kg) {
 
 Vec3 Aircraft::datumPosition() const { return s_.body.position - s_.body.attitude.rotate(mass_.cg); }
 
+bool Aircraft::hasTiller() const {
+    for (const GearDef& g : def_.gear)
+        if (g.tillerSteerAngle > 0) return true;
+    return false;
+}
+
 // -------------------------------------------------------------- cockpit ----
 
 void Aircraft::rebuildCockpit() {
@@ -309,7 +315,7 @@ void Aircraft::prepareContext(const PilotInput& in, const GroundQuery& ground, c
     buildContext(in, ground, atm, 0);
 }
 
-void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, const AtmosphereField& atm, Real) {
+void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, const AtmosphereField& atm, Real dt) {
     Context& c = ctx_;
     const Quat& q = s_.body.attitude;
     const Vec3& pos = s_.body.position;
@@ -362,7 +368,17 @@ void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, con
     c.controls.elevator = clamp(in.pitch + trim_ * def_.controls.elevatorTrimRange / elevUp, -1.0, 1.0);
     c.controls.rudder = clamp(in.yaw + def_.controls.riggingRudder, -1.0, 1.0);
     c.controls.flap = flapAngle_;
-    c.steer = clamp(in.yaw, -1.0, 1.0);  // nose-wheel steering follows the pedals, not the tab
+    // Wheel steering follows the pedals (not the rudder tab) plus the tiller,
+    // through the steering actuator's slew limit where it is powered.
+    for (std::size_t i = 0; i < def_.gear.size(); ++i) {
+        const GearDef& g = def_.gear[i];
+        const Real authority = std::max(g.maxSteerAngle, g.tillerSteerAngle);
+        const Real cmd = clamp(g.maxSteerAngle * clamp(in.yaw, -1.0, 1.0) + g.tillerSteerAngle * clamp(in.tiller, -1.0, 1.0),
+                               -authority, authority);
+        if (g.steerRate > 0 && dt > 0) steerAngle_[i] = approach(steerAngle_[i], cmd, g.steerRate * dt);
+        else steerAngle_[i] = cmd;
+        c.steer[i] = steerAngle_[i];
+    }
     c.brakeLeft = parkingBrake_ ? 1.0 : clamp(in.brakeLeft, 0.0, 1.0);
     c.brakeRight = parkingBrake_ ? 1.0 : clamp(in.brakeRight, 0.0, 1.0);
 
@@ -483,7 +499,7 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
                 Real fs = g.preload + g.stiffness * x + (xdot > 0 ? g.dampingCompression : g.dampingRebound) * xdot;
                 if (x > g.maxCompression) fs += 20 * g.stiffness * (x - g.maxCompression);
                 const Real N = std::max(fs, 0.0);
-                const Real steer = g.maxSteerAngle * c.steer;
+                const Real steer = c.steer[i];
                 Vec3 f = q.rotate({std::cos(steer), std::sin(steer), 0});
                 f = normalized(f - n * dot(f, n));
                 const Vec3 l = cross(n, f);

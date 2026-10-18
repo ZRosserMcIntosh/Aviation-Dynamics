@@ -32,8 +32,9 @@ call is clamped to 0.25 s. It returns the number of steps run.
 |---|---|
 | `avd_reset(mode)` | Reset scenario: 0 cold and dark on runway 12, 1 engine running on runway 12, 2 on final for runway 12 (3 km), 3 cruising over the city. Sets NAV 1 to 110.30 active and 113.70 standby, OBS and bug 122, COM standby 132.80, transponder ALT |
 | `avd_set_weather(windMs, windFromDeg, turbulenceMs, isaDevC, humidity)` | Weather (rebuilds the field) |
-| `avd_set_input(pitch, roll, yaw, throttle, mixture, brakeL, brakeR, trimRate, starter)` | Raw pilot input in −1..1 or 0..1. Starter is held while 1 |
+| `avd_set_input(pitch, roll, yaw, throttle, mixture, brakeL, brakeR, trimRate, starter)` | Raw pilot input in −1..1 or 0..1. Starter is held while 1. On an aircraft with a tiller, yaw turns the tiller on the ground below 5 kt |
 | `avd_set_assist(p)` | 0 Arcade, 1 Sport, 2 Simulation |
+| `avd_set_level_hold(on)` | Straight-and-level hold (auto-trim that keeps the airplane straight and level with the stick released), with any preset; kept when the preset changes |
 | `avd_quick_start()` / `avd_procedure_status()` | Run the Quick Start checklist through the cockpit. Status: 0 idle, 1 running, 2 done, 3 failed; the message is in the text buffer |
 | `avd_cockpit_count()` / `avd_cockpit_text(i)` / `avd_cockpit_cycle(i)` | Switch registry: `id\|label\|pos0;pos1…\|current` |
 | `avd_altimeter_adjust(hundredthsInHg)` | Kollsman knob |
@@ -85,6 +86,9 @@ Indices and fields:
 | 52 | fuel total (l) |
 | 53 | altitude MSL (ft) |
 | 54 | assist active |
+| 55 | straight-and-level hold engaged |
+| 56 | yaw input on the nose-wheel tiller (below 5 kt on the ground) |
+| 57 | aircraft has a tiller |
 
 ## `avd_cockpit()`: 96 doubles
 

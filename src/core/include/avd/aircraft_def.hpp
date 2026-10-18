@@ -244,6 +244,13 @@ struct GearDef {
     Real maxBrakeForceCoefficient = 0;  // brake force capacity / normal load (0 = no brake)
     int brakeGroup = -1;              // 0 = left, 1 = right
     Real maxSteerAngle = 0;           // rad, by the rudder pedals
+    // Tiller (nose-wheel steering handwheel on transport aircraft): wheel angle
+    // at full tiller (0 = no tiller). Tiller and pedal commands add, limited
+    // to the larger of the two authorities.
+    Real tillerSteerAngle = 0;        // rad
+    // Slew-rate limit of a powered steering actuator (0 = direct mechanical
+    // linkage, the wheel follows the command at once).
+    Real steerRate = 0;               // rad/s
     Real castorAngle = 0;             // rad, free castoring range beyond pedal steering
     Real corneringStiffness = 4e4;    // N/rad
     Real relaxationLength = 0.3;      // m

@@ -256,6 +256,8 @@ std::vector<std::string> AircraftDefinition::validate() const {
         c.range(p + ".maxBrakeForceCoefficient", g.maxBrakeForceCoefficient, 0, 1.5);
         c.range(p + ".brakeGroup", g.brakeGroup, -1, 1);
         c.range(p + ".maxSteerAngle", g.maxSteerAngle, 0, 1.6);
+        c.range(p + ".tillerSteerAngle", g.tillerSteerAngle, 0, 1.6);
+        c.nonNegative(p + ".steerRate", g.steerRate);
         c.positive(p + ".corneringStiffness", g.corneringStiffness);
         c.positive(p + ".relaxationLength", g.relaxationLength);
         c.positive(p + ".longitudinalStiffness", g.longitudinalStiffness);

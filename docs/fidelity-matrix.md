@@ -21,11 +21,11 @@ Legend: ✅ implemented and tested · 🟡 partial or simplified · ⛔ not star
 | Fuel system | ✅ | Tanks, selector, shutoff, line volume, starvation, leaks | Scenario A/C tests | No unporting in uncoordinated flight |
 | Electrical | ✅ | Battery OCV/resistance, alternator, named loads and breakers | Depletion, VOLTS annunciator | No bus split, no avionics bus relay |
 | Vacuum | ✅ | Pump suction against rpm | Unit test | No regulator failure modes beyond pump failure |
-| Landing gear and ground | 🟡 | Struts, bristle tyres, brakes, steering, hard points | Static equilibrium, tip-over, brakes | Landing roll −19% with a modelled pilot technique; no surface wetness |
+| Landing gear and ground | 🟡 | Struts, bristle tyres, brakes, pedal and tiller steering with actuator rate limit, hard points | Static equilibrium, tip-over, brakes | Landing roll −19% with a modelled pilot technique; no surface wetness |
 | Instruments (analog) | ✅ | Full six-pack, compass (with airframe deviation and a generated correction card), engine and system gauges, annunciators, pitot icing and heat | 37 tests | Static-port icing; instrument lighting photometry |
 | Navigation radios | 🟡 | VOR, LOC, GS, radio horizon, synthetic facilities | Geometry tests | No real navaid data; no DME, ADF or marker |
 | Glass cockpit (G1000) | ⛔ | — | — | Separate profile on the same `CockpitState` pattern |
-| Autopilot | ⛔ | (assist wing leveller only, a gameplay aid) | — | — |
+| Autopilot | ⛔ | (assists only: wing leveller, and a straight-and-level hold acting through stick and trim) | Assist tests | No modes, panel or servo model |
 | Damage and failures | 🟡 | Injectable instrument and system failures; component loss flag in aero | Failure tests | No structural loads, no damage model |
 | Fire, bailout | ⛔ | — | — | — |
 | Assists | ✅ | Arcade, Sport, Simulation acting on controls | Assist tests | — |

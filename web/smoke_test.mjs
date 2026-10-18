@@ -47,6 +47,28 @@ A.avd_set_input(0, 0, 0, A.avd_trim_throttle(), A.avd_trim_mixture(), 0, 0, 0, 0
 A.avd_advance(1);
 c = A.cockpitState();
 check(Math.abs(c[3] - c[53]) < 400 && Math.abs(c[1] - c[51]) < 40, `cruise spawn: VSI ${c[3].toFixed(0)} vs ${c[53].toFixed(0)} fpm, altimeter ${c[1].toFixed(0)} vs ${c[51].toFixed(0)} ft`);
+// Auto-trim (straight-and-level hold): a climbing turn, then hands off with
+// less power: it levels off and holds the altitude it captures.
+A.avd_reset(3);
+A.avd_set_assist(2);
+A.avd_set_level_hold(1);
+for (let i = 0; i < 120; ++i) {
+  A.avd_set_input(i < 90 ? 0.15 : 0, i < 60 ? 0.25 : 0, 0, A.avd_trim_throttle(), A.avd_trim_mixture(), 0, 0, 0, 0);
+  A.avd_advance(1 / 60);
+}
+A.avd_set_input(0, 0, 0, A.avd_trim_throttle() * 0.85, A.avd_trim_mixture(), 0, 0, 0, 0);
+for (let i = 0; i < 30; ++i) A.avd_advance(1);
+const h0 = A.state()[53];
+for (let i = 0; i < 30; ++i) A.avd_advance(1);
+let st = A.state();
+check(st[55] === 1 && Math.abs(st[53] - h0) < 15 && Math.abs(st[7]) < 2, `auto-trim holds straight and level (${(st[53] - h0).toFixed(1)} ft in 30 s, bank ${st[7].toFixed(1)} deg)`);
+A.avd_set_assist(1);
+A.avd_advance(0.1);
+check(A.state()[55] === 1, 'auto-trim kept across preset changes');
+A.avd_set_level_hold(0);
+A.avd_advance(0.1);
+check(A.state()[55] === 0, 'auto-trim off');
+check(A.state()[57] === 0 && A.state()[56] === 0, 'the Tupi has no tiller: Q/E stay on the pedals');
 // Trimmed final approach: hands-off it holds the 3 deg path on the ILS.
 A.avd_reset(2);
 A.avd_set_assist(2);

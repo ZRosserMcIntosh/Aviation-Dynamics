@@ -41,6 +41,7 @@ struct Sim {
     std::unique_ptr<Aircraft> ac;
     Real trimThrottle = 0, trimMixture = 1;  // controls of the last trimmed spawn
     FlightAssist assist{makePreset(AssistPreset::Sport)};
+    bool levelHold = false;  // straight-and-level hold, on top of any preset
     ProcedureRunner procedure;
     PilotInput raw;
     Real accumulator = 0;
@@ -167,6 +168,7 @@ AVD_EXPORT void avd_reset(int mode) {
     g->ac = std::make_unique<Aircraft>(g->def, g->frame);
     g->ac->setNavEnvironment(&scenarios::saoPauloNavEnvironment());
     g->procedure = ProcedureRunner{};
+    g->assist.reset();
     g->accumulator = 0;
     g->events.clear();
     const RunwayDef& rw = g->airport.runways[0];
@@ -270,7 +272,19 @@ AVD_EXPORT void avd_set_input(double pitch, double roll, double yaw, double thro
 AVD_EXPORT void avd_set_assist(int preset) {
     if (!g) return;
     const AssistPreset p = preset == 0 ? AssistPreset::Arcade : (preset == 1 ? AssistPreset::Sport : AssistPreset::Simulation);
-    g->assist.setConfig(makePreset(p));
+    AssistConfig c = makePreset(p);
+    c.levelHold = g->levelHold;
+    g->assist.setConfig(c);
+}
+
+// Straight-and-level hold (auto-trim that keeps the airplane straight and
+// level when the stick is released), with any preset. Kept across presets.
+AVD_EXPORT void avd_set_level_hold(int on) {
+    if (!g) return;
+    g->levelHold = on != 0;
+    AssistConfig c = g->assist.config();
+    c.levelHold = g->levelHold;
+    g->assist.setConfig(c);
 }
 
 AVD_EXPORT void avd_quick_start() {
@@ -367,6 +381,7 @@ AVD_EXPORT double* avd_state() {
     s[45] = t.controls.aileron; s[46] = t.controls.elevator; s[47] = t.controls.rudder; s[48] = ac.faulted();
     s[49] = ac.parkingBrake(); s[50] = e.prop.thrust; s[51] = t.mach; s[52] = ac.fuel().totalQuantity() * 1000;
     s[53] = mToFt(t.altitudeMsl); s[54] = g->assist.report().active();
+    s[55] = g->assist.report().levelHold; s[56] = g->assist.report().yawOnTiller; s[57] = ac.hasTiller();
     return s;
 }
 

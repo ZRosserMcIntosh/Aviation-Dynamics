@@ -586,6 +586,8 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         else if (brake == "none") g.brakeGroup = -1;
         else o.err(o.path() + ".brake_group", "must be left, right or none");
         o.num("max_steer_deg", g.maxSteerAngle, kDeg);
+        o.num("tiller_steer_deg", g.tillerSteerAngle, kDeg);
+        o.num("steer_rate_deg_per_s", g.steerRate, kDeg);
         o.num("cornering_stiffness_n_per_rad", g.corneringStiffness);
         o.num("relaxation_length_m", g.relaxationLength);
         o.num("longitudinal_stiffness_n_per_m", g.longitudinalStiffness);

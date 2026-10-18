@@ -62,6 +62,19 @@ TEST_CASE("loader: the reference aircraft loads and validates") {
     CHECK(!d.sources.empty());
 }
 
+TEST_CASE("loader: nose-wheel tiller and powered steering fields") {
+    const auto r = loadAircraftFromJson(replaceOnce(referenceText(), "\"max_steer_deg\": 10",
+                                                    "\"max_steer_deg\": 7, \"tiller_steer_deg\": 70, \"steer_rate_deg_per_s\": 20"));
+    CHECK(r.ok());
+    CHECK_NEAR(r.definition.gear[0].maxSteerAngle, 7 * kPi / 180, 1e-12);
+    CHECK_NEAR(r.definition.gear[0].tillerSteerAngle, 70 * kPi / 180, 1e-12);
+    CHECK_NEAR(r.definition.gear[0].steerRate, 20 * kPi / 180, 1e-12);
+    // Absent: no tiller, mechanical linkage.
+    const auto base = loadAircraftFromJson(referenceText()).definition;
+    CHECK(base.gear[0].tillerSteerAngle == 0);
+    CHECK(base.gear[0].steerRate == 0);
+}
+
 TEST_CASE("loader: unknown keys, wrong types and missing fields are errors with paths") {
     const std::string base = referenceText();
     const auto typo = loadAircraftFromJson(replaceOnce(base, "\"rated_rpm\"", "\"rated_rmp\""));
@@ -93,6 +106,12 @@ TEST_CASE("validator: physically impossible values are rejected") {
     d = good;
     d.fuel.tanks[0].initial = 1.0;  // more than capacity
     CHECK(anyContains(d.validate(), "fuel.tanks[0].initial"));
+    d = good;
+    d.gear[0].tillerSteerAngle = 2.0;  // beyond 90 deg
+    CHECK(anyContains(d.validate(), "gear[0].tillerSteerAngle"));
+    d = good;
+    d.gear[0].steerRate = -1;
+    CHECK(anyContains(d.validate(), "gear[0].steerRate"));
     d = good;
     d.schemaVersion = 2;
     CHECK(anyContains(d.validate(), "schemaVersion"));

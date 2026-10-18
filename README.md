@@ -21,10 +21,10 @@ here.
 | Aerodynamics | Strip theory over lifting surfaces with a ±180° section polar, flaps, downwash lag, ground effect, prop slipstream and swirl, fuselage Munk moment, component drag build-up | `tests/test_components.cpp`, `tests/test_flight.cpp` |
 | Propulsion | Fixed-pitch propeller from blade-element tables with swirl and tip compressibility; piston engine with manifold pressure, mixture, friction, magnetos, starter, temperatures and oil-pressure physics | `tests/test_components.cpp` |
 | Systems | Fuel tanks/selector/shutoff with line volume, starvation and leaks; battery/alternator/bus with named loads and breakers; engine-driven vacuum | `tests/test_systems_scenarios.cpp` |
-| Ground and world | Spring-damper struts, tyre bristle model, brakes, nose-wheel steering, hard-point contacts, runway surfaces at Campo de Marte (SBMT); open-world tiles with terrain, surfaces and buildings (wingtip strikes) | `tests/test_flight.cpp`, `tests/test_world.cpp` |
+| Ground and world | Spring-damper struts, tyre bristle model, brakes, nose-wheel steering (pedals, and a tiller with a rate-limited actuator where fitted), hard-point contacts, runway surfaces at Campo de Marte (SBMT); open-world tiles with terrain, surfaces and buildings (wingtip strikes) | `tests/test_flight.cpp`, `tests/test_world.cpp` |
 | Instruments | Pitot-static (IAS/CAS/EAS/TAS, position error, blockages, icing and pitot heat), VSI capillary lag, vacuum attitude and heading gyros, turn coordinator and ball, pendulous wet compass with airframe deviation and a swung correction card, engine and system gauges, annunciators, VOR/LOC/GS receiver, transponder encoder | `tests/test_instruments.cpp` (37 cases) |
 | Validation | Against the C172S POH: stall, cruise, maximum speed, climb, take-off, landing | `avdemo validate`, `tests/test_validation.cpp` |
-| Browser | WASM build (wasi-sdk, no exceptions or RTTI), Node smoke test, interactive 2D cockpit with trimmed spawns, icing weather and flight replay (including native CSV) | `web/` |
+| Browser | WASM build (wasi-sdk, no exceptions or RTTI), Node smoke test, interactive 2D cockpit with trimmed spawns, an auto-trim that holds straight and level, icing weather and flight replay (including native CSV) | `web/` |
 
 Current results against the POH are in
 [docs/validation/c172s-validation.md](docs/validation/c172s-validation.md).
@@ -38,7 +38,7 @@ braking technique is modelled.
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/tests/avd_tests            # 107 test cases
+./build/tests/avd_tests            # 112 test cases
 ./build/avdemo validate            # POH comparison table
 ./build/avdemo flight              # SBMT circuit: quick start, take-off, stall, pattern, landing
 ./build/avdemo instruments [csv]   # truth versus display through a scripted flight
