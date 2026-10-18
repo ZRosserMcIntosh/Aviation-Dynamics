@@ -573,6 +573,8 @@ AVD_EXPORT double* avd_flow() {
     const Vec3 cg = ac.massProperties().cg;
     g_flow[6] = cg.x; g_flow[7] = cg.y; g_flow[8] = cg.z;
     g_flow[9] = ac.telemetry().air.state.speedOfSound;
+    const Vec3 w = ac.state().body.omega;  // body rates p, q, r (rad/s)
+    g_flow[10] = w.x; g_flow[11] = w.y; g_flow[12] = w.z;
     for (int i = 0; i < n; ++i) {
         const AeroModel::StripGeometry sg = am.stripGeometry(i);
         const StripTelemetry& t = ao.strips[static_cast<std::size_t>(i)];
