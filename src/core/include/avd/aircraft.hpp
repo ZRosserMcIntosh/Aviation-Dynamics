@@ -125,6 +125,8 @@ struct AircraftTelemetry {
     bool onGround = false;
     bool stallWarning = false;
     bool stickPusher = false;                // stall protection pushing the nose down
+    bool yawDamper = false;                  // yaw damper engaged (in flight, fitted and switched on)
+    Real yawDamperRudder = 0;                // its rudder command (fraction of full travel)
     int stalledStrips = 0;
     Real busVoltage = 0;
     AirSample air;
@@ -217,6 +219,12 @@ public:
     // Propeller slipstream of engine i at the last recorded evaluation (visualisation).
     const SlipstreamState& slipstream(int i) const { return slip_[i]; }
     Real speedbrakePosition() const { return speedbrakePos_; }
+    // Thrust reverser of turbofan i: 0 stowed .. 1 deployed; the automatic
+    // sequence's phase (0 stowed, 1 deploying / reverse thrust, 2 reverse
+    // idle, 3 stowing).
+    Real reverserPosition(int i) const { return reverserPos_[static_cast<std::size_t>(i)]; }
+    int reverserPhase(int i) const { return reverserPhase_[static_cast<std::size_t>(i)]; }
+    bool groundSpoilersActive() const { return groundSpoilers_; }
 
     // ---- Loading -------------------------------------------------------------
     void setStationMass(int station, Real kg);
@@ -234,6 +242,9 @@ public:
     Magnetos magnetos(int engine) const { return magnetos_[engine]; }
     int flapDetent() const { return flapDetent_; }
     bool parkingBrake() const { return parkingBrake_; }
+    // The yaw damper switch (on by default; a fitted damper works in flight).
+    void setYawDamper(bool on) { yawDamperOn_ = on; }
+    bool yawDamperSwitch() const { return yawDamperOn_; }
 
     // ---- Events ----------------------------------------------------------------
     // Events since the last call (bounded queue; oldest dropped when full).
@@ -322,6 +333,11 @@ private:
     Real gearPos_ = 1;
     int speedbrakeDetent_ = 0;
     Real speedbrakePos_ = 0;
+    bool groundSpoilers_ = false;
+    std::array<Real, kMaxEngines> reverserPos_{};
+    std::array<int, kMaxEngines> reverserPhase_{};
+    bool reverserDone_ = false;  // used on this ground run: not again until airborne
+    Real airborneTime_ = 0;      // s off the ground since the last stop (a landing roll follows)
     bool machOverWas_ = false;
     std::array<Real, kMaxGear> steerAngle_{};  // steering actuator position (rad)
 
@@ -338,6 +354,8 @@ private:
     bool contactWas_[kMaxContacts] = {};
     Real groundStateTimer_ = 0;  // debounce for touchdown/lift-off events
     bool pusher_ = false, gearOverspeedWas_ = false;
+    bool yawDamperOn_ = true;          // the yaw damper switch
+    Real ydLowPass_ = 0, ydCommand_ = 0;  // washout filter state, rudder command
     bool wasOnGround_ = false, stallWarningWas_ = false, overspeedWas_ = false, overGWas_ = false;
     bool flapOverspeedWas_ = false;
     std::array<bool, kMaxEngines> runningWas_{};

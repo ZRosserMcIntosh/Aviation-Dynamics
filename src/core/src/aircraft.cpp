@@ -274,6 +274,11 @@ void Aircraft::setColdAndDark() {
     gearPos_ = 1;
     speedbrakeDetent_ = 0;
     speedbrakePos_ = 0;
+    groundSpoilers_ = false;
+    reverserPos_ = {};
+    reverserPhase_ = {};
+    reverserDone_ = false;
+    airborneTime_ = 0;
     parkingBrake_ = true;
     for (std::size_t i = 0; i < def_.electrical.loads.size(); ++i)
         electrical_.setLoadSwitch(static_cast<int>(i), def_.electrical.loads[i].initiallyOn);
@@ -438,7 +443,7 @@ void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, con
         c.controls.elevator = clamp(in.pitch + trim_ * def_.controls.elevatorTrimRange / elevUp, -1.0, 1.0);
     }
     if (pusher_) c.controls.elevator = std::min(c.controls.elevator, def_.stallWarning.pusherElevator);
-    c.controls.rudder = clamp(in.yaw + def_.controls.riggingRudder, -1.0, 1.0);
+    c.controls.rudder = clamp(in.yaw + def_.controls.riggingRudder + ydCommand_, -1.0, 1.0);
     if (def_.controls.rudderLimiterIas > 0) {
         const Real eas = length(s_.body.velocity - c.air.wind) * std::sqrt(c.air.state.density / isa::kSeaLevelDensity);
         if (eas > def_.controls.rudderLimiterIas)
@@ -562,7 +567,10 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
         TurbofanState ts = turboState_[i];
         turbofans_[i].evaluate(ts, ti);
         const Vec3 r = ed.position - cg;
-        const Vec3 thrust = normalized(ed.thrustAxis) * ts.thrust;
+        // A deployed reverser turns the fan flow forward: the forward thrust
+        // goes, and a fraction of it pushes the other way.
+        const Real rev = ed.reverser.present ? reverserPos_[static_cast<std::size_t>(i)] : 0.0;
+        const Vec3 thrust = normalized(ed.thrustAxis) * (ts.thrust * (1 - rev * (1 + ed.reverser.effectiveness)));
         force += thrust;
         moment += cross(r, thrust);
     }
@@ -767,6 +775,56 @@ void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, co
     for (int i = 0; i < engineCount(); ++i)
         c.engineIn[i].starterPowered = c.engineIn[i].magnetos == Magnetos::Start &&
                                        electrical_.busVoltage() >= kMinStarterVoltage;
+    // ---- Ground spoilers and thrust reversers (automatic, on the landing roll) ----
+    {
+        bool mains = false;
+        for (std::size_t g = 0; g < def_.gear.size(); ++g)
+            mains = mains || (def_.gear[g].attach.x < mass_.cg.x && gearTel_[g].contact);
+        const Vec3 v = s_.body.velocity;
+        const Real groundSpeed = std::hypot(v.x, v.y);
+        const Real ias = length(v - c.air.wind) * std::sqrt(c.air.state.density / isa::kSeaLevelDensity);
+        // A landing: the main wheels on the ground after flight, the throttles
+        // anywhere below the go-around range (the automation retards them).
+        // On a take-off roll only idle counts (a rejected take-off).
+        if (!mains && !tel_.onGround) airborneTime_ += dt;
+        else if (groundSpeed < 7.7) airborneTime_ = 0;  // stopped: the next run is a take-off
+        const bool landing = airborneTime_ > 2.0;
+        const bool idle = in.throttle <= (landing ? 0.4 : 0.08), advanced = in.throttle > (landing ? 0.5 : 0.2);
+        const SpeedbrakeDef& sb = def_.controls.speedbrake;
+        if (sb.present && sb.groundSpoilers) {
+            if (!groundSpoilers_ && mains && idle && groundSpeed > sb.groundArmSpeed) groundSpoilers_ = true;
+            else if (groundSpoilers_ && (advanced || groundSpeed < sb.groundStowSpeed)) groundSpoilers_ = false;
+        }
+        if (!mains && !tel_.onGround) reverserDone_ = false;  // airborne: armed for the next landing
+        for (int i = 0; i < turbofanCount(); ++i) {
+            const TurbofanDef::Reverser& rv = def_.turbofans[i].reverser;
+            if (!rv.present) continue;
+            const std::size_t k = static_cast<std::size_t>(i);
+            int& ph = reverserPhase_[k];
+            Real& pos = reverserPos_[k];
+            const TurbofanEngine& eng = turbofans_[i];
+            switch (ph) {
+            case 0:  // stowed: deploy on the main wheels, idle, still fast
+                if (mains && idle && ias > rv.stowIas + 2.5 && turboState_[i].running && !reverserDone_) ph = 1;
+                break;
+            case 1:  // reverse thrust down to the stow speed
+                if (advanced || !mains) { ph = 3; reverserDone_ = true; }
+                else if (ias <= rv.stowIas) ph = 2;
+                break;
+            case 2:  // reverse idle, then stow
+                if (advanced || turboState_[i].n1 < def_.turbofans[i].idleN1 + 0.05) { ph = 3; reverserDone_ = true; }
+                break;
+            default:  // stowing
+                if (pos <= 0) ph = 0;
+                break;
+            }
+            pos = approach(pos, ph == 1 || ph == 2 ? 1.0 : 0.0, dt / rv.transitTime);
+            // The fuel control: reverse N1 only once fully deployed; idle while
+            // the sleeves travel (the interlock), the lever's own setting once stowed.
+            if (ph == 1 && pos > 0.95) c.turboIn[i].throttle = (rv.reverseN1 - eng.def().idleN1) / (1 - eng.def().idleN1);
+            else if (ph != 0) c.turboIn[i].throttle = 0;
+        }
+    }
     for (int i = 0; i < turbofanCount(); ++i) {
         c.turboIn[i].starterPowered = electrical_.busVoltage() >= kMinStarterVoltage;
         if (!turbofanSteady_) turbofans_[i].step(turboState_[i], c.turboIn[i], dt);
@@ -774,8 +832,9 @@ void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, co
     if (def_.controls.gear.retractable)
         gearPos_ = approach(gearPos_, gearDown_ ? 1.0 : 0.0, dt / def_.controls.gear.transitTime);
     if (def_.controls.speedbrake.present) {
-        const Real target = static_cast<Real>(speedbrakeDetent_) / std::max(def_.controls.speedbrake.detents - 1, 1);
-        speedbrakePos_ = approach(speedbrakePos_, target, def_.controls.speedbrake.rate * dt);
+        const Real lever = static_cast<Real>(speedbrakeDetent_) / std::max(def_.controls.speedbrake.detents - 1, 1);
+        const Real target = groundSpoilers_ ? 1.0 : lever;
+        speedbrakePos_ = approach(speedbrakePos_, target, (groundSpoilers_ ? def_.controls.speedbrake.groundRate : def_.controls.speedbrake.rate) * dt);
         c.controls.speedbrake = speedbrakePos_;
         c.controls.spoiler = aeroModel_->hasSpoilers() ? 0.0 : speedbrakePos_ * def_.controls.speedbrake.liftLossFraction;
     }
@@ -905,6 +964,27 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
     instruments_.update(dt, sensorInputs());
     tel_.stallWarning = vane;
     tel_.stickPusher = pusher_;
+
+    // ---- Yaw damper: washed-out yaw rate to the rudder, for the next step ----
+    {
+        const auto& yd = def_.controls.yawDamper;
+        // Turn compensation: the yaw rate of a coordinated turn at this bank
+        // (g sin(roll) cos(pitch) / V) is left alone; only the rest is damped.
+        // Without it the damper fought every turn entry, saturated, and left
+        // the airplane skidding (10 deg of sideslip in a Learjet 45 rolling in).
+        const Real r = tel_.omega.z - kStandardGravity * std::sin(tel_.roll) * std::cos(tel_.pitch) / std::max(tel_.trueAirspeed, 30.0);
+        ydLowPass_ += (r - ydLowPass_) * std::min(dt / std::max(yd.washout, 0.1), 1.0);
+        const Real eas = tel_.trueAirspeed * std::sqrt(tel_.air.state.density / isa::kSeaLevelDensity);
+        const bool on = yd.gain > 0 && yawDamperOn_ && !tel_.onGround && eas > 30.9;
+        if (on) {
+            const Real schedule = clamp(sq(yd.referenceIas / eas), 0.25, 4.0);
+            ydCommand_ = clamp(-yd.gain * schedule * (r - ydLowPass_), -yd.authority, yd.authority);
+        } else {
+            ydCommand_ = 0;
+        }
+        tel_.yawDamper = on;
+        tel_.yawDamperRudder = ydCommand_;
+    }
 
     // ---- Events ----
     for (int i = 0; i < engineCount(); ++i) {

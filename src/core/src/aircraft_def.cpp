@@ -189,6 +189,9 @@ std::vector<std::string> AircraftDefinition::validate() const {
         c.finite(idx("dragItems", i) + ".position", dragItems[i].position);
         c.nonNegative(idx("dragItems", i) + ".dragArea", dragItems[i].dragArea);
         c.range(idx("dragItems", i) + ".criticalMach", dragItems[i].criticalMach, 0, 1.2);
+        c.range(idx("dragItems", i) + ".bodyLength", dragItems[i].bodyLength, 0, 30);
+        c.range(idx("dragItems", i) + ".bodySize", dragItems[i].bodySize, 0, 5);
+        if (dragItems[i].bodySize > 0) c.finite(idx("dragItems", i) + ".bodyAxis", dragItems[i].bodyAxis);
     }
 
     if (engines.size() > 4) c.add("engines", "at most 4 engines");
@@ -217,6 +220,14 @@ std::vector<std::string> AircraftDefinition::validate() const {
         c.positive(p + ".ittTakeoff", e.ittTakeoff);
         c.nonNegative(p + ".oilPressureIdle", e.oilPressureIdle);
         c.nonNegative(p + ".oilPressureMax", e.oilPressureMax);
+        if (e.reverser.present) {
+            c.range(p + ".reverser.effectiveness", e.reverser.effectiveness, 0, 0.8);
+            c.positive(p + ".reverser.transitTime", e.reverser.transitTime);
+            c.range(p + ".reverser.reverseN1", e.reverser.reverseN1, e.idleN1, 1);
+            c.range(p + ".reverser.stowIas", e.reverser.stowIas, 0, 100);
+            c.range(p + ".reverser.cascadeForward", e.reverser.cascadeForward, 0, 6);
+            c.range(p + ".reverser.cowlRadius", e.reverser.cowlRadius, 0.1, 3);
+        }
     }
     for (std::size_t i = 0; i < engines.size(); ++i) {
         const PistonEngineDef& e = engines[i];

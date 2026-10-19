@@ -10,6 +10,8 @@
 
 #include "avd/atmosphere.hpp"
 #include "avd/geodesy.hpp"
+#include "avd/gps.hpp"
+#include "avd/json.hpp"
 #include "avd/ground.hpp"
 #include "avd/navigation.hpp"
 
@@ -23,12 +25,29 @@ namespace avd::scenarios {
 // docs/architecture/world-integration.md).
 LocalFrame saoPauloWorldFrame();
 
+// An ILS on one runway end: localizer along the centreline, its antenna
+// 300 m beyond the far end; glideslope antenna 300 m past the landing
+// threshold, 120 m to the side; 3 deg. Antenna sites are estimated from the
+// runway (not surveyed); identifier and frequency are the published ones
+// unless `synthetic`.
+struct IlsDef {
+    int runway = 0;  // index into Airport::runways
+    int khz = 0;
+    std::string ident;
+    bool synthetic = false;
+    std::string source;
+};
+
 struct Airport {
     std::string icao, name;
     Real elevation = 0;          // m MSL
     Real magneticVariation = 0;  // rad, east positive
-    std::vector<RunwayDef> runways;  // [0] is the runway in use (spawns, approaches)
-    int ilsKhz = 0;              // ILS for runways[0] (synthetic test facilities), 0 = none
+    // Runway ends in pairs (an end, then its reciprocal); [0] is the runway in
+    // use (spawns, approaches).
+    std::vector<RunwayDef> runways;
+    int ilsKhz = 0;              // ILS for runways[0], 0 = none
+    std::vector<IlsDef> ils;
+    std::string source;          // provenance of the runway data
 };
 
 // Campo de Marte (SBMT), São Paulo. Runway 12/30, 1600 x 45 m asphalt,
@@ -46,16 +65,55 @@ Airport campoDeMarte(const LocalFrame& frame);
 // modelled. Approximate; not for real-world navigation.
 Airport congonhas(const LocalFrame& frame);
 
+// The airports of the São Paulo region a flight can go to: [0] Congonhas,
+// [1] Campo de Marte (as above), then Guarulhos (SBGR), Viracopos (SBKP),
+// São José dos Campos (SBSJ) and Jundiaí (SBJD). Runway ends, widths,
+// displaced thresholds and elevations from OurAirports (public domain,
+// 2026); ILS identifiers and frequencies from the published listings named
+// in each IlsDef. Runways are modelled flat at the field elevation.
+// Approximate; not for real-world navigation.
+const std::vector<Airport>& saoPauloRegionAirports();
+
+// An airport from one record of data/world/airports_br.json
+// (tools/navdata/brazil.py): its paved runways (from their ends' coordinates
+// when the record has them, else centred on the airport reference point on
+// their true heading, or the runway number's with the regional variation;
+// parallel L/R runways 400 m apart) and its ILSs. Runways flat at the field
+// elevation. Unusable records give an airport with no runways.
+Airport airportFromRecord(const json::Value& record, const LocalFrame& frame);
+
+// The ILS navaids of `a` (IlsDef) into `db`: localizer antenna 300 m beyond
+// the far end, glideslope 300 m past the landing threshold and 120 m to the
+// side; 3 degrees.
+void addIlsNavaids(NavDatabase& db, const Airport& a, const LocalFrame& frame);
+
 // Flat airfield ground (grass) at the airport elevation with its runways.
 std::unique_ptr<AirfieldGround> makeAirfieldGround(const Airport& a, const LocalFrame& frame);
 
+// Every airport of the region on one ground, each field at its own
+// elevation, the terrain between them blended (RegionGround).
+std::unique_ptr<RegionGround> makeRegionGround(const std::vector<Airport>& airports);
+
+// The landing threshold of runway end `r` (past any displaced threshold).
+Vec3 landingThreshold(const RunwayDef& r);
+
+// A GPS approach route to runway end `runway` of `dest`: an initial fix (IAF)
+// 5 NM abeam the intermediate fix when the route arrives from more than 60
+// deg off the final course (and not already on the final), the intermediate fix (IF) 10 NM and the final
+// approach fix (FF) 5 NM out on the extended centreline at the 3 deg path's
+// altitudes, then the landing threshold (RW). `from` (NED) is where the
+// route starts; when `departure` is given, the route begins on that runway
+// end and 3 NM straight out. Waypoint names are generated, not the
+// procedure's published fixes. Returns the route; `faf` gets the FAF index.
+std::vector<RouteWaypoint> approachRoute(const Airport& dest, int runway, const Vec3& from, int& faf,
+                                         const RunwayDef* departure = nullptr);
+
 // Navigation environment for the São Paulo World map: local magnetic field
 // (declination ~21.5 deg W, inclination ~38 deg up -- ESTIMATED, to be
-// replaced by a World Magnetic Model evaluation) and SYNTHETIC test radio
-// facilities: a test VOR at MASP and test ILSs for Campo de Marte runway 12
-// and Congonhas runway 35L. These facilities do not exist in reality (SBMT has
-// no ILS; SBSP has none on 35L); they exercise the
-// receivers until authoritative facility data is loaded (NavDatabase::loadJson).
+// replaced by a World Magnetic Model evaluation), the region airports' ILSs
+// (published identifiers and frequencies, antenna sites estimated from the
+// runways) and two SYNTHETIC test facilities that do not exist in reality: a
+// test VOR at MASP and a test ILS on Campo de Marte runway 12 (SBMT has no ILS).
 const NavEnvironment& saoPauloNavEnvironment();
 
 // Point at `along` metres down runway `r` and `across` metres right of the centreline (NED).

@@ -142,6 +142,11 @@ struct DragItemDef {
     // Transonic drag rise of a body (fuselage, nacelles): above this Mach the
     // drag area grows by 1 + 60 (M - Mcrit)^2, ~2.4x at Mcrit + 0.15. 0 = none.
     Real criticalMach = 0;
+    // Optional shape, for the airflow view's bluff-body wakes (no effect on
+    // the forces): long axis (structural), length and thickness across the
+    // flow, m. A wing strut, a gear leg and its wheel fairing.
+    Vec3 bodyAxis{0, 0, 1};
+    Real bodyLength = 0, bodySize = 0;
 };
 
 // ---- Propulsion -----------------------------------------------------------
@@ -226,6 +231,17 @@ struct TurbofanDef {
     Real oilPressureIdle = 2.4e5;     // Pa
     Real oilPressureMax = 4.1e5;      // Pa
     int fuelFeed = 0;
+    // Thrust reverser (optional): fan-flow reverser (cascade type), deployed
+    // and stowed automatically on the landing roll.
+    struct Reverser {
+        bool present = false;
+        Real effectiveness = 0.4;     // reverse force as a fraction of the forward thrust at the same N1
+        Real transitTime = 2.0;       // s, stowed to deployed (and back)
+        Real reverseN1 = 0.8;         // fan speed commanded in full reverse (fraction of take-off)
+        Real stowIas = 30.87;         // m/s (60 KIAS): reverse idle below this, then stow
+        Real cascadeForward = 1.4;    // m forward of the nozzle exit: where the cascades are
+        Real cowlRadius = 0.7;        // m, nacelle radius at the cascades
+    } reverser;
 };
 
 // Retractable landing gear and speedbrakes (both optional).
@@ -245,6 +261,13 @@ struct SpeedbrakeDef {
     // without spoiler panels; with spoiler controls on the wing the panels
     // carry the drag and the lift loss where they are.)
     Real rate = 0.5;                  // deployment fraction per second
+    // Ground spoilers: every panel to full on main-wheel contact with the
+    // throttles at idle above armSpeed (also a rejected take-off); stowed
+    // when the throttles come up or below taxi speed.
+    bool groundSpoilers = false;
+    Real groundArmSpeed = 15.4;       // m/s ground speed (30 kt)
+    Real groundStowSpeed = 7.7;       // m/s (15 kt)
+    Real groundRate = 1.5;            // deployment fraction per second
 };
 
 // ---- Fuel -----------------------------------------------------------------
@@ -358,6 +381,17 @@ struct FlightControlsDef {
     // EAS, then travel scaled by (V/EAS)^2 so the yaw authority stays roughly
     // constant with dynamic pressure (floor 15 %). 0 = none.
     Real rudderLimiterIas = 0;        // m/s
+    // Yaw damper (swept-wing jets, whose Dutch roll is lightly damped or
+    // divergent at low speed without it): rudder = -gain * (yaw rate less the
+    // coordinated-turn rate for the bank, through a washout filter), the gain scheduled as
+    // (reference EAS / EAS)^2 within 0.25..4, limited to +-authority of full
+    // travel, in flight above 60 KIAS. gain 0 = none.
+    struct YawDamperDef {
+        Real gain = 0;            // rudder fraction per rad/s of yaw rate at the reference EAS
+        Real referenceIas = 82;   // m/s
+        Real washout = 3;         // s
+        Real authority = 0.3;     // fraction of full rudder travel
+    } yawDamper;
     GearRetractionDef gear;
     SpeedbrakeDef speedbrake;
 };

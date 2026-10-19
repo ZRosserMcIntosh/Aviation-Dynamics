@@ -635,7 +635,9 @@ TEST_CASE("navigation: localizer and glideslope geometry on approach") {
         g.height = a.elevation + 2 + heightAgl;
         return g;
     };
-    const Real gsDist = 3300;  // from the GS antenna (300 m in from the threshold)
+    // From the GS antenna: 300 m past the landing threshold, which is 300 m
+    // in from the paved end of runway 12.
+    const Real gsDist = 3000 + r.displaced + 300;
     const Real onPath = std::tan(degToRad(3)) * gsDist;
     NavIndication n = evaluateNav(*env.database, 110300, 0, at(-3000, 0, onPath));
     CHECK(n.valid && n.localizer);
@@ -645,8 +647,8 @@ TEST_CASE("navigation: localizer and glideslope geometry on approach") {
     // Right of the centreline -> needle left; above the glidepath -> needle down.
     CHECK(evaluateNav(*env.database, 110300, 0, at(-3000, 150, onPath)).cdi < -0.4);
     CHECK(evaluateNav(*env.database, 110300, 0, at(-3000, 0, onPath + 40)).glideslope < -0.5);
-    // Full scale at the threshold is ~700 ft wide (+-107 m).
-    CHECK_NEAR(evaluateNav(*env.database, 110300, 0, at(0, 106.7, 15)).cdi, -1.0, 0.03);
+    // Full scale at the landing threshold is ~700 ft wide (+-107 m).
+    CHECK_NEAR(evaluateNav(*env.database, 110300, 0, at(r.displaced, 106.7, 15)).cdi, -1.0, 0.03);
 }
 
 TEST_CASE("navigation: an aircraft on the extended centreline reads a centred localizer") {
@@ -661,7 +663,7 @@ TEST_CASE("navigation: an aircraft on the extended centreline reads a centred lo
     ac.setEngineRunning(true, 2000);
     RigidBodyState s;
     s.position = runwayPoint(r, -3000);
-    s.position.z = -(a.elevation + 3300 * std::tan(degToRad(3)));
+    s.position.z = -(a.elevation + (3000 + r.displaced + 300) * std::tan(degToRad(3)));
     s.velocity = {ktToMs(65) * std::cos(r.headingTrue), ktToMs(65) * std::sin(r.headingTrue), 0};
     s.attitude = Quat::fromEuler(0, 0, r.headingTrue);
     ac.setFlightState(s);

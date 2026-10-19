@@ -33,6 +33,12 @@
  ],
  "provenance": [
   {
+   "field": "controls.yaw_damper",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Yaw damper (the G650ER has one): washed-out yaw rate (3 s) to the rudder, 2 per rad/s at 160 KEAS scheduled with 1/EAS^2, 30 % authority."
+  },
+  {
    "field": "reference",
    "kind": "published",
    "source": "SPEC",
@@ -133,6 +139,18 @@
    "kind": "estimated",
    "source": "EST",
    "note": "Three spoiler panels per side ahead of the outboard flap (photographs), 14 % chord, 40 deg at full speedbrake; their drag (~1.6 m^2 CdA fully out) and lift loss (~25 % of the wing's) match the lumped speedbrake estimate they replace."
+  },
+  {
+   "field": "turbofans[*].thrust_reverser",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Fan-flow (cascade) reversers: reverse force 40% of the forward thrust at the same N1 (typical of high-bypass fan reversers), 2 s transit, 80% N1 in reverse, reverse idle and stow at 60 KIAS (a usual airline technique). Automatic: deploy on main-wheel contact at idle."
+  },
+  {
+   "field": "controls.speedbrake.ground_spoilers",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Ground spoilers: every panel to full on main-wheel contact with the throttles at idle above 30 kt ground speed (a landing or a rejected take-off); stowed when the throttles come up or below 15 kt."
   }
  ],
  "mass": {
@@ -550,7 +568,15 @@
    "itt_idle_k": 760,
    "itt_takeoff_k": 1170,
    "oil_pressure_idle_psi": 40,
-   "oil_pressure_max_psi": 70
+   "oil_pressure_max_psi": 70,
+   "thrust_reverser": {
+    "effectiveness": 0.4,
+    "transit_time_s": 2.0,
+    "reverse_n1": 0.8,
+    "stow_kias": 60,
+    "cascade_forward_of_nozzle_m": 1.5,
+    "cowl_radius_m": 0.79
+   }
   },
   {
    "name": "right engine",
@@ -577,7 +603,15 @@
    "itt_takeoff_k": 1170,
    "oil_pressure_idle_psi": 40,
    "oil_pressure_max_psi": 70,
-   "fuel_feed": 0
+   "fuel_feed": 0,
+   "thrust_reverser": {
+    "effectiveness": 0.4,
+    "transit_time_s": 2.0,
+    "reverse_n1": 0.8,
+    "stow_kias": 60,
+    "cascade_forward_of_nozzle_m": 1.5,
+    "cowl_radius_m": 0.79
+   }
   }
  ],
  "fuel": {
@@ -887,6 +921,7 @@
   "rigging_aileron": 0.0,
   "rigging_rudder": 0.0,
   "rudder_limiter_kias": 160,
+  "yaw_damper": {"gain_s": 2.0, "reference_kias": 160, "washout_s": 3.0, "authority": 0.3},
   "landing_gear": {
    "retractable": true,
    "transit_time_s": 7.0,
@@ -897,7 +932,8 @@
    "detents": 3,
    "drag_area_m2": 1.6,
    "lift_loss_fraction": 0.25,
-   "rate_per_s": 0.6
+   "rate_per_s": 0.6,
+   "ground_spoilers": true
   }
  },
  "pitot_static": {

@@ -5,6 +5,7 @@
 // only renders and reads input. World positions are returned in the São Paulo
 // World frame (ENU metres from MASP); see web/README.md for the buffer layout.
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -38,7 +39,8 @@ struct Sim {
     AircraftDefinition def;
     LocalFrame frame = scenarios::saoPauloWorldFrame();
     scenarios::Airport airport;
-    std::unique_ptr<AirfieldGround> ground;
+    std::unique_ptr<RegionGround> ground;  // every airport of the region at its own elevation
+    GpsNavigator gps;
     std::unique_ptr<SimpleWeather> weather;
     SimpleWeatherParams weatherParams;
     // Weather controls; the field is rebuilt from them (rebuildWeather).
@@ -83,18 +85,101 @@ double g_load[256];
 // Airport for spawns: 0 Campo de Marte (SBMT, runway 12), 1 Congonhas (SBSP,
 // runway 35L). Kept across aircraft loads.
 int g_airportId = 1;
+// Destination: index into saoPauloRegionAirports() and the runway end to land
+// on (-1: none). Kept across aircraft loads.
+int g_destAirport = -1, g_destRunway = 0;
 
-scenarios::Airport makeAirport(int id, const LocalFrame& f) {
-    return id == 0 ? scenarios::campoDeMarte(f) : scenarios::congonhas(f);
+// The airports on the ground and in the nav database: the region's, plus a
+// destination from anywhere in Brazil (avd_set_destination_record) after
+// them. Kept across aircraft loads, as is the nav database built from them.
+std::vector<scenarios::Airport> g_airports = scenarios::saoPauloRegionAirports();
+NavDatabase g_navDb;
+NavEnvironment g_navEnv;
+void rebuildNav() {
+    const NavEnvironment& region = scenarios::saoPauloNavEnvironment();
+    g_navDb = NavDatabase{};
+    for (const Navaid& n : region.database->navaids()) g_navDb.add(n);
+    const LocalFrame f = scenarios::saoPauloWorldFrame();
+    for (std::size_t i = scenarios::saoPauloRegionAirports().size(); i < g_airports.size(); ++i)
+        scenarios::addIlsNavaids(g_navDb, g_airports[i], f);
+    g_navEnv.field = region.field;
+    g_navEnv.database = &g_navDb;
 }
+const NavEnvironment& navEnvironment() {
+    if (!g_navEnv.database) rebuildNav();
+    return g_navEnv;
+}
+const scenarios::Airport& regionAirport(int i) { return g_airports[static_cast<std::size_t>(i)]; }
+int regionCount() { return static_cast<int>(g_airports.size()); }
 
 void rebuildWeather();
 
 void buildAirport() {
-    g->airport = makeAirport(g_airportId, g->frame);
-    g->ground = scenarios::makeAirfieldGround(g->airport, g->frame);
+    g->airport = regionAirport(g_airportId == 0 ? 1 : 0);
+    g->ground = scenarios::makeRegionGround(g_airports);
     g->ground->setWaterDepth(g->runwayWater);
     rebuildWeather();  // the wind surroundings and hazards are placed around it
+}
+
+// The destination runway's ILS, or nullptr.
+const scenarios::IlsDef* destinationIls() {
+    if (g_destAirport < 0) return nullptr;
+    for (const scenarios::IlsDef& i : regionAirport(g_destAirport).ils)
+        if (i.runway == g_destRunway) return &i;
+    return nullptr;
+}
+
+// The GPS route to the destination: from the runway in use when on the
+// ground at the origin, else from the present position.
+void buildRoute() {
+    if (!g || !g->ac) return;
+    if (g_destAirport < 0) {
+        g->gps.clear();
+        return;
+    }
+    const scenarios::Airport& dest = regionAirport(g_destAirport);
+    int faf = -1;
+    std::vector<RouteWaypoint> r;
+    const Vec3 p = g->ac->state().body.position;
+    const RunwayDef& dep = g->airport.runways[0];
+    const Vec3 rp = scenarios::runwayPoint(dep, 0);
+    const bool onDeparture = g->ac->telemetry().onGround && std::hypot(p.x - rp.x, p.y - rp.y) < dep.length + 500 &&
+                             g->airport.icao != dest.icao;
+    if (onDeparture) {
+        r = scenarios::approachRoute(dest, g_destRunway, p, faf, &dep);
+    } else {
+        r = scenarios::approachRoute(dest, g_destRunway, p, faf);
+        r.insert(r.begin(), RouteWaypoint{"PPOS", p, -1, false});
+        ++faf;
+    }
+    g->gps.setRoute(std::move(r), faf);
+    // Already established on the final (within 1 NM of the centreline, headed
+    // within 45 deg of it, inside the IF): join it on the leg it is flying.
+    if (!onDeparture) {
+        const RunwayDef& rw = dest.runways[static_cast<std::size_t>(g_destRunway)];
+        const Vec3 thr = scenarios::landingThreshold(rw);
+        const Real c = std::cos(rw.headingTrue), sn = std::sin(rw.headingTrue);
+        const Real out = -((p.x - thr.x) * c + (p.y - thr.y) * sn), lateral = -(p.x - thr.x) * sn + (p.y - thr.y) * c;
+        const Real hdgErr = std::abs(wrapPi(g->ac->telemetry().heading - rw.headingTrue));
+        if (!g->ac->telemetry().onGround && std::abs(lateral) < 1852 && out > 0 && out < 10.2 * 1852 && hdgErr < degToRad(45))
+            g->gps.activate(out > 5 * 1852 ? faf : faf + 1);
+    }
+}
+
+// NAV 1 on the destination runway's ILS (else the origin runway's), the test
+// VOR in standby; OBS on that localizer's magnetic course.
+void tuneRadios(bool headingBugToo) {
+    InstrumentPanel& p = g->ac->instruments();
+    const scenarios::IlsDef* di = destinationIls();
+    const scenarios::Airport& a = di ? regionAirport(g_destAirport) : g->airport;
+    const RunwayDef& rw = a.runways[static_cast<std::size_t>(di ? di->runway : 0)];
+    const int khz = di ? di->khz : (g->airport.ilsKhz ? g->airport.ilsKhz : 113700);
+    p.setNavStandby(0, khz);
+    p.swapNav(0);
+    p.setNavStandby(0, 113700);
+    const Real course = std::round(radToDeg(rw.headingTrue - a.magneticVariation));
+    p.setObs(degToRad(course));
+    if (headingBugToo) p.setHeadingBug(degToRad(course));
 }
 
 // The planned load onto an aircraft (stations and tanks), mass refreshed.
@@ -103,8 +188,8 @@ void applyLoad(Aircraft& ac) {
     for (std::size_t i = 0; i < g->loadTanks.size(); ++i) ac.fuel().setTankQuantity(static_cast<int>(i), g->loadTanks[i]);
     ac.refreshMass();
 }
-constexpr int kFlowStrips = 64, kFlowStride = 18;
-double g_flow[16 + kFlowStrips * kFlowStride + 4 * 10];
+constexpr int kFlowStrips = 64, kFlowStride = 20, kFlowEngine = 14;
+double g_flow[16 + kFlowStrips * kFlowStride + 4 * kFlowEngine];
 char* g_text = nullptr;
 int g_textCap = 0;
 std::vector<std::string> g_errors;
@@ -244,7 +329,7 @@ AVD_EXPORT int avd_load(int length) {
     for (const PayloadStationDef& s : g->def.stations) g->loadStations.push_back(s.initial);
     for (const FuelTankDef& t : g->def.fuel.tanks) g->loadTanks.push_back(t.initial);
     g->ac = std::make_unique<Aircraft>(g->def, g->frame);
-    g->ac->setNavEnvironment(&scenarios::saoPauloNavEnvironment());
+    g->ac->setNavEnvironment(&navEnvironment());
     applyLoad(*g->ac);
     return 0;
 }
@@ -307,7 +392,7 @@ void newAircraft() {
         g->wx.hazardTime = 0;
         rebuildWeather();
     }
-    g->ac->setNavEnvironment(&scenarios::saoPauloNavEnvironment());
+    g->ac->setNavEnvironment(&navEnvironment());
     applyLoad(*g->ac);
     g->procedure = ProcedureRunner{};
     g->assist.reset();
@@ -402,27 +487,69 @@ void finishReset(bool seedInstruments) {
     g->ac->step(kDt, in, *g->ground, *g->weather);
     g->ac->instruments().setAltimeterSetting(g->weather->atmosphere().conditions().seaLevelPressure);
     if (seedInstruments) g->ac->resetInstrumentsToTruth();
-    // Radios: NAV 1 on the (synthetic) localizer of the runway in use, the test
-    // VOR in standby; OBS and heading bug on the runway's magnetic course.
+    // Radios: NAV 1 on the destination's ILS (else the runway in use's), the
+    // test VOR in standby; OBS on its course; heading bug on the runway in use
+    // (on the departure runway) or that course.
     InstrumentPanel& p = g->ac->instruments();
-    p.setNavStandby(0, g->airport.ilsKhz ? g->airport.ilsKhz : 113700);
-    p.swapNav(0);
-    p.setNavStandby(0, 113700);
-    const Real course = std::round(radToDeg(g->airport.runways[0].headingTrue - g->airport.magneticVariation));
-    p.setObs(degToRad(course));
-    p.setHeadingBug(degToRad(course));
+    tuneRadios(true);
+    if (g->ac->telemetry().onGround) {
+        const Real rwy = std::round(radToDeg(g->airport.runways[0].headingTrue - g->airport.magneticVariation));
+        p.setHeadingBug(degToRad(rwy));
+    }
     p.setComStandby(0, 132800);
     p.setTransponderMode(TransponderMode::Altitude);
     g->ac->drainEvents();
     if (g->wake) g->wake->reset();  // a new start leaves nothing in the air
+    buildRoute();
+    g->gps.update(g->ac->state().body.position, g->ac->telemetry().altitudeMsl, g->ac->telemetry().groundSpeed);
 }
 
 }  // namespace
 
+// The take-off flap: the largest detent up to 20 deg (the middle one if none
+// is), as the PFD's V-speeds and the runway hint assume.
+std::size_t takeoffDetent(const std::vector<Real>& det) {
+    std::size_t k = 0;
+    for (std::size_t i = 1; i < det.size(); ++i)
+        if (det[i] <= degToRad(20.5)) k = i;
+    return k > 0 ? k : det.size() / 2;
+}
+
+// Trimmed maximum lift coefficients (clean is per flight condition; take-off
+// and landing flap at low Mach), computed once per aircraft.
+void ensureClmaxModel() {
+    if (g->clmaxModel) return;
+    const std::vector<Real>& det = g->def.controls.flapDetents;
+    g->clmaxModel = std::make_unique<AeroModel>(g->def);
+    const Vec3 cg0 = g->ac->massProperties().cg;
+    g->clmaxTakeoff = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det[takeoffDetent(det)], 0.2);
+    g->clmaxLanding = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det.back(), 0.2);
+}
+Real jetApproachKias() {
+    ensureClmaxModel();
+    const Real m = g->ac->massProperties().mass;
+    const Real vs = std::sqrt(2 * m * 9.80665 / (1.225 * g->def.referenceArea * std::max(g->clmaxLanding, 0.5)));
+    return std::clamp(msToKt(1.23 * vs) + 5.0, 90.0, 180.0);
+}
+
 AVD_EXPORT void avd_reset(int mode) {
     if (!g) return;
     newAircraft();
-    const RunwayDef& rw = g->airport.runways[0];
+    // Modes 4 and 5: the destination's approach (at the intermediate fix,
+    // 10 NM out and level at its altitude on the final course; or on its final
+    // like mode 2). Without a destination, the runway in use.
+    const bool atDest = (mode == 4 || mode == 5) && g_destAirport >= 0;
+    const scenarios::Airport& ap = atDest ? regionAirport(g_destAirport) : g->airport;
+    const RunwayDef& rw = ap.runways[static_cast<std::size_t>(atDest ? g_destRunway : 0)];
+    if (mode == 4) {
+        const bool jet = g->ac->turbofanCount() > 0;
+        const Real dist = 10 * 1852.0;
+        const Real alt = ap.elevation + 15.24 + dist * std::tan(degToRad(3.0));
+        placeTrimmed(scenarios::runwayPoint(rw, rw.displaced - dist), alt, rw.headingTrue, jet ? 180.0 : 90.0, jet ? 1 : 0, 0.0);
+        finishReset(true);
+        return;
+    }
+    if (mode == 5) mode = 2;
     if (mode <= 1) {
         const Vec3 p = scenarios::runwayPoint(rw, 30);
         if (mode == 1) g->ac->setEngineRunning(true, 1000);
@@ -430,16 +557,18 @@ AVD_EXPORT void avd_reset(int mode) {
         if (mode == 0) g->ac->setColdAndDark();
     } else {
         // Mode 2: on the 3 deg final for the runway in use (65 KIAS, flaps 20), exactly
-        // on the glide path, which starts at the glideslope antenna 300 m beyond
-        // the paved end (scenarios/airports.cpp). Mode 3: level cruise, 100 KIAS.
+        // on the glide path, which starts at the glideslope antenna 300 m past
+        // the landing threshold (scenarios/airports.cpp). Mode 3: level cruise, 100 KIAS.
         // Jets: final at 125 KIAS (about Vref + 10) with landing flap and the gear down, cruise at 250 KIAS.
         const bool final = mode == 2;
         const bool jet = g->ac->turbofanCount() > 0;
         const int landingFlap = jet ? static_cast<int>(g->def.controls.flapDetents.size()) - 1 : 2;
         const Real dist = final ? (jet ? -6000.0 : -3000.0) : -8000.0;
         const Real path = final ? degToRad(-3.0) : 0.0;
-        const Real alt = g->airport.elevation + (final ? (-dist + 300.0) * std::tan(-path) : (jet ? 1500.0 : 850.0));
-        const Real kias = final ? (jet ? 125.0 : 65.0) : (jet ? 250.0 : 100.0);
+        const Real alt = ap.elevation + (final ? (-dist + rw.displaced + 300.0) * std::tan(-path) : (jet ? 1500.0 : 850.0));
+        // Jets fly the final at their own approach speed: Vref (1.23 times the
+        // landing-flap stall speed at this weight) + 5 kt.
+        const Real kias = final ? (jet ? jetApproachKias() : 65.0) : (jet ? 250.0 : 100.0);
         placeTrimmed(scenarios::runwayPoint(rw, dist), alt, rw.headingTrue, kias, final ? landingFlap : 0, path);
     }
     finishReset(mode >= 1);
@@ -585,11 +714,15 @@ AVD_EXPORT int avd_procedure_status() {
 // Airflow (for the flow visualisation): what the strip aerodynamics computed
 // this step. Header: [0] strips, [1] engines, [2] TAS m/s, [3] alpha, [4] beta
 // (rad), [5] density, [6..8] CG (structural frame), [9] speed of sound.
-// Strips from 16, 16 doubles each: quarter-chord position xyz, span axis xyz,
-// normal (lift side) axis xyz, chord, area, cl, alpha, q, stall alpha, surface.
-// Engines after the strips, 10 doubles each: position xyz, thrust axis xyz,
+// Strips from 16, 20 doubles each: quarter-chord position xyz, span axis xyz,
+// normal (lift side) axis xyz, chord, area, cl, alpha, q, stall alpha, surface,
+// attached fraction, circulation, zero-lift alpha (with the flaps), cd.
+// Engines after the strips, 14 doubles each: position xyz, thrust axis xyz,
 // radius, slipstream / jet velocity increment (m/s), thrust (N), kind (0
-// propeller, 1 turbofan). Structural frame: x forward, y right, z down.
+// propeller, 1 turbofan), propeller rate rad/s (signed: right-handed about the
+// thrust axis), blades, swirl m/s at 0.7 R, hub radius fraction (turbofans:
+// reverser position, efflux speed m/s, cowl radius, cascades forward of the
+// nozzle m). Structural frame: x forward, y right, z down.
 AVD_EXPORT double* avd_flow() {
     for (double& v : g_flow) v = 0;
     if (!g) return g_flow;
@@ -614,21 +747,25 @@ AVD_EXPORT double* avd_flow() {
         o[6] = sg.normalAxis.x; o[7] = sg.normalAxis.y; o[8] = sg.normalAxis.z;
         o[9] = sg.chord; o[10] = sg.area; o[11] = t.cl; o[12] = t.alpha; o[13] = t.q; o[14] = t.stallAlpha;
         o[15] = sg.surface;
-        o[16] = t.attached; o[17] = t.gamma;
+        o[16] = t.attached; o[17] = t.gamma; o[18] = t.zeroLiftAlpha; o[19] = t.cd;
     }
     double* e = g_flow + 16 + kFlowStrips * kFlowStride;
     int ne = 0;
     for (int i = 0; i < ac.engineCount() && ne < 4; ++i, ++ne) {
         const SlipstreamState& ss = ac.slipstream(i);
-        double* o = e + ne * 10;
+        double* o = e + ne * kFlowEngine;
+        const EngineTelemetry& et = ac.telemetry().engines[static_cast<std::size_t>(i)];
+        const PropellerDef& pd = g->def.engines[static_cast<std::size_t>(i)].propeller;
         o[0] = ss.discCentre.x; o[1] = ss.discCentre.y; o[2] = ss.discCentre.z;
         o[3] = ss.axis.x; o[4] = ss.axis.y; o[5] = ss.axis.z;
-        o[6] = ss.radius; o[7] = ss.axialIncrement; o[8] = ac.telemetry().engines[static_cast<std::size_t>(i)].prop.thrust; o[9] = 0;
+        o[6] = ss.radius; o[7] = ss.axialIncrement; o[8] = et.prop.thrust; o[9] = 0;
+        o[10] = et.rpm * kTwoPi / 60 * (ss.clockwiseFromBehind ? 1.0 : -1.0);
+        o[11] = pd.blades; o[12] = ss.swirlVelocity; o[13] = pd.hubRadiusFraction;
     }
     for (int i = 0; i < ac.turbofanCount() && ne < 4; ++i, ++ne) {
         const TurbofanDef& d = g->def.turbofans[static_cast<std::size_t>(i)];
         const TurbofanState& ts = ac.turbofanState(i);
-        double* o = e + ne * 10;
+        double* o = e + ne * kFlowEngine;
         const Real rNozzle = 0.45;
         const Real rho = std::max(ac.telemetry().air.state.density, 0.05);
         const Real v0 = ao.airspeed;
@@ -639,6 +776,13 @@ AVD_EXPORT double* avd_flow() {
         const Vec3 ax = normalized(d.thrustAxis);
         o[3] = ax.x; o[4] = ax.y; o[5] = ax.z;
         o[6] = rNozzle; o[7] = std::max(vj - v0, 0.0); o[8] = ts.thrust; o[9] = 1;
+        // Reverser: position, efflux speed through the cascades (the fan
+        // stream, about the jet's speed relative to the nacelle), cowl radius
+        // and the cascades' distance forward of the nozzle.
+        if (d.reverser.present) {
+            o[10] = ac.reverserPosition(i); o[11] = vj;
+            o[12] = d.reverser.cowlRadius; o[13] = d.reverser.cascadeForward;
+        }
     }
     g_flow[1] = ne;
     return g_flow;
@@ -654,7 +798,8 @@ AVD_EXPORT void avd_ai_cage() {
 // [6] fuel kg, [7] fuel flow kg/h; engines at 8 + 8 i: N1 %, N2 %, ITT degC,
 // fuel flow kg/h, thrust kN, running, starting, fuel switch; [24] MMO,
 // [25] VMO kt, [26] TAS kt, [27] flap deg, [28] trim, [29] weight on wheels,
-// [30], [31] oil pressure psi (engines 1, 2).
+// [30], [31] oil pressure psi (engines 1, 2); ... [52..55] thrust reversers
+// (position, phase) engines 1, 2, [56] ground spoilers out, [57] reversers fitted.
 AVD_EXPORT double* avd_jet() {
     for (double& v : g_jet) v = 0;
     if (!g) return g_jet;
@@ -686,12 +831,7 @@ AVD_EXPORT double* avd_jet() {
     // Low-speed awareness and V-speeds: 1-g stall CAS from the trimmed CLmax at
     // this weight (current flap and Mach; take-off and landing flap at low Mach).
     const std::vector<Real>& det = g->def.controls.flapDetents;
-    if (!g->clmaxModel) {
-        g->clmaxModel = std::make_unique<AeroModel>(g->def);
-        const Vec3 cg0 = ac.massProperties().cg;
-        g->clmaxTakeoff = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det[det.size() / 2], 0.2);
-        g->clmaxLanding = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det.back(), 0.2);
-    }
+    ensureClmaxModel();
     const Real key = std::round(radToDeg(t.flapAngle) * 2) * 1000 + std::round(std::max(t.mach, 0.2) * 20);
     if (key != g->clmaxKey) {
         g->clmaxKey = key;
@@ -720,9 +860,17 @@ AVD_EXPORT double* avd_jet() {
     g_jet[47] = t.flapAngle < degToRad(0.5) ? 0.0
                 : msToKt(!lim.flapExtendedIasVsFlap.empty() ? lim.flapExtendedIasVsFlap(t.flapAngle) : lim.flapExtendedIas);
     g_jet[48] = msToKt(g->def.controls.gear.maxExtendedIas);
-    g_jet[49] = det.size() > 2 ? radToDeg(det[det.size() / 2]) : 0.0;
+    g_jet[49] = det.size() > 2 ? radToDeg(det[takeoffDetent(det)]) : 0.0;
     g_jet[50] = radToDeg(det.back());
     g_jet[51] = t.stickPusher;
+    // Thrust reversers (engines 1, 2: position 0..1, phase 0 stowed, 1 reverse
+    // thrust, 2 reverse idle, 3 stowing) and the ground spoilers.
+    for (int i = 0; i < std::min(ac.turbofanCount(), 2); ++i) {
+        g_jet[52 + 2 * i] = ac.reverserPosition(i);
+        g_jet[53 + 2 * i] = ac.reverserPhase(i);
+    }
+    g_jet[56] = ac.groundSpoilersActive();
+    g_jet[57] = g->def.turbofans.empty() ? 0.0 : g->def.turbofans[0].reverser.present;
     return g_jet;
 }
 
@@ -742,6 +890,10 @@ AVD_EXPORT int avd_advance(double seconds) {
         if (!g->windAvgValid) g->windAvg = w;
         g->windAvg = g->windAvg + (w - g->windAvg) * (kDt / 3.0);
         g->windAvgValid = true;
+    }
+    if (n > 0) {
+        const AircraftTelemetry& t = g->ac->telemetry();
+        g->gps.update(g->ac->state().body.position, t.altitudeMsl, t.groundSpeed);
     }
     updateJetStart();
     collectEvents();
@@ -781,6 +933,162 @@ AVD_EXPORT void avd_set_airport(int id) {
     if (g) buildAirport();
 }
 
+// Destination (index into the region's airports, avd_destinations_text; and
+// the runway end to land on); -1 clears it. Tunes NAV 1 to its ILS and builds
+// the GPS route from where the aircraft is (on the departure runway: from it).
+AVD_EXPORT void avd_set_destination(int airport, int runway) {
+    if (airport < 0 || airport >= regionCount()) {
+        g_destAirport = -1;
+    } else {
+        g_destAirport = airport;
+        g_destRunway = std::clamp(runway, 0, static_cast<int>(regionAirport(airport).runways.size()) - 1);
+    }
+    if (!g || !g->ac) return;
+    tuneRadios(!g->ac->telemetry().onGround);
+    buildRoute();
+    g->gps.update(g->ac->state().body.position, g->ac->telemetry().altitudeMsl, g->ac->telemetry().groundSpeed);
+}
+AVD_EXPORT int avd_destination() { return g_destAirport; }
+
+// A destination from anywhere in Brazil: one record of airports_br.json
+// (tools/navdata/brazil.py) in the text buffer, and the index of the runway
+// end to land on in its records' order (each runway's two ends in turn). An
+// airport of the region is used as the region has it (its runways matched by
+// name); any other joins the ground and the nav database after the region's.
+// Returns the destination's index (avd_destinations_text), -1 if the record
+// or runway is unusable.
+AVD_EXPORT int avd_set_destination_record(int length, int runway) {
+    const json::ParseResult pr = json::parse(std::string(g_text, static_cast<std::size_t>(std::max(length, 0))));
+    if (!pr.ok()) return -1;
+    const scenarios::Airport rec = scenarios::airportFromRecord(pr.value, scenarios::saoPauloWorldFrame());
+    if (runway < 0 || runway >= static_cast<int>(rec.runways.size())) return -1;
+    const std::string ident = rec.runways[static_cast<std::size_t>(runway)].ident;
+    const auto& region = scenarios::saoPauloRegionAirports();
+    int ai = -1, ri = runway;
+    for (std::size_t i = 0; i < region.size(); ++i) {
+        if (region[i].icao != rec.icao) continue;
+        for (std::size_t k = 0; k < region[i].runways.size(); ++k)
+            if (region[i].runways[k].ident == ident) { ai = static_cast<int>(i); ri = static_cast<int>(k); }
+        if (ai < 0) return -1;  // a runway the region does not model (Congonhas 17L/35R)
+    }
+    if (ai < 0) {
+        g_airports.resize(region.size());
+        g_airports.push_back(rec);
+        ai = static_cast<int>(region.size());
+        rebuildNav();
+        if (g) {
+            g->ground = scenarios::makeRegionGround(g_airports);
+            g->ground->setWaterDepth(g->runwayWater);
+        }
+    }
+    avd_set_destination(ai, ri);
+    return ai;
+}
+AVD_EXPORT int avd_destination_runway() { return g_destRunway; }
+
+// The region's airports, one per line: "ICAO|name|elevation m|ends", ends
+// ";"-separated as "runway:ILS ident:kHz:synthetic" (ident and kHz empty
+// without an ILS).
+AVD_EXPORT int avd_destinations_text() {
+    std::string out;
+    for (const scenarios::Airport& a : g_airports) {
+        out += a.icao + "|" + a.name + "|" + std::to_string(static_cast<int>(std::lround(a.elevation))) + "|";
+        for (std::size_t k = 0; k < a.runways.size(); ++k) {
+            const scenarios::IlsDef* ils = nullptr;
+            for (const scenarios::IlsDef& i : a.ils)
+                if (i.runway == static_cast<int>(k)) ils = &i;
+            out += (k ? ";" : "") + a.runways[k].ident + ":" + (ils ? ils->ident + ":" + std::to_string(ils->khz) + ":" + (ils->synthetic ? "1" : "0") : "::");
+        }
+        out += "\n";
+    }
+    return putText(out);
+}
+
+// Every runway of the region (and a destination beyond it), world frame, for
+// drawing: [number of airports, then per airport elevation m, number of
+// ends, then per end: east, north (paved end), heading true deg, length,
+// width, displaced threshold m].
+double g_region[1024];
+AVD_EXPORT double* avd_region() {
+    int k = 1;
+    g_region[0] = static_cast<double>(g_airports.size());
+    for (const scenarios::Airport& a : g_airports) {
+        if (k + 2 + 6 * static_cast<int>(a.runways.size()) > 1024) break;
+        g_region[k++] = a.elevation;
+        g_region[k++] = static_cast<double>(a.runways.size());
+        for (const RunwayDef& r : a.runways) {
+            const Vec3 e = world::enuFromNed(r.threshold);
+            g_region[k++] = e.x;
+            g_region[k++] = e.y;
+            g_region[k++] = radToDeg(r.headingTrue);
+            g_region[k++] = r.length;
+            g_region[k++] = r.width;
+            g_region[k++] = r.displaced;
+        }
+    }
+    return g_region;
+}
+
+// Terrain elevation (m MSL) under a world point (east, north m).
+AVD_EXPORT double avd_ground_height(double east, double north) {
+    if (!g) return 0;
+    return -g->ground->terrainDown(north, east);
+}
+
+// The GPS route: [n, active, FAF index, then per waypoint east, north,
+// crossing altitude m (-1 none)]; names in avd_route_text ("A;B;...").
+constexpr int kRouteMax = 16;
+double g_route[3 + 3 * kRouteMax];
+AVD_EXPORT double* avd_route() {
+    std::fill(std::begin(g_route), std::end(g_route), 0.0);
+    if (!g) return g_route;
+    const auto& r = g->gps.route();
+    const int n = std::min(static_cast<int>(r.size()), kRouteMax);
+    g_route[0] = n;
+    g_route[1] = g->gps.indication().active;
+    g_route[2] = g->gps.finalApproachFix();
+    for (int i = 0; i < n; ++i) {
+        const Vec3 e = world::enuFromNed(r[static_cast<std::size_t>(i)].position);
+        g_route[3 + 3 * i] = e.x;
+        g_route[4 + 3 * i] = e.y;
+        g_route[5 + 3 * i] = r[static_cast<std::size_t>(i)].altitudeMsl;
+    }
+    return g_route;
+}
+AVD_EXPORT int avd_route_text() {
+    if (!g) return putText("");
+    std::string s;
+    for (const RouteWaypoint& w : g->gps.route()) s += (s.empty() ? "" : ";") + w.ident;
+    return putText(s);
+}
+
+// The GPS: [valid, active, mode (0 ENR, 1 TERM, 2 APR), desired track deg
+// true, cross-track m (+ right), full scale m, CDI -1..1 (+ fly right),
+// distance to the waypoint m, bearing to it deg true, distance to the
+// destination m, vertical valid, vertical deviation m (+ above), VDI -1..1
+// (+ fly up), magnetic variation deg (east +)].
+double g_gps[16];
+AVD_EXPORT double* avd_gps() {
+    std::fill(std::begin(g_gps), std::end(g_gps), 0.0);
+    if (!g) return g_gps;
+    const GpsIndication& i = g->gps.indication();
+    g_gps[0] = i.valid;
+    g_gps[1] = i.active;
+    g_gps[2] = i.mode == "APR" ? 2 : (i.mode == "TERM" ? 1 : 0);
+    g_gps[3] = radToDeg(i.desiredTrack);
+    g_gps[4] = i.crossTrack;
+    g_gps[5] = i.fullScale;
+    g_gps[6] = i.cdi;
+    g_gps[7] = i.distanceToWaypoint;
+    g_gps[8] = radToDeg(i.bearingToWaypoint);
+    g_gps[9] = i.distanceToDestination;
+    g_gps[10] = i.verticalValid;
+    g_gps[11] = i.verticalDeviation;
+    g_gps[12] = i.vdi;
+    g_gps[13] = radToDeg(g->airport.magneticVariation);
+    return g_gps;
+}
+
 // "ICAO|name|runway in use|reciprocal" in the text buffer.
 AVD_EXPORT int avd_airport_text() {
     if (!g) return 0;
@@ -815,7 +1123,7 @@ AVD_EXPORT double* avd_state() {
     s[3] = q.w; s[4] = q.x; s[5] = q.y; s[6] = q.z;
     s[7] = radToDeg(t.roll); s[8] = radToDeg(t.pitch); s[9] = std::fmod(radToDeg(t.heading) + 360.0, 360.0);
     s[10] = msToKt(r.indicatedAirspeed); s[11] = msToKt(t.trueAirspeed); s[12] = msToKt(t.groundSpeed);
-    s[13] = mToFt(r.indicatedAltitude); s[14] = mToFt(t.altitudeMsl - g->airport.elevation); s[15] = msToFpm(r.verticalSpeed);
+    s[13] = mToFt(r.indicatedAltitude); s[14] = mToFt(t.heightAgl); s[15] = msToFpm(r.verticalSpeed);
     s[16] = radToDeg(t.alpha); s[17] = radToDeg(t.beta); s[18] = t.loadFactor;
     s[19] = r.tachometerRpm; s[20] = paToInHg(e.engine.manifoldPressure);
     s[21] = m3ToGal(r.fuelFlow / g->def.fuel.density) * 3600; s[22] = r.fuelGauge[0] * 1000; s[23] = r.fuelGauge[1] * 1000;
@@ -956,10 +1264,12 @@ AVD_EXPORT double* avd_wind_box(double cE, double cN, double cU, double hE, doub
     return g_windBox;
 }
 
-// Bluff bodies in the airflow (airflow view): extended gear legs and deployed
-// spoiler panels. [0] count, then 10 doubles a body: position (structural,
-// m), axis (the body's long axis), size (diameter or projected height, m),
-// length along the axis (m), drag area (m^2), kind (0 gear, 1 spoiler).
+// Bluff bodies in the airflow (airflow view): extended retractable gear legs,
+// deployed spoiler panels, and the drag items given a shape (wing struts,
+// fixed gear and fairings). [0] count, then 10 doubles a body: position
+// (structural, m), axis (the body's long axis), size (diameter or projected
+// height, m), length along the axis (m), drag area (m^2), kind (0 gear,
+// 1 spoiler, 2 strut or other fixed item).
 double g_bodies[1 + 32 * 10];
 AVD_EXPORT double* avd_bodies() {
     std::fill(std::begin(g_bodies), std::end(g_bodies), 0.0);
@@ -975,14 +1285,18 @@ AVD_EXPORT double* avd_bodies() {
     };
     const GearRetractionDef& gc = g->def.controls.gear;
     const Real down = gc.retractable ? ac.gearPosition() : 1.0;
-    if (down > 0.05 && !g->def.gear.empty()) {
-        // Retractable: its drag area shared over the legs; fixed gear (in the
-        // drag items): a wheel and strut's frontal area at Cd ~1.
+    if (gc.retractable && down > 0.05 && !g->def.gear.empty()) {
+        // Retractable: its drag area shared over the legs.
         for (const GearDef& gd : g->def.gear) {
             const Real d = 2 * gd.wheelRadius;
-            const Real cda = gc.retractable ? gc.dragArea / static_cast<Real>(g->def.gear.size()) : 0.9 * d * 0.45 * d + 0.06 * gd.length;
-            put(gd.attach + Vec3{0, 0, 0.6 * gd.length * down}, {0, 0, 1}, d, gd.length * down, cda * down, 0);
+            put(gd.attach + Vec3{0, 0, 0.6 * gd.length * down}, {0, 0, 1}, d, gd.length * down, gc.dragArea / static_cast<Real>(g->def.gear.size()) * down, 0);
         }
+    }
+    // Drag items with a shape (fixed gear is one of these).
+    for (const DragItemDef& di : g->def.dragItems) {
+        if (di.bodySize <= 0 || di.bodyLength <= 0) continue;
+        const bool gear = di.name.find("gear") != std::string::npos || di.name.find("wheel") != std::string::npos;
+        put(di.position, normalized(di.bodyAxis), di.bodySize, di.bodyLength, di.dragArea, gear ? 0 : 2);
     }
     std::array<AeroModel::BluffBody, 24> sp{};
     const int ns = ac.aeroModel().spoilerBodies(ac.speedbrakePosition(), sp.data(), 24);

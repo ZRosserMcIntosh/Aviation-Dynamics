@@ -1,6 +1,8 @@
 // Aviation Dynamics — turbofan, retractable gear, speedbrake and the Top G
 // (G650ER-class) reference jet.
 // SPDX-License-Identifier: MIT
+#include <vector>
+
 #include "avd/assists.hpp"
 #include "avd/loading.hpp"
 #include "avd/wake.hpp"
@@ -495,8 +497,15 @@ TEST_CASE("ground: wet-runway friction follows 25.109 and collapses at the hydro
 }
 
 TEST_CASE("top g: a wet runway lengthens the stop; standing water above the hydroplaning speed far more") {
+    // The tyres alone: no reversers or ground spoilers (those do not care about water).
+    static const AircraftDefinition tyresOnly = [] {
+        AircraftDefinition d = jet();
+        for (TurbofanDef& t : d.turbofans) t.reverser.present = false;
+        d.controls.speedbrake.groundSpoilers = false;
+        return d;
+    }();
     auto stop = [](Real waterDepth, Real kt) {
-        Aircraft ac(jet());
+        Aircraft ac(tyresOnly);
         SimpleWeather atm;
         SurfaceProperties s = surfaces::kAsphalt;
         s.waterDepth = waterDepth;
@@ -523,6 +532,81 @@ TEST_CASE("top g: a wet runway lengthens the stop; standing water above the hydr
     // From 140 kt the tyres ride on standing water until they slow below it.
     const Real wetFast = stop(0.001, 140), floodedFast = stop(0.008, 140);
     CHECK(floodedFast > wetFast + 150);
+}
+
+TEST_CASE("top g: ground spoilers and thrust reversers deploy on touchdown, reverse to 60 KIAS, then stow") {
+    auto roll = [](bool automatics, std::vector<int>* phases, Real* stowKias, Real* spoilerMax) {
+        AircraftDefinition d = jet();
+        if (!automatics) {
+            for (TurbofanDef& t : d.turbofans) t.reverser.present = false;
+            d.controls.speedbrake.groundSpoilers = false;
+        }
+        Aircraft ac(d);
+        SimpleWeather atm;
+        FlatGround ground(0, surfaces::kAsphalt);
+        ac.setEngineRunning(true);
+        ac.placeOnGround(0, 0, 0, ground, atm);
+        ac.setCockpitControl("brakes.parking", 0);
+        // At rest with the throttles at idle: nothing deploys.
+        PilotInput in;
+        for (int i = 0; i < 240; ++i) ac.step(kDt, in, ground, atm);
+        CHECK(ac.reverserPosition(0) == 0);
+        CHECK(!ac.groundSpoilersActive());
+        // The landing roll from 120 kt, no wheel brakes.
+        DynamicState st = ac.state();
+        st.body.velocity = {ktToMs(120), 0, 0};
+        ac.setState(st);
+        const Real x0 = ac.state().body.position.x;
+        Real to70 = 0;
+        for (int i = 0; i < 240 * 120; ++i) {
+            ac.step(kDt, in, ground, atm);
+            if (phases && (phases->empty() || phases->back() != ac.reverserPhase(0))) {
+                phases->push_back(ac.reverserPhase(0));
+                if (ac.reverserPhase(0) == 2 && stowKias) *stowKias = msToKt(ac.telemetry().trueAirspeed);
+            }
+            if (spoilerMax) *spoilerMax = std::max(*spoilerMax, ac.speedbrakePosition());
+            if (to70 == 0 && ac.telemetry().groundSpeed < ktToMs(70)) to70 = ac.state().body.position.x - x0;
+            if (ac.telemetry().groundSpeed < 5) break;
+        }
+        CHECK(ac.reverserPosition(0) < 0.05);  // stowed at taxi speed
+        return to70;
+    };
+    std::vector<int> phases;
+    Real stowKias = 0, spoilerMax = 0;
+    const Real with = roll(true, &phases, &stowKias, &spoilerMax), without = roll(false, nullptr, nullptr, nullptr);
+    // Deploy, reverse thrust, reverse idle at 60 KIAS, stow, stowed.
+    CHECK(phases.size() >= 4);
+    phases.resize(4, -1);
+    CHECK(phases[0] == 1);
+    CHECK(phases[1] == 2);
+    CHECK(phases[2] == 3);
+    CHECK(phases[3] == 0);
+    CHECK_RANGE(stowKias, 55, 61);
+    CHECK(spoilerMax > 0.99);
+    // From 120 to 70 kt without brakes (where reversers matter: below 60 kt
+    // they are stowed) the reversers and spoilers save a great deal of runway.
+    CHECK_RANGE(with / without, 0.15, 0.7);
+
+    // A landing (after flight) deploys them with the throttles short of idle,
+    // too: the automation retards them; a take-off roll at that setting does not.
+    Aircraft ac(jet());
+    SimpleWeather atm;
+    FlatGround ground(0, surfaces::kAsphalt);
+    ac.setEngineRunning(true);
+    ac.placeOnGround(0, 0, 0, ground, atm);
+    ac.setCockpitControl("brakes.parking", 0);
+    DynamicState st = ac.state();
+    st.body.position.z -= 8;
+    st.body.velocity = {ktToMs(125), 0, 1.6};
+    ac.setState(st);
+    PilotInput in;
+    in.throttle = 0.3;
+    bool deployed = false;
+    for (int i = 0; i < 240 * 12 && !deployed; ++i) {
+        ac.step(kDt, in, ground, atm);
+        deployed = ac.reverserPhase(0) == 1 && ac.groundSpoilersActive();
+    }
+    CHECK(deployed);
 }
 
 TEST_CASE("top g: spoiler panels dump lift where they are and shed their own vortices; gear drag pitches nose down") {

@@ -105,4 +105,70 @@ GroundHit AirfieldGround::raycast(const Vec3& o, const Vec3& dir, Real maxDistan
     return h;
 }
 
+Real RegionGround::terrainDown(Real n, Real e) const {
+    if (fields_.empty()) return 0;
+    Real wsum = 0, dsum = 0;
+    for (const Field& f : fields_) {
+        const Real d = std::max(std::hypot(n - f.north, e - f.east) - f.radius, 0.0);
+        if (d <= 0) return f.down;
+        const Real w = 1 / (d * d);
+        wsum += w;
+        dsum += w * f.down;
+    }
+    return dsum / wsum;
+}
+
+void RegionGround::surfaceAt(Real n, Real e, Real& down, Vec3& normal, SurfaceProperties& s) const {
+    s = surfaces::kGrass;
+    s.waterDepth = waterDepth_;
+    for (const Field& f : fields_) {
+        if (std::hypot(n - f.north, e - f.east) > f.radius) continue;
+        down = f.down;
+        normal = {0, 0, -1};
+        for (const RunwayDef& r : f.runways) {
+            const Real ch = std::cos(r.headingTrue), sh = std::sin(r.headingTrue);
+            const Real dn = n - r.threshold.x, de = e - r.threshold.y;
+            const Real along = dn * ch + de * sh, across = -dn * sh + de * ch;
+            if (along < 0 || along > r.length || std::abs(across) > 0.5 * r.width) continue;
+            down = r.threshold.z - r.slope * along;
+            normal = normalized(Vec3{-r.slope * ch, -r.slope * sh, -1});
+            s = r.surface;
+            s.waterDepth = waterDepth_;
+            return;
+        }
+        return;
+    }
+    // Between the fields: the blended terrain, its normal by central differences.
+    constexpr Real h = 25;
+    down = terrainDown(n, e);
+    const Real dN = (terrainDown(n + h, e) - terrainDown(n - h, e)) / (2 * h);
+    const Real dE = (terrainDown(n, e + h) - terrainDown(n, e - h)) / (2 * h);
+    normal = normalized(Vec3{dN, dE, -1});
+}
+
+GroundHit RegionGround::raycast(const Vec3& o, const Vec3& dir, Real maxDistance) const {
+    // Gentle terrain: start on the plane of the terrain under the origin and
+    // refine on the local tangent plane.
+    GroundHit h;
+    if (dir.z <= 1e-9) return h;
+    Real t = (terrainDown(o.x, o.y) - o.z) / dir.z;
+    for (int i = 0; i < 6; ++i) {
+        const Vec3 p = o + dir * t;
+        Real down;
+        Vec3 nrm;
+        SurfaceProperties s;
+        surfaceAt(p.x, p.y, down, nrm, s);
+        const Real denom = dot(dir, nrm);
+        if (std::abs(denom) < 1e-9) break;
+        t = dot(Vec3{p.x, p.y, down} - o, nrm) / denom;
+        h.normal = nrm;
+        h.surface = s;
+    }
+    if (t < 0 || t > maxDistance) return {};
+    h.hit = true;
+    h.distance = t;
+    h.point = o + dir * t;
+    return h;
+}
+
 }  // namespace avd

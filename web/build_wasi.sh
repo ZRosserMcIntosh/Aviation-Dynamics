@@ -18,7 +18,9 @@ for f in avd_text avd_load avd_error_text avd_set_weather avd_reset avd_set_inpu
          avd_ai_cage avd_jet avd_flow avd_set_level_hold \
          avd_set_station avd_set_tank avd_loadsheet avd_loadsheet_names avd_set_airport avd_airport_text \
          avd_set_wind_detail avd_set_wind_hazard \
-         avd_set_runway_water avd_wind_grid avd_set_wake avd_wake avd_wind_box avd_bodies; do
+         avd_set_runway_water avd_wind_grid avd_set_wake avd_wake avd_wind_box avd_bodies \
+         avd_set_destination avd_destination avd_destination_runway avd_destinations_text avd_region \
+         avd_ground_height avd_route avd_route_text avd_gps avd_set_destination_record; do
   EXPORTS="$EXPORTS -Wl,--export=$f"
 done
 "$WASI_SDK/bin/clang++" --target=wasm32-wasip1 --sysroot="$WASI_SDK/share/wasi-sysroot" \
@@ -31,4 +33,5 @@ done
 cp "$HERE/avd_loader.mjs" "$OUT/avd.mjs"
 cp "$REPO/data/aircraft/tupi_t180.json" "$OUT/tupi_t180.json"
 cp "$REPO/data/aircraft/top_g.json" "$OUT/top_g.json"
+for t in phenom300 cj4 learjet45 crj700 b738; do cp "$REPO/data/aircraft/$t.json" "$OUT/$t.json"; done
 ls -l "$OUT"

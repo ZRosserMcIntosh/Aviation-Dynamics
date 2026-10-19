@@ -106,6 +106,8 @@ public:
         }
     }
     void err(const std::string& path, const std::string& m) { err_.push_back(path + ": " + m); }
+    // A key the simulation does not read (data for renderers): accepted as is.
+    void skip(const std::string& k) { seen_.push_back(k); }
 
 private:
     std::string p(const std::string& k) const { return path_.empty() ? k : path_ + "." + k; }
@@ -350,6 +352,7 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
     r.str("display_name", d.displayName);
     r.str("manufacturer", d.manufacturer);
     r.str("reference_aircraft", d.referenceAircraft);
+    r.skip("visual");  // the 3-D model's shape and livery: for renderers only
     r.str("description", d.description);
     r.each("sources", [&](Obj& o, std::size_t) {
         SourceRef s;
@@ -483,6 +486,12 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.vec3("position_m", di.position, 1, true);
         o.num("drag_area_m2", di.dragArea, 1, true);
         o.num("critical_mach", di.criticalMach);
+        if (o.has("body")) {
+            Obj b = o.child("body");
+            b.vec3("axis", di.bodyAxis, 1, true);
+            b.num("length_m", di.bodyLength, 1, true);
+            b.num("size_m", di.bodySize, 1, true);
+        }
         d.dragItems.push_back(di);
     });
     r.each("engines", [&](Obj& o, std::size_t) {
@@ -563,6 +572,16 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("oil_pressure_idle_psi", e.oilPressureIdle, 6894.757);
         o.num("oil_pressure_max_psi", e.oilPressureMax, 6894.757);
         o.integer("fuel_feed", e.fuelFeed);
+        if (o.has("thrust_reverser")) {
+            Obj rv = o.child("thrust_reverser");
+            e.reverser.present = true;
+            rv.num("effectiveness", e.reverser.effectiveness);
+            rv.num("transit_time_s", e.reverser.transitTime);
+            rv.num("reverse_n1", e.reverser.reverseN1);
+            rv.num("stow_kias", e.reverser.stowIas, units::kKnot);
+            rv.num("cascade_forward_of_nozzle_m", e.reverser.cascadeForward);
+            rv.num("cowl_radius_m", e.reverser.cowlRadius);
+        }
         d.turbofans.push_back(e);
     });
     if (r.has("fuel")) {
@@ -661,6 +680,13 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         c.num("rigging_aileron", d.controls.riggingAileron);
         c.num("rigging_rudder", d.controls.riggingRudder);
         c.num("rudder_limiter_kias", d.controls.rudderLimiterIas, units::kKnot);
+        if (c.has("yaw_damper")) {
+            Obj y = c.child("yaw_damper");
+            y.num("gain_s", d.controls.yawDamper.gain);
+            y.num("reference_kias", d.controls.yawDamper.referenceIas, units::kKnot);
+            y.num("washout_s", d.controls.yawDamper.washout);
+            y.num("authority", d.controls.yawDamper.authority);
+        }
         if (c.has("landing_gear")) {
             Obj g = c.child("landing_gear");
             g.boolean("retractable", d.controls.gear.retractable);
@@ -675,6 +701,10 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
             b.num("drag_area_m2", d.controls.speedbrake.dragArea);
             b.num("lift_loss_fraction", d.controls.speedbrake.liftLossFraction);
             b.num("rate_per_s", d.controls.speedbrake.rate);
+            b.boolean("ground_spoilers", d.controls.speedbrake.groundSpoilers);
+            b.num("ground_arm_kt", d.controls.speedbrake.groundArmSpeed, units::kKnot);
+            b.num("ground_stow_kt", d.controls.speedbrake.groundStowSpeed, units::kKnot);
+            b.num("ground_rate_per_s", d.controls.speedbrake.groundRate);
         }
     }
     if (r.has("pitot_static")) {

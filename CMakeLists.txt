@@ -44,6 +44,7 @@ add_library(avd_core
   src/core/src/procedures.cpp
   src/core/src/telemetry.cpp
   src/core/src/navigation.cpp
+  src/core/src/gps.cpp
   src/core/src/world_ground.cpp
 )
 add_library(avd::core ALIAS avd_core)
@@ -51,7 +52,7 @@ target_include_directories(avd_core PUBLIC src/core/include)
 target_compile_options(avd_core PRIVATE ${AVD_WARNINGS})
 
 # ---- Scenarios, test pilot, airports (shared by tests and avdemo) ----
-add_library(avd_scenarios src/scenarios/scenarios.cpp src/scenarios/trim.cpp src/scenarios/test_pilot.cpp src/scenarios/airports.cpp)
+add_library(avd_scenarios src/scenarios/scenarios.cpp src/scenarios/trim.cpp src/scenarios/test_pilot.cpp src/scenarios/approach_pilot.cpp src/scenarios/airports.cpp)
 target_include_directories(avd_scenarios PUBLIC src/scenarios)
 target_link_libraries(avd_scenarios PUBLIC avd_core)
 target_compile_options(avd_scenarios PRIVATE ${AVD_WARNINGS})
