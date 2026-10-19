@@ -63,7 +63,7 @@ is marked *predicted* as a sanity check, not a validation.
 | Approach trim at 1.23 VS + 5 kt, α in −2…9° (test) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Vref vs published (test) | 105 vs 104 KIAS, *predicted* (±8 %) | calibrated (±2 %) | — | calibrated (±2 %) | — |
 | Hands-off take-off roll: heading within 3° at VR, lift-off and climb (test) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Take-off on the take-off flap, rotate at 1.12 VS TO, to 400 ft (`check.mjs`, SBSP 2,631 ft, spawn weight) | 1,365 ft roll | 1,323 ft | 1,639 ft | 2,913 ft | 3,411 ft |
+| Take-off on the take-off flap (the largest detent up to 20°), rotate at 1.12 VS TO, to 400 ft (`check.mjs`, SBSP 2,631 ft, spawn weight) | 1,700 ft roll (flap 8) | 1,323 ft | 1,639 ft | 2,913 ft | 3,411 ft |
 | Stabilised final at Vref + 5 (`check.mjs`) | 99 KIAS, −535 fpm, α 4.6° | 105, −564, 0.9° | 100, −544, 5.2° | 133, −700, 1.9° | 135, −689, 3.7° |
 
 The Phenom 300E's Vref is a prediction: its flaps were not calibrated, and

@@ -81,7 +81,10 @@ TEST_CASE("generated jets: the take-off roll tracks straight hands off (no groun
         Aircraft ac(d);
         SimpleWeather atm;
         FlatGround ground(0);
-        const std::size_t to = d.controls.flapDetents.size() / 2;
+        // The take-off flap as the web host picks it: the largest detent up to 20 deg.
+        std::size_t to = 0;
+        for (std::size_t k = 1; k < d.controls.flapDetents.size(); ++k)
+            if (d.controls.flapDetents[k] <= degToRad(20.5)) to = k;
         ac.setEngineRunning(true);
         ac.setFlapsImmediately(static_cast<int>(to));
         ac.placeOnGround(0, 0, 0, ground, atm);

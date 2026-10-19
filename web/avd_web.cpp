@@ -419,6 +419,15 @@ void finishReset(bool seedInstruments) {
 
 }  // namespace
 
+// The take-off flap: the largest detent up to 20 deg (the middle one if none
+// is), as the PFD's V-speeds and the runway hint assume.
+std::size_t takeoffDetent(const std::vector<Real>& det) {
+    std::size_t k = 0;
+    for (std::size_t i = 1; i < det.size(); ++i)
+        if (det[i] <= degToRad(20.5)) k = i;
+    return k > 0 ? k : det.size() / 2;
+}
+
 // Trimmed maximum lift coefficients (clean is per flight condition; take-off
 // and landing flap at low Mach), computed once per aircraft.
 void ensureClmaxModel() {
@@ -426,7 +435,7 @@ void ensureClmaxModel() {
     const std::vector<Real>& det = g->def.controls.flapDetents;
     g->clmaxModel = std::make_unique<AeroModel>(g->def);
     const Vec3 cg0 = g->ac->massProperties().cg;
-    g->clmaxTakeoff = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det[det.size() / 2], 0.2);
+    g->clmaxTakeoff = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det[takeoffDetent(det)], 0.2);
     g->clmaxLanding = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det.back(), 0.2);
 }
 Real jetApproachKias() {
@@ -750,7 +759,7 @@ AVD_EXPORT double* avd_jet() {
     g_jet[47] = t.flapAngle < degToRad(0.5) ? 0.0
                 : msToKt(!lim.flapExtendedIasVsFlap.empty() ? lim.flapExtendedIasVsFlap(t.flapAngle) : lim.flapExtendedIas);
     g_jet[48] = msToKt(g->def.controls.gear.maxExtendedIas);
-    g_jet[49] = det.size() > 2 ? radToDeg(det[det.size() / 2]) : 0.0;
+    g_jet[49] = det.size() > 2 ? radToDeg(det[takeoffDetent(det)]) : 0.0;
     g_jet[50] = radToDeg(det.back());
     g_jet[51] = t.stickPusher;
     // Thrust reversers (engines 1, 2: position 0..1, phase 0 stowed, 1 reverse

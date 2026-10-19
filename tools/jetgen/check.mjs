@@ -32,12 +32,14 @@ for (const id of ids) {
   s = A.state(); j = A.jet();
   out.push(`final: IAS ${s[10].toFixed(0)}, VS ${s[15].toFixed(0)}, a ${s[16].toFixed(1)}, flap ${j[27].toFixed(0)}, thr ${A.avd_trim_throttle().toFixed(2)}, Vs LDG ${j[34].toFixed(0)}`);
   // Take-off at full thrust on the detent the take-off stall speed is for
-  // (the middle one); rotate at 1.12 Vs(TO).
+  // (jet()[49]); rotate at 1.12 Vs(TO).
   A.avd_set_assist(0);
   A.avd_reset(1);
   A.avd_cockpit_cycle(A.cockpit().find((x) => x.id === 'brakes.parking').index);
   const fl1 = A.cockpit().find((x) => x.id === 'flaps.lever');
-  for (let k = 0; k < Math.floor(fl1.positions.length / 2); ++k) A.avd_cockpit_cycle(fl1.index);
+  const toFlap = Math.round(A.jet()[49]);
+  const flapAt = () => { const c = A.cockpit()[fl1.index]; return parseFloat(c.positions[c.position]); };
+  for (let k = 0; k < fl1.positions.length && flapAt() !== toFlap; ++k) A.avd_cockpit_cycle(fl1.index);
   let vr = 0, t = 0, lift = -1, x0 = A.state()[0], y0 = A.state()[1];
   for (let i = 0; i < 4 * 90; ++i) {
     s = A.state(); j = A.jet();
