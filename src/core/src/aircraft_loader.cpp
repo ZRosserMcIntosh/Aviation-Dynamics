@@ -569,6 +569,16 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("oil_pressure_idle_psi", e.oilPressureIdle, 6894.757);
         o.num("oil_pressure_max_psi", e.oilPressureMax, 6894.757);
         o.integer("fuel_feed", e.fuelFeed);
+        if (o.has("thrust_reverser")) {
+            Obj rv = o.child("thrust_reverser");
+            e.reverser.present = true;
+            rv.num("effectiveness", e.reverser.effectiveness);
+            rv.num("transit_time_s", e.reverser.transitTime);
+            rv.num("reverse_n1", e.reverser.reverseN1);
+            rv.num("stow_kias", e.reverser.stowIas, units::kKnot);
+            rv.num("cascade_forward_of_nozzle_m", e.reverser.cascadeForward);
+            rv.num("cowl_radius_m", e.reverser.cowlRadius);
+        }
         d.turbofans.push_back(e);
     });
     if (r.has("fuel")) {
@@ -681,6 +691,10 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
             b.num("drag_area_m2", d.controls.speedbrake.dragArea);
             b.num("lift_loss_fraction", d.controls.speedbrake.liftLossFraction);
             b.num("rate_per_s", d.controls.speedbrake.rate);
+            b.boolean("ground_spoilers", d.controls.speedbrake.groundSpoilers);
+            b.num("ground_arm_kt", d.controls.speedbrake.groundArmSpeed, units::kKnot);
+            b.num("ground_stow_kt", d.controls.speedbrake.groundStowSpeed, units::kKnot);
+            b.num("ground_rate_per_s", d.controls.speedbrake.groundRate);
         }
     }
     if (r.has("pitot_static")) {

@@ -49,8 +49,12 @@ Airport congonhas(const LocalFrame& frame) {
     a.name = "Congonhas";
     a.elevation = 802.0;
     a.magneticVariation = units::degToRad(-21.5);
-    const Vec3 thr35 = frame.nedFromGeodetic(deg(-23.634333, -46.651167, 0));
-    const Vec3 thr17 = frame.nedFromGeodetic(deg(-23.621, -46.6605, 0));
+    // On the São Paulo World map, whose imagery puts runway 17R/35L about
+    // 112 m east of its surveyed line (and 0.25 deg further anticlockwise):
+    // the airplane lands on the runway the pilot sees. Surveyed thresholds
+    // (17R -23.6210, -46.6604; 35L -23.6343, -46.6512) for reference.
+    const Vec3 thr35 = frame.nedFromGeodetic(deg(-23.633762, -46.650216, 0));
+    const Vec3 thr17 = frame.nedFromGeodetic(deg(-23.620467, -46.659612, 0));
     const Vec3 d = thr17 - thr35;
     const Real heading = std::atan2(d.y, d.x);
     const Vec3 dir{std::cos(heading), std::sin(heading), 0};

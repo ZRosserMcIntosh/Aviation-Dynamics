@@ -231,6 +231,17 @@ struct TurbofanDef {
     Real oilPressureIdle = 2.4e5;     // Pa
     Real oilPressureMax = 4.1e5;      // Pa
     int fuelFeed = 0;
+    // Thrust reverser (optional): fan-flow reverser (cascade type), deployed
+    // and stowed automatically on the landing roll.
+    struct Reverser {
+        bool present = false;
+        Real effectiveness = 0.4;     // reverse force as a fraction of the forward thrust at the same N1
+        Real transitTime = 2.0;       // s, stowed to deployed (and back)
+        Real reverseN1 = 0.8;         // fan speed commanded in full reverse (fraction of take-off)
+        Real stowIas = 30.87;         // m/s (60 KIAS): reverse idle below this, then stow
+        Real cascadeForward = 1.4;    // m forward of the nozzle exit: where the cascades are
+        Real cowlRadius = 0.7;        // m, nacelle radius at the cascades
+    } reverser;
 };
 
 // Retractable landing gear and speedbrakes (both optional).
@@ -250,6 +261,13 @@ struct SpeedbrakeDef {
     // without spoiler panels; with spoiler controls on the wing the panels
     // carry the drag and the lift loss where they are.)
     Real rate = 0.5;                  // deployment fraction per second
+    // Ground spoilers: every panel to full on main-wheel contact with the
+    // throttles at idle above armSpeed (also a rejected take-off); stowed
+    // when the throttles come up or below taxi speed.
+    bool groundSpoilers = false;
+    Real groundArmSpeed = 15.4;       // m/s ground speed (30 kt)
+    Real groundStowSpeed = 7.7;       // m/s (15 kt)
+    Real groundRate = 1.5;            // deployment fraction per second
 };
 
 // ---- Fuel -----------------------------------------------------------------

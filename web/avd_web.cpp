@@ -591,8 +591,9 @@ AVD_EXPORT int avd_procedure_status() {
 // Engines after the strips, 14 doubles each: position xyz, thrust axis xyz,
 // radius, slipstream / jet velocity increment (m/s), thrust (N), kind (0
 // propeller, 1 turbofan), propeller rate rad/s (signed: right-handed about the
-// thrust axis), blades, swirl m/s at 0.7 R, hub radius fraction. Structural
-// frame: x forward, y right, z down.
+// thrust axis), blades, swirl m/s at 0.7 R, hub radius fraction (turbofans:
+// reverser position, efflux speed m/s, cowl radius, cascades forward of the
+// nozzle m). Structural frame: x forward, y right, z down.
 AVD_EXPORT double* avd_flow() {
     for (double& v : g_flow) v = 0;
     if (!g) return g_flow;
@@ -646,6 +647,13 @@ AVD_EXPORT double* avd_flow() {
         const Vec3 ax = normalized(d.thrustAxis);
         o[3] = ax.x; o[4] = ax.y; o[5] = ax.z;
         o[6] = rNozzle; o[7] = std::max(vj - v0, 0.0); o[8] = ts.thrust; o[9] = 1;
+        // Reverser: position, efflux speed through the cascades (the fan
+        // stream, about the jet's speed relative to the nacelle), cowl radius
+        // and the cascades' distance forward of the nozzle.
+        if (d.reverser.present) {
+            o[10] = ac.reverserPosition(i); o[11] = vj;
+            o[12] = d.reverser.cowlRadius; o[13] = d.reverser.cascadeForward;
+        }
     }
     g_flow[1] = ne;
     return g_flow;
@@ -661,7 +669,8 @@ AVD_EXPORT void avd_ai_cage() {
 // [6] fuel kg, [7] fuel flow kg/h; engines at 8 + 8 i: N1 %, N2 %, ITT degC,
 // fuel flow kg/h, thrust kN, running, starting, fuel switch; [24] MMO,
 // [25] VMO kt, [26] TAS kt, [27] flap deg, [28] trim, [29] weight on wheels,
-// [30], [31] oil pressure psi (engines 1, 2).
+// [30], [31] oil pressure psi (engines 1, 2); ... [52..55] thrust reversers
+// (position, phase) engines 1, 2, [56] ground spoilers out, [57] reversers fitted.
 AVD_EXPORT double* avd_jet() {
     for (double& v : g_jet) v = 0;
     if (!g) return g_jet;
@@ -730,6 +739,14 @@ AVD_EXPORT double* avd_jet() {
     g_jet[49] = det.size() > 2 ? radToDeg(det[det.size() / 2]) : 0.0;
     g_jet[50] = radToDeg(det.back());
     g_jet[51] = t.stickPusher;
+    // Thrust reversers (engines 1, 2: position 0..1, phase 0 stowed, 1 reverse
+    // thrust, 2 reverse idle, 3 stowing) and the ground spoilers.
+    for (int i = 0; i < std::min(ac.turbofanCount(), 2); ++i) {
+        g_jet[52 + 2 * i] = ac.reverserPosition(i);
+        g_jet[53 + 2 * i] = ac.reverserPhase(i);
+    }
+    g_jet[56] = ac.groundSpoilersActive();
+    g_jet[57] = g->def.turbofans.empty() ? 0.0 : g->def.turbofans[0].reverser.present;
     return g_jet;
 }
 
