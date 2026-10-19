@@ -39,7 +39,8 @@ TEST_CASE("destinations: region airports carry their published runways and eleva
     CHECK_NEAR(gr.runways[2].length, 3000, 40);
     CHECK_NEAR(gr.elevation, 750.1, 0.5);
     CHECK_NEAR(radToDeg(gr.runways[0].headingTrue), 74, 1.5);
-    CHECK_NEAR(radToDeg(wrapPi(gr.runways[1].headingTrue - gr.runways[0].headingTrue)), 180, 1e-6);
+    // Opposite ends, exactly a half turn apart (wrapPi of a half turn is +-pi by platform: compare its size).
+    CHECK_NEAR(std::abs(radToDeg(wrapPi(gr.runways[1].headingTrue - gr.runways[0].headingTrue))), 180, 1e-6);
     // Viracopos 15/33: 3,240 m, a 300 ft displaced threshold on 33.
     const Airport& kp = airport("SBKP");
     CHECK_NEAR(kp.runways[0].length, 3240, 40);
