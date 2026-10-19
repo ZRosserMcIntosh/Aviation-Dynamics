@@ -11,6 +11,7 @@
 #include "avd/atmosphere.hpp"
 #include "avd/geodesy.hpp"
 #include "avd/gps.hpp"
+#include "avd/json.hpp"
 #include "avd/ground.hpp"
 #include "avd/navigation.hpp"
 
@@ -72,6 +73,19 @@ Airport congonhas(const LocalFrame& frame);
 // in each IlsDef. Runways are modelled flat at the field elevation.
 // Approximate; not for real-world navigation.
 const std::vector<Airport>& saoPauloRegionAirports();
+
+// An airport from one record of data/world/airports_br.json
+// (tools/navdata/brazil.py): its paved runways (from their ends' coordinates
+// when the record has them, else centred on the airport reference point on
+// their true heading, or the runway number's with the regional variation;
+// parallel L/R runways 400 m apart) and its ILSs. Runways flat at the field
+// elevation. Unusable records give an airport with no runways.
+Airport airportFromRecord(const json::Value& record, const LocalFrame& frame);
+
+// The ILS navaids of `a` (IlsDef) into `db`: localizer antenna 300 m beyond
+// the far end, glideslope 300 m past the landing threshold and 120 m to the
+// side; 3 degrees.
+void addIlsNavaids(NavDatabase& db, const Airport& a, const LocalFrame& frame);
 
 // Flat airfield ground (grass) at the airport elevation with its runways.
 std::unique_ptr<AirfieldGround> makeAirfieldGround(const Airport& a, const LocalFrame& frame);

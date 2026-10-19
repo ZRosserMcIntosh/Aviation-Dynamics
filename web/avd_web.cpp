@@ -89,14 +89,34 @@ int g_airportId = 1;
 // on (-1: none). Kept across aircraft loads.
 int g_destAirport = -1, g_destRunway = 0;
 
-const scenarios::Airport& regionAirport(int i) { return scenarios::saoPauloRegionAirports()[static_cast<std::size_t>(i)]; }
-int regionCount() { return static_cast<int>(scenarios::saoPauloRegionAirports().size()); }
+// The airports on the ground and in the nav database: the region's, plus a
+// destination from anywhere in Brazil (avd_set_destination_record) after
+// them. Kept across aircraft loads, as is the nav database built from them.
+std::vector<scenarios::Airport> g_airports = scenarios::saoPauloRegionAirports();
+NavDatabase g_navDb;
+NavEnvironment g_navEnv;
+void rebuildNav() {
+    const NavEnvironment& region = scenarios::saoPauloNavEnvironment();
+    g_navDb = NavDatabase{};
+    for (const Navaid& n : region.database->navaids()) g_navDb.add(n);
+    const LocalFrame f = scenarios::saoPauloWorldFrame();
+    for (std::size_t i = scenarios::saoPauloRegionAirports().size(); i < g_airports.size(); ++i)
+        scenarios::addIlsNavaids(g_navDb, g_airports[i], f);
+    g_navEnv.field = region.field;
+    g_navEnv.database = &g_navDb;
+}
+const NavEnvironment& navEnvironment() {
+    if (!g_navEnv.database) rebuildNav();
+    return g_navEnv;
+}
+const scenarios::Airport& regionAirport(int i) { return g_airports[static_cast<std::size_t>(i)]; }
+int regionCount() { return static_cast<int>(g_airports.size()); }
 
 void rebuildWeather();
 
 void buildAirport() {
     g->airport = regionAirport(g_airportId == 0 ? 1 : 0);
-    g->ground = scenarios::makeRegionGround(scenarios::saoPauloRegionAirports());
+    g->ground = scenarios::makeRegionGround(g_airports);
     g->ground->setWaterDepth(g->runwayWater);
     rebuildWeather();  // the wind surroundings and hazards are placed around it
 }
@@ -141,7 +161,7 @@ void buildRoute() {
         const Real c = std::cos(rw.headingTrue), sn = std::sin(rw.headingTrue);
         const Real out = -((p.x - thr.x) * c + (p.y - thr.y) * sn), lateral = -(p.x - thr.x) * sn + (p.y - thr.y) * c;
         const Real hdgErr = std::abs(wrapPi(g->ac->telemetry().heading - rw.headingTrue));
-        if (std::abs(lateral) < 1852 && out > 0 && out < 10.2 * 1852 && hdgErr < degToRad(45))
+        if (!g->ac->telemetry().onGround && std::abs(lateral) < 1852 && out > 0 && out < 10.2 * 1852 && hdgErr < degToRad(45))
             g->gps.activate(out > 5 * 1852 ? faf : faf + 1);
     }
 }
@@ -309,7 +329,7 @@ AVD_EXPORT int avd_load(int length) {
     for (const PayloadStationDef& s : g->def.stations) g->loadStations.push_back(s.initial);
     for (const FuelTankDef& t : g->def.fuel.tanks) g->loadTanks.push_back(t.initial);
     g->ac = std::make_unique<Aircraft>(g->def, g->frame);
-    g->ac->setNavEnvironment(&scenarios::saoPauloNavEnvironment());
+    g->ac->setNavEnvironment(&navEnvironment());
     applyLoad(*g->ac);
     return 0;
 }
@@ -372,7 +392,7 @@ void newAircraft() {
         g->wx.hazardTime = 0;
         rebuildWeather();
     }
-    g->ac->setNavEnvironment(&scenarios::saoPauloNavEnvironment());
+    g->ac->setNavEnvironment(&navEnvironment());
     applyLoad(*g->ac);
     g->procedure = ProcedureRunner{};
     g->assist.reset();
@@ -929,6 +949,41 @@ AVD_EXPORT void avd_set_destination(int airport, int runway) {
     g->gps.update(g->ac->state().body.position, g->ac->telemetry().altitudeMsl, g->ac->telemetry().groundSpeed);
 }
 AVD_EXPORT int avd_destination() { return g_destAirport; }
+
+// A destination from anywhere in Brazil: one record of airports_br.json
+// (tools/navdata/brazil.py) in the text buffer, and the index of the runway
+// end to land on in its records' order (each runway's two ends in turn). An
+// airport of the region is used as the region has it (its runways matched by
+// name); any other joins the ground and the nav database after the region's.
+// Returns the destination's index (avd_destinations_text), -1 if the record
+// or runway is unusable.
+AVD_EXPORT int avd_set_destination_record(int length, int runway) {
+    const json::ParseResult pr = json::parse(std::string(g_text, static_cast<std::size_t>(std::max(length, 0))));
+    if (!pr.ok()) return -1;
+    const scenarios::Airport rec = scenarios::airportFromRecord(pr.value, scenarios::saoPauloWorldFrame());
+    if (runway < 0 || runway >= static_cast<int>(rec.runways.size())) return -1;
+    const std::string ident = rec.runways[static_cast<std::size_t>(runway)].ident;
+    const auto& region = scenarios::saoPauloRegionAirports();
+    int ai = -1, ri = runway;
+    for (std::size_t i = 0; i < region.size(); ++i) {
+        if (region[i].icao != rec.icao) continue;
+        for (std::size_t k = 0; k < region[i].runways.size(); ++k)
+            if (region[i].runways[k].ident == ident) { ai = static_cast<int>(i); ri = static_cast<int>(k); }
+        if (ai < 0) return -1;  // a runway the region does not model (Congonhas 17L/35R)
+    }
+    if (ai < 0) {
+        g_airports.resize(region.size());
+        g_airports.push_back(rec);
+        ai = static_cast<int>(region.size());
+        rebuildNav();
+        if (g) {
+            g->ground = scenarios::makeRegionGround(g_airports);
+            g->ground->setWaterDepth(g->runwayWater);
+        }
+    }
+    avd_set_destination(ai, ri);
+    return ai;
+}
 AVD_EXPORT int avd_destination_runway() { return g_destRunway; }
 
 // The region's airports, one per line: "ICAO|name|elevation m|ends", ends
@@ -936,7 +991,7 @@ AVD_EXPORT int avd_destination_runway() { return g_destRunway; }
 // without an ILS).
 AVD_EXPORT int avd_destinations_text() {
     std::string out;
-    for (const scenarios::Airport& a : scenarios::saoPauloRegionAirports()) {
+    for (const scenarios::Airport& a : g_airports) {
         out += a.icao + "|" + a.name + "|" + std::to_string(static_cast<int>(std::lround(a.elevation))) + "|";
         for (std::size_t k = 0; k < a.runways.size(); ++k) {
             const scenarios::IlsDef* ils = nullptr;
@@ -949,13 +1004,16 @@ AVD_EXPORT int avd_destinations_text() {
     return putText(out);
 }
 
-// Every runway of the region, world frame, for drawing: per airport
-// [elevation m, number of ends, then per end: east, north (paved end),
-// heading true deg, length, width, displaced threshold m].
-double g_region[512];
+// Every runway of the region (and a destination beyond it), world frame, for
+// drawing: [number of airports, then per airport elevation m, number of
+// ends, then per end: east, north (paved end), heading true deg, length,
+// width, displaced threshold m].
+double g_region[1024];
 AVD_EXPORT double* avd_region() {
-    int k = 0;
-    for (const scenarios::Airport& a : scenarios::saoPauloRegionAirports()) {
+    int k = 1;
+    g_region[0] = static_cast<double>(g_airports.size());
+    for (const scenarios::Airport& a : g_airports) {
+        if (k + 2 + 6 * static_cast<int>(a.runways.size()) > 1024) break;
         g_region[k++] = a.elevation;
         g_region[k++] = static_cast<double>(a.runways.size());
         for (const RunwayDef& r : a.runways) {

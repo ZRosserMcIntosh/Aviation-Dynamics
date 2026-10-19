@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 #include "avd/units.hpp"
 
@@ -233,6 +234,117 @@ std::unique_ptr<AirfieldGround> makeAirfieldGround(const Airport& a, const Local
     return g;
 }
 
+void addIlsNavaids(NavDatabase& d, const Airport& ap, const LocalFrame& f) {
+    auto geo = [&](const Vec3& ned, Real h) {
+        Geodetic g = f.geodeticFromNed(ned);
+        g.height = h;
+        return g;
+    };
+    for (const IlsDef& i : ap.ils) {
+        if (i.runway < 0 || i.runway >= static_cast<int>(ap.runways.size())) continue;
+        const RunwayDef& rw = ap.runways[static_cast<std::size_t>(i.runway)];
+        Navaid loc;
+        loc.type = Navaid::Type::Localizer;
+        loc.ident = i.ident;
+        loc.name = ap.icao + " ILS " + rw.ident + (i.synthetic ? " (synthetic)" : "");
+        loc.frequencyKhz = i.khz;
+        loc.position = geo(runwayPoint(rw, rw.length + 300), ap.elevation + 2);
+        // The course in the antenna's own tangent frame: far from the world
+        // origin its north is turned by the meridians' convergence (0.2 deg at
+        // Viracopos), which would offset the beam.
+        const Vec3 along = f.rotationTo(LocalFrame(loc.position)) * Vec3{std::cos(rw.headingTrue), std::sin(rw.headingTrue), 0};
+        loc.course = std::atan2(along.y, along.x);
+        // Width giving 700 ft (213 m) full-scale span at the landing threshold.
+        loc.courseWidth = 2 * std::atan2(106.7, rw.length + 300 - rw.displaced);
+        loc.rangeNm = 18;
+        loc.synthetic = i.synthetic;
+        loc.source = i.source;
+        d.add(loc);
+        Navaid gs = loc;
+        gs.type = Navaid::Type::Glideslope;
+        gs.ident = i.ident + " GS";
+        gs.position = geo(runwayPoint(rw, rw.displaced + 300, 120), ap.elevation + 2);
+        gs.glidepathAngle = units::degToRad(3.0);
+        gs.rangeNm = 10;
+        d.add(gs);
+    }
+}
+
+Airport airportFromRecord(const json::Value& rec, const LocalFrame& f) {
+    auto str = [&](const char* k) { const json::Value* v = rec.find(k); return v && v->isString() ? v->asString() : std::string(); };
+    auto number = [](const json::Value* v, Real def) { return v && v->isNumber() ? v->asNumber() : def; };
+    Airport a = fieldAt("", "", number(rec.find("elev"), 0));
+    a.icao = str("icao");
+    a.name = str("city").empty() ? str("name") : str("city");
+    a.source = "OurAirports (public domain) via tools/navdata/brazil.py";
+    const Real lat0 = number(rec.find("lat"), 0), lon0 = number(rec.find("lon"), 0);
+    const json::Value* rws = rec.find("rw");
+    if (!rws || !rws->isArray()) return a;
+    for (const json::Value& r : rws->items()) {
+        const json::Value* ends = r.find("ends");
+        if (!ends || !ends->isArray() || ends->items().size() != 2) continue;
+        const std::string id1 = ends->items()[0].asString(), id2 = ends->items()[1].asString();
+        const Real len = number(r.find("len"), 0), wid = number(r.find("wid"), 98);
+        if (len <= 0) continue;
+        Real d1 = 0, d2 = 0;
+        if (const json::Value* dp = r.find("disp"); dp && dp->isArray() && dp->items().size() == 2) {
+            d1 = number(&dp->items()[0], 0);
+            d2 = number(&dp->items()[1], 0);
+        }
+        // The runway's number (magnetic heading / 10, with the regional
+        // variation) is the arbiter: OurAirports' listed true headings are
+        // often magnetic or wrong, and a few end coordinates are misplaced.
+        const Real fromNumber = std::atof(id1.c_str()) * 10 + units::radToDeg(a.magneticVariation);
+        auto agrees = [&](Real hdgDeg) { return std::abs(units::radToDeg(wrapPi(units::degToRad(hdgDeg - fromNumber)))) < 20; };
+        const json::Value *le = r.find("le"), *he = r.find("he");
+        if (le && he && le->isArray() && he->isArray() && le->items().size() == 2 && he->items().size() == 2) {
+            const Vec3 p1 = f.nedFromGeodetic(deg(le->items()[0].asNumber(), le->items()[1].asNumber(), 0));
+            const Vec3 p2 = f.nedFromGeodetic(deg(he->items()[0].asNumber(), he->items()[1].asNumber(), 0));
+            if (agrees(units::radToDeg(std::atan2(p2.y - p1.y, p2.x - p1.x)))) {
+                addRunway(a, f, id1.c_str(), le->items()[0].asNumber(), le->items()[1].asNumber(), d1, id2.c_str(),
+                          he->items()[0].asNumber(), he->items()[1].asNumber(), d2, len, wid);
+                continue;
+            }
+        }
+        // No (usable) end coordinates: centred on the reference point, on the
+        // listed true heading if it agrees with the number, else the number's;
+        // parallels 400 m apart, L to the left.
+        const json::Value* listed = r.find("hdg");
+        const Real hdg = listed && listed->isNumber() && agrees(listed->asNumber()) ? listed->asNumber() : fromNumber;
+        const Real h = units::degToRad(hdg);
+        Vec3 c = f.nedFromGeodetic(deg(lat0, lon0, 0));
+        const Real side = id1.find('L') != std::string::npos ? -200.0 : (id1.find('R') != std::string::npos ? 200.0 : 0.0);
+        c = c + Vec3{-std::sin(h), std::cos(h), 0} * side;
+        const Real half = 0.5 * len * kFt, mPerDegLat = 111320.0, mPerDegLon = 111320.0 * std::cos(units::degToRad(lat0));
+        // Back to coordinates for addRunway (it reprojects them): a local
+        // flat-Earth offset is exact enough over a runway length.
+        const Vec3 e0 = f.nedFromGeodetic(deg(lat0, lon0, 0));
+        const Real dn = c.x - e0.x, de = c.y - e0.y;
+        const Real latc = lat0 + dn / mPerDegLat, lonc = lon0 + de / mPerDegLon;
+        const Real dLat = std::cos(h) * half / mPerDegLat, dLon = std::sin(h) * half / mPerDegLon;
+        addRunway(a, f, id1.c_str(), latc - dLat, lonc - dLon, d1, id2.c_str(), latc + dLat, lonc + dLon, d2, len, wid);
+    }
+    if (const json::Value* ils = rec.find("ils"); ils && ils->isArray()) {
+        for (const json::Value& i : ils->items()) {
+            const json::Value* rwy = i.find("rwy");
+            if (!rwy || !rwy->isString()) continue;
+            for (std::size_t k = 0; k < a.runways.size(); ++k) {
+                if (a.runways[k].ident != rwy->asString()) continue;
+                IlsDef d;
+                d.runway = static_cast<int>(k);
+                d.khz = static_cast<int>(std::lround(number(i.find("mhz"), 0) * 1000));
+                if (const json::Value* id = i.find("id"); id && id->isString()) d.ident = id->asString();
+                if (const json::Value* src = i.find("src"); src && src->isString()) d.source = src->asString();
+                if (d.khz >= 108100 && d.khz <= 111950) a.ils.push_back(d);
+            }
+        }
+    }
+    if (!a.ils.empty())
+        for (const IlsDef& i : a.ils)
+            if (i.runway == 0) a.ilsKhz = i.khz;
+    return a;
+}
+
 const NavEnvironment& saoPauloNavEnvironment() {
     static NavDatabase db = [] {
         NavDatabase d;
@@ -251,43 +363,7 @@ const NavEnvironment& saoPauloNavEnvironment() {
         vor.synthetic = true;
         vor.source = src;
         d.add(vor);
-        auto geo = [&](const Vec3& ned, Real h) {
-            Geodetic g = f.geodeticFromNed(ned);
-            g.height = h;
-            return g;
-        };
-        // Every ILS of the region (IlsDef): localizer antenna 300 m beyond the
-        // far end, glideslope 300 m past the landing threshold and 120 m right
-        // of the centreline; 3 degrees.
-        for (const Airport& ap : saoPauloRegionAirports()) {
-            for (const IlsDef& i : ap.ils) {
-                const RunwayDef& rw = ap.runways[static_cast<std::size_t>(i.runway)];
-                Navaid loc;
-                loc.type = Navaid::Type::Localizer;
-                loc.ident = i.ident;
-                loc.name = ap.icao + " ILS " + rw.ident + (i.synthetic ? " (synthetic)" : "");
-                loc.frequencyKhz = i.khz;
-                loc.position = geo(runwayPoint(rw, rw.length + 300), ap.elevation + 2);
-                // The course in the antenna's own tangent frame: far from the
-                // world origin its north is turned by the meridians' convergence
-                // (0.2 deg at Viracopos), which would offset the beam.
-                const Vec3 along = f.rotationTo(LocalFrame(loc.position)) * Vec3{std::cos(rw.headingTrue), std::sin(rw.headingTrue), 0};
-                loc.course = std::atan2(along.y, along.x);
-                // Width giving 700 ft (213 m) full-scale span at the landing threshold.
-                loc.courseWidth = 2 * std::atan2(106.7, rw.length + 300 - rw.displaced);
-                loc.rangeNm = 18;
-                loc.synthetic = i.synthetic;
-                loc.source = i.source;
-                d.add(loc);
-                Navaid gs = loc;
-                gs.type = Navaid::Type::Glideslope;
-                gs.ident = i.ident + " GS";
-                gs.position = geo(runwayPoint(rw, rw.displaced + 300, 120), ap.elevation + 2);
-                gs.glidepathAngle = units::degToRad(3.0);
-                gs.rangeNm = 10;
-                d.add(gs);
-            }
-        }
+        for (const Airport& ap : saoPauloRegionAirports()) addIlsNavaids(d, ap, f);
         return d;
     }();
     static NavEnvironment env = [] {

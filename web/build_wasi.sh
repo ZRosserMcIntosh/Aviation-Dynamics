@@ -20,7 +20,7 @@ for f in avd_text avd_load avd_error_text avd_set_weather avd_reset avd_set_inpu
          avd_set_wind_detail avd_set_wind_hazard \
          avd_set_runway_water avd_wind_grid avd_set_wake avd_wake avd_wind_box avd_bodies \
          avd_set_destination avd_destination avd_destination_runway avd_destinations_text avd_region \
-         avd_ground_height avd_route avd_route_text avd_gps; do
+         avd_ground_height avd_route avd_route_text avd_gps avd_set_destination_record; do
   EXPORTS="$EXPORTS -Wl,--export=$f"
 done
 "$WASI_SDK/bin/clang++" --target=wasm32-wasip1 --sysroot="$WASI_SDK/share/wasi-sysroot" \

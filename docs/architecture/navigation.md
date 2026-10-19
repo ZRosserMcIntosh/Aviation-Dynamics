@@ -1,6 +1,6 @@
 # Navigation: destinations, ILS and GPS
 
-Pick a destination in the São Paulo region and the aircraft does three
+Pick a destination anywhere in Brazil and the aircraft does three
 things:
 - tunes NAV 1 to that runway's ILS and sets the course;
 - loads a GPS route to it;
@@ -44,6 +44,62 @@ Data notes:
   in range, as a real one would.
 - **Not for real-world navigation.** Antenna sites are estimated, and
   waypoint names are generated, not the published fixes.
+
+## Anywhere in Brazil (`data/world/airports_br.json`)
+
+`tools/navdata/brazil.py` builds the list from OurAirports (public domain):
+- **Coverage:** 1,150 Brazilian airports with at least one open paved
+  runway of 3,000 ft or more.
+- **Per airport:** codes, name, city, state, elevation, reference point,
+  aliases, runways and ILSs.
+- **Aliases:** OurAirports' keywords plus a short list of the names people
+  use: Confins, Galeão, Santos Dumont, Pampulha.
+- **Repairs:** a few records pair runway ends that aren't reciprocals
+  (16/30). For those, the far end is derived from the near one.
+
+Runways (`airportFromRecord`):
+- **The runway number is the arbiter.** OurAirports' listed true headings
+  are often magnetic or wrong (Florianópolis 14: listed 159°, coordinates
+  120°), and a few end coordinates are misplaced (Tabatinga 07).
+- **Placement:** end coordinates are used when they agree with the
+  number to within 20°. Otherwise the runway is centred on the reference
+  point, on the listed heading if that agrees with the number, else on the
+  number's.
+- **Parallels** without coordinates stand 400 m apart.
+- **Variation:** the number's heading uses the regional 21.5° W estimate.
+  Brazil's variation runs about 12–24° W.
+
+ILSs:
+- OurAirports has frequency records for only a few, and third-party
+  listings disagree (one still shows Guarulhos' pre-2022 numbers).
+- The list keeps those, plus a curated few: Galeão (two of three agree
+  with a chart), Brasília and Viracopos (single secondary source, flagged).
+- **Everywhere else:** RNAV (GPS) approaches.
+
+The page loads one record into the core with
+`avd_set_destination_record`. A region airport maps onto the region's own
+data. Any other joins the ground (each field at its own elevation, blended
+to the region) and the nav database after the region's airports, and the
+route runs to it from the departure runway.
+
+The flat frame holds across Brazil:
+- **Altitude** is the frame height minus z everywhere, so a field reads its
+  own elevation.
+- **ILS geometry** is evaluated geodetically, with the course in the
+  antenna's own frame. Galeão's and Brasília's beams are centred 360 and
+  870 km away.
+- **Directions:** local north in the frame turns by under 2° even 3,000 km
+  out (Tabatinga).
+- **Distances:** the tangent-plane projection shortens them by up to about
+  3 % at 3,000 km.
+- **Gravity:** Earth curvature in gravity's direction is ignored.
+
+The page's search is lexical:
+- accent- and case-insensitive, every word typed matching a word of the
+  airport (as a prefix, inside it, or within one or two typos);
+- exact codes first;
+- bigger airports with scheduled service and an ILS ranked higher among
+  equals.
 
 ## ILS geometry
 
@@ -151,5 +207,7 @@ scaling are checked separately.
 - No DME or marker beacons.
 - Magnetic variation is one regional estimate (21.5° W).
 - No terrain between the fields, and runways are flat.
-- Destinations are limited to the region (about 100 km). Longer routes
-  need the frame rebased.
+- The world frame stays anchored in São Paulo. Brazil-wide distances are
+  within 3 %; beyond Brazil, rebase the frame.
+- Most airports have no ILS data here: they get GPS approaches.
+- Runways without coordinates sit at the reference point.

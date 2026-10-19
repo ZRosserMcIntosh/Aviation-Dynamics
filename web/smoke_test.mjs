@@ -204,6 +204,36 @@ check(cg[32] === 109.7 && cg[37] === 1 && cg[40] === 1 && Math.abs(cg[38]) < 0.1
   check(landed && !s5[48] && Math.abs(s5[2] - 750.1) < 3, `hands-off 172 on the SBGR 10L final: ${landed ? 'touched down' : 'airborne'} at ${s5[2].toFixed(1)} m, crashed ${s5[48]}`);
   B.avd_set_destination(-1, 0);
 }
+// Anywhere in Brazil (data/world/airports_br.json): Galeão 15's ILS (IGL)
+// at its 10 NM fix, 360 km away; a region airport's record maps onto the
+// region's own; Florianópolis (sea level, 490 km) takes a hands-off landing.
+{
+  const { readFile } = await import('node:fs/promises');
+  const br = JSON.parse(await readFile(new URL('../data/world/airports_br.json', import.meta.url), 'utf8')).airports;
+  const rec = (icao) => br.find((a) => a.icao === icao);
+  const endIndex = (r, id) => r.rw.flatMap((w) => w.ends).indexOf(id);
+  const gr = rec('SBGR');
+  check(B.setDestinationRecord(gr, endIndex(gr, '28L')) === 2 && B.avd_destination_runway() === 3, `SBGR record maps onto the region's (${B.avd_destination()}, ${B.avd_destination_runway()})`);
+  const gl = rec('SBGL');
+  const gi = B.setDestinationRecord(gl, endIndex(gl, '15'));
+  B.avd_reset(4);
+  for (let i = 0; i < 120; ++i) B.avd_advance(1 / 60);
+  const cg = B.cockpitState(), r = B.route();
+  check(gi === 6 && cg[32] === 110.3 && cg[37] === 1 && cg[42] === 1 && Math.abs(cg[38]) < 0.15 && r.wp.at(-1).ident === 'RW15',
+    `SBGL ILS 15 at the IF, ${(Math.hypot(B.state()[0], B.state()[1]) / 1000).toFixed(0)} km out: NAV 1 ${cg[32]} LOC CDI ${cg[38].toFixed(2)}`);
+  const fl = rec('SBFL');
+  B.setDestinationRecord(fl, 0);
+  B.avd_reset(5);
+  let landed = false;
+  for (let i = 0; i < 60 * 240 && !landed; ++i) {
+    B.avd_set_input(0, 0, 0, i < 60 * 150 ? B.avd_trim_throttle() : 0, 1, 0, 0, 0, 0);
+    B.avd_advance(1 / 60);
+    landed = B.state()[28] === 1;
+  }
+  const s = B.state();
+  check(landed && !s[48] && Math.abs(s[2] - fl.elev * 0.3048) < 3, `hands-off 172 at Florianópolis ${fl.rw[0].ends[0]}: ${landed ? 'touched down' : 'airborne'} at ${s[2].toFixed(1)} m (field ${(fl.elev * 0.3048).toFixed(1)} m)`);
+  B.avd_set_destination(-1, 0);
+}
 // Wind physics through the page API: a hands-off approach flown into the
 // microburst on final loses its airspeed and sinks far faster than the
 // 3 deg path; moderate turbulence shakes the airspeed.

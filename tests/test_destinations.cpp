@@ -2,10 +2,13 @@
 // their ground, their ILSs and GPS approach routes.
 // SPDX-License-Identifier: MIT
 #include <cmath>
+#include <fstream>
+#include <sstream>
 #include <string>
 
 #include "airports.hpp"
 #include "avd/gps.hpp"
+#include "avd/json.hpp"
 #include "avd/units.hpp"
 #include "avd_test.hpp"
 
@@ -203,4 +206,72 @@ TEST_CASE("gps: CDI sense and full scale; vertical needle sense") {
     CHECK(g.active == 2 && g.verticalValid);
     CHECK_NEAR(g.verticalDeviation, 1200 - (700 + 15.24 + 5000 * std::tan(0.0524)), 1e-6);
     CHECK(g.vdi < 0);
+}
+
+TEST_CASE("destinations: every Brazilian airport record loads with its runways at their published lengths") {
+    std::ifstream in(std::string(AVD_DATA_DIR) + "/world/airports_br.json");
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const json::ParseResult pr = json::parse(ss.str());
+    CHECK(pr.ok());
+    const json::Value* list = pr.value.find("airports");
+    CHECK(list && list->isArray() && list->items().size() > 1000);
+    const LocalFrame f = saoPauloWorldFrame();
+    int ends = 0, ils = 0, bad = 0;
+    for (const json::Value& rec : list->items()) {
+        const Airport a = airportFromRecord(rec, f);
+        const json::Value* rw = rec.find("rw");
+        if (a.icao.empty() || a.runways.size() != 2 * rw->items().size()) ++bad;
+        for (std::size_t k = 0; k < rw->items().size(); ++k) {
+            const json::Value& r = rw->items()[k];
+            if (std::abs(a.runways[2 * k].length - r.find("len")->asNumber() * 0.3048) > 1) ++bad;
+        }
+        // Every runway end points where its number says (magnetic heading /
+        // 10, with Brazil's variation of 12-24 deg W: the regional 21.5 deg
+        // estimate within 15 deg).
+        for (const RunwayDef& r : a.runways) {
+            const Real fromNumber = std::atof(r.ident.c_str()) * 10 - 21.5;
+            if (std::abs(radToDeg(wrapPi(r.headingTrue - degToRad(fromNumber)))) > 15) ++bad;
+        }
+        ends += static_cast<int>(a.runways.size());
+        ils += static_cast<int>(a.ils.size());
+    }
+    CHECK(bad == 0);
+    CHECK(ends > 2000);
+    CHECK(ils >= 10);
+}
+
+TEST_CASE("destinations: far airports (Galeão, Brasília) carry ILSs centred on their own runways") {
+    std::ifstream in(std::string(AVD_DATA_DIR) + "/world/airports_br.json");
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const json::ParseResult pr = json::parse(ss.str());
+    const json::Value* list = pr.value.find("airports");
+    const LocalFrame f = saoPauloWorldFrame();
+    int checked = 0;
+    for (const json::Value& rec : list->items()) {
+        const std::string icao = rec.find("icao")->asString();
+        if (icao != "SBGL" && icao != "SBBR") continue;
+        const Airport a = airportFromRecord(rec, f);
+        NavDatabase db;
+        addIlsNavaids(db, a, f);
+        CHECK(!a.ils.empty());
+        for (const IlsDef& i : a.ils) {
+            const RunwayDef& r = a.runways[static_cast<std::size_t>(i.runway)];
+            const Real d = 6 * 1852 + 300;
+            Geodetic g = f.geodeticFromNed(runwayPoint(r, r.displaced - 6 * 1852));
+            g.height = a.elevation + 2 + d * std::tan(degToRad(3)) + d * d / (2 * 6.371e6);
+            const NavIndication n = evaluateNav(db, i.khz, 0, g);
+            CHECK(n.valid && n.localizer && n.ident == i.ident);
+            CHECK_NEAR(n.cdi, 0, 0.03);
+            CHECK(n.glideslopeValid);
+            CHECK_NEAR(n.glideslope, 0, 0.05);
+            ++checked;
+        }
+        // A route from Congonhas: the GPS sequences it from the runway.
+        int faf = -1;
+        const auto route = approachRoute(a, a.ils[0].runway, {}, faf, &saoPauloRegionAirports()[0].runways[0]);
+        CHECK(route.size() >= 5 && faf == static_cast<int>(route.size()) - 2);
+    }
+    CHECK(checked == 7);  // SBGL 3, SBBR 4
 }
