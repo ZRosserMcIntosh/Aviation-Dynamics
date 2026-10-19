@@ -11,6 +11,7 @@ set(AVD_TEST_SOURCES
   test_jet.cpp
   test_jetgen.cpp
   test_destinations.cpp
+  test_blind_landing.cpp
   test_wind.cpp
   test_wake.cpp
   test_lifting_line.cpp

@@ -125,6 +125,8 @@ struct AircraftTelemetry {
     bool onGround = false;
     bool stallWarning = false;
     bool stickPusher = false;                // stall protection pushing the nose down
+    bool yawDamper = false;                  // yaw damper engaged (in flight, fitted and switched on)
+    Real yawDamperRudder = 0;                // its rudder command (fraction of full travel)
     int stalledStrips = 0;
     Real busVoltage = 0;
     AirSample air;
@@ -240,6 +242,9 @@ public:
     Magnetos magnetos(int engine) const { return magnetos_[engine]; }
     int flapDetent() const { return flapDetent_; }
     bool parkingBrake() const { return parkingBrake_; }
+    // The yaw damper switch (on by default; a fitted damper works in flight).
+    void setYawDamper(bool on) { yawDamperOn_ = on; }
+    bool yawDamperSwitch() const { return yawDamperOn_; }
 
     // ---- Events ----------------------------------------------------------------
     // Events since the last call (bounded queue; oldest dropped when full).
@@ -349,6 +354,8 @@ private:
     bool contactWas_[kMaxContacts] = {};
     Real groundStateTimer_ = 0;  // debounce for touchdown/lift-off events
     bool pusher_ = false, gearOverspeedWas_ = false;
+    bool yawDamperOn_ = true;          // the yaw damper switch
+    Real ydLowPass_ = 0, ydCommand_ = 0;  // washout filter state, rudder command
     bool wasOnGround_ = false, stallWarningWas_ = false, overspeedWas_ = false, overGWas_ = false;
     bool flapOverspeedWas_ = false;
     std::array<bool, kMaxEngines> runningWas_{};

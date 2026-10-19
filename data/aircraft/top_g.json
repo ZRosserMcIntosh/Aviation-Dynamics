@@ -33,6 +33,12 @@
  ],
  "provenance": [
   {
+   "field": "controls.yaw_damper",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Yaw damper (the G650ER has one): washed-out yaw rate (3 s) to the rudder, 2 per rad/s at 160 KEAS scheduled with 1/EAS^2, 30 % authority."
+  },
+  {
    "field": "reference",
    "kind": "published",
    "source": "SPEC",
@@ -915,6 +921,7 @@
   "rigging_aileron": 0.0,
   "rigging_rudder": 0.0,
   "rudder_limiter_kias": 160,
+  "yaw_damper": {"gain_s": 2.0, "reference_kias": 160, "washout_s": 3.0, "authority": 0.3},
   "landing_gear": {
    "retractable": true,
    "transit_time_s": 7.0,

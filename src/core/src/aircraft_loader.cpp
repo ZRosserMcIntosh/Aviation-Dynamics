@@ -680,6 +680,13 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         c.num("rigging_aileron", d.controls.riggingAileron);
         c.num("rigging_rudder", d.controls.riggingRudder);
         c.num("rudder_limiter_kias", d.controls.rudderLimiterIas, units::kKnot);
+        if (c.has("yaw_damper")) {
+            Obj y = c.child("yaw_damper");
+            y.num("gain_s", d.controls.yawDamper.gain);
+            y.num("reference_kias", d.controls.yawDamper.referenceIas, units::kKnot);
+            y.num("washout_s", d.controls.yawDamper.washout);
+            y.num("authority", d.controls.yawDamper.authority);
+        }
         if (c.has("landing_gear")) {
             Obj g = c.child("landing_gear");
             g.boolean("retractable", d.controls.gear.retractable);

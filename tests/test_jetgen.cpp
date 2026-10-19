@@ -4,6 +4,8 @@
 // where one is published), with the approach speed it predicts elsewhere.
 // SPDX-License-Identifier: MIT
 #include <cmath>
+#include <tuple>
+#include <utility>
 
 #include "avd/aero.hpp"
 #include "avd/units.hpp"
@@ -110,5 +112,49 @@ TEST_CASE("generated jets: the take-off roll tracks straight hands off (no groun
         CHECK(headingAtVr >= 0 && headingAtVr < 3.0);
         CHECK(climbed);
         CHECK(!ac.faulted());
+    }
+}
+
+TEST_CASE("generated jets and the Top G: the Dutch roll damps, with the yaw damper and (on a fin sized for the fuselage) without") {
+    // Regression: with the Top G's fin volume on its long fuselage the CRJ700's
+    // Dutch roll diverged below ~140 KTAS, and the Sport assist's sideslip
+    // coordinator drove it to 40 deg of bank.
+    auto run = [](const AircraftDefinition& d, Real kias, int flap, bool gear, bool damper) {
+        Aircraft ac(d);
+        ac.setYawDamper(damper);
+        SimpleWeather atm;
+        FlatGround ground(0);
+        const TrimResult tr = trimAt(ac, 5000, tasFromCas(ktToMs(kias), atm.atmosphere().at(ftToM(5000)).density), flap, gear);
+        ac.setState(tr.state);
+        ac.prepareContext(tr.input, ground, atm);
+        ac.settleDownwash();
+        ac.setElevatorTrim(tr.trim);
+        PilotInput in = tr.input;
+        in.pitch = 0;
+        Real early = 0, late = 0;
+        for (int i = 0; i < 240 * 30; ++i) {
+            in.yaw = i < 240 ? 0.3 : i < 480 ? -0.3 : 0.0;  // rudder doublet, then hands off
+            ac.step(1.0 / 240, in, ground, atm);
+            const Real b = std::abs(ac.telemetry().beta);
+            if (i > 480 && i < 240 * 8) early = std::max(early, b);
+            if (i > 240 * 22) late = std::max(late, b);
+        }
+        return std::make_pair(early, late);
+    };
+    for (const char* id : {"top_g", "phenom300", "cj4", "learjet45", "crj700", "b738"}) {
+        const AircraftDefinition d = loadReference(id);
+        const int landing = static_cast<int>(d.controls.flapDetents.size()) - 1;
+        CHECK(d.controls.yawDamper.gain > 0);
+        // Approach (landing flap, gear down, ~1.35 Vs) and 200 KIAS clean.
+        const AeroModel model(d);
+        Aircraft probe(d);
+        const Real cl = trimmedMaxLiftCoefficient(model, d.referenceArea, probe.massProperties().cg, d.controls.flapDetents.back(), 0.2);
+        const Real vapp = 1.35 * std::sqrt(2 * probe.massProperties().mass * kStandardGravity / (1.225 * d.referenceArea * cl));
+        for (const auto& [kias, flap, gear] : {std::tuple{msToKt(vapp), landing, true}, std::tuple{200.0, 0, false}}) {
+            const auto [e1, l1] = run(d, kias, flap, gear, true);
+            CHECK(l1 < 0.25 * e1 + degToRad(0.2));  // yaw damper on: gone in 20 s
+            const auto [e0, l0] = run(d, kias, flap, gear, false);
+            CHECK(l0 < e0 + degToRad(0.2));         // off: at least not growing
+        }
     }
 }

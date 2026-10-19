@@ -214,7 +214,16 @@ def build(key, spec, top):
     ht_area = TOP['vh'] * S * mac / l_h
     k_h = math.sqrt(ht_area / TOP['ht_area'])
     l_v = (xle - 0.25 * mac) - (x_vt - 1.6 * k_h)
-    vt_area = TOP['vv'] * S * s['span'] / max(l_v, 1.0)
+    # The fin balances the fuselage too: the Top G's volume coefficient plus
+    # what the extra fuselage destabilising moment needs (Munk's moment,
+    # 2 (k2 - k1) Vol / (S b) per radian, against a fin lift slope of ~3/rad:
+    # 0.6 x the extra Vol / (S b)). A long fuselage on a small wing (CRJ700,
+    # 737-800) needs a larger fin: 0.083 and 0.077 here against ~0.08
+    # published; with the Top G's 0.058 the CRJ's Dutch roll diverged slowly
+    # below 140 KTAS.
+    fus_ratio = 105.0 * sL * sR * sR / (S * s['span']) - 105.0 / (TOP['wing_area'] * 2 * TOP['half_span'])
+    vv = TOP['vv'] + 0.6 * max(fus_ratio, 0.0)
+    vt_area = vv * S * s['span'] / max(l_v, 1.0)
     k_v = math.sqrt(vt_area / TOP['vt_area'])
     vtp.update(root_quarter_chord_m=r3([x_vt, 0, -1.15 * sR]), span_m=round(4.35 * k_v, 3), root_chord_m=round(5.4 * k_v, 3),
                tip_chord_m=round(3.3 * k_v, 3))
@@ -354,6 +363,8 @@ def build(key, spec, top):
     # ---- Controls, limits, speedbrake, systems ----
     ctl = d['controls']
     ctl['flap_detents_deg'] = flaps
+    # Yaw damper, as these types have: washed-out yaw rate to the rudder.
+    ctl['yaw_damper'] = {'gain_s': 2.0, 'reference_kias': 160, 'washout_s': 3.0, 'authority': 0.3}
     ctl['landing_gear']['drag_area_m2'] = round(2.0 * sw, 3)
     ctl['landing_gear']['vle_kias'] = s['vle']
     sb = ctl['speedbrake']
@@ -388,7 +399,10 @@ def build(key, spec, top):
          'note': f"The Top G's planform family (crank at 28 % semi-span, taper, washout, twist, sections, flap/aileron/spoiler layout) at this type's "
                  f"span, area and {s['sweep']} deg quarter-chord sweep{' with winglets' if s['winglets'] else ''}."},
         {'field': 'surfaces[1], surfaces[2]', 'kind': 'estimated', 'source': 'EST',
-         'note': f"Tail areas from the Top G's volume coefficients (Vh 0.69, Vv 0.058) at this type's arms; {'T-tail' if s['t_tail'] else 'low-set tail'}."},
+         'note': f"Tail areas from the Top G's volume coefficients at this type's arms (Vh 0.69; Vv {vv:.3f}: the Top G's 0.058 plus what this "
+                 f"fuselage's extra destabilising moment needs); {'T-tail' if s['t_tail'] else 'low-set tail'}."},
+        {'field': 'controls.yaw_damper', 'kind': 'estimated', 'source': 'EST',
+         'note': 'Yaw damper (these types have one): washed-out yaw rate (3 s) to the rudder, 2 per rad/s at 160 KEAS scheduled with 1/EAS^2, 30 % authority.'},
         {'field': 'mass.empty_cg_m, mass.cg_*_limit, gear', 'kind': 'estimated', 'source': 'EST',
          'note': 'Empty CG 27 % MAC, CG limits 7-11 % to 36 % MAC, main gear at 45 % MAC (the Top G arrangement); inertia scaled by mass and size.'},
         {'field': 'drag_items', 'kind': 'estimated', 'source': 'ROSKAM', 'note': 'The Top G build-up scaled with fuselage wetted area, nacelle size and wing area.'},

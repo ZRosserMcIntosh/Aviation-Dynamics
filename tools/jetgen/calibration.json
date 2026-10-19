@@ -5,10 +5,10 @@
     "field": "turbofans[*].lapse_mach_coefficient",
     "kind": "calibrated",
     "source": "MATTINGLY",
-    "note": "0.367 (Mattingly's lapse law) so the maximum level speed at full thrust at FL300 is the published maximum cruise 464 KTAS (sim 464 KTAS, M 0.787)."
+    "note": "0.358 (Mattingly's lapse law) so the maximum level speed at full thrust at FL300 is the published maximum cruise 464 KTAS (sim 464 KTAS, M 0.788)."
    }
   ],
-  "lapse": 0.367
+  "lapse": 0.358
  },
  "cj4": {
   "calibration": [
@@ -22,11 +22,11 @@
     "field": "turbofans[*].lapse_mach_coefficient",
     "kind": "calibrated",
     "source": "MATTINGLY",
-    "note": "0.398 (Mattingly's lapse law) so the maximum level speed at full thrust at FL300 is the published maximum cruise 451 KTAS (sim 451 KTAS, M 0.765)."
+    "note": "0.393 (Mattingly's lapse law) so the maximum level speed at full thrust at FL300 is the published maximum cruise 451 KTAS (sim 451 KTAS, M 0.765)."
    }
   ],
   "flap_clmax_ratio": 0.256,
-  "lapse": 0.398
+  "lapse": 0.393
  },
  "learjet45": {
   "calibration": [
@@ -34,10 +34,10 @@
     "field": "turbofans[*].lapse_mach_coefficient",
     "kind": "calibrated",
     "source": "MATTINGLY",
-    "note": "0.240 (Mattingly's lapse law) so the maximum level speed at full thrust at FL330 is the published maximum cruise 465 KTAS (sim 465 KTAS, M 0.799)."
+    "note": "0.229 (Mattingly's lapse law) so the maximum level speed at full thrust at FL330 is the published maximum cruise 465 KTAS (sim 465 KTAS, M 0.799)."
    }
   ],
-  "lapse": 0.24
+  "lapse": 0.229
  },
  "crj700": {
   "calibration": [
@@ -51,11 +51,11 @@
     "field": "turbofans[*].lapse_mach_coefficient",
     "kind": "calibrated",
     "source": "MATTINGLY",
-    "note": "0.447 (Mattingly's lapse law) so the maximum level speed at full thrust at FL370 is the published maximum cruise 473 KTAS (sim 473 KTAS, M 0.825)."
+    "note": "0.440 (Mattingly's lapse law) so the maximum level speed at full thrust at FL370 is the published maximum cruise 473 KTAS (sim 473 KTAS, M 0.825)."
    }
   ],
   "flap_clmax_ratio": 0.641,
-  "lapse": 0.447
+  "lapse": 0.44
  },
  "b738": {
   "calibration": [
@@ -63,9 +63,9 @@
     "field": "turbofans[*].lapse_mach_coefficient",
     "kind": "calibrated",
     "source": "MATTINGLY",
-    "note": "0.512 (Mattingly's lapse law) so the maximum level speed at full thrust at FL350 is the published maximum cruise 460 KTAS (sim 460 KTAS, M 0.798)."
+    "note": "0.507 (Mattingly's lapse law) so the maximum level speed at full thrust at FL350 is the published maximum cruise 460 KTAS (sim 460 KTAS, M 0.798)."
    }
   ],
-  "lapse": 0.512
+  "lapse": 0.507
  }
 }

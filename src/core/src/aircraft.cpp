@@ -443,7 +443,7 @@ void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, con
         c.controls.elevator = clamp(in.pitch + trim_ * def_.controls.elevatorTrimRange / elevUp, -1.0, 1.0);
     }
     if (pusher_) c.controls.elevator = std::min(c.controls.elevator, def_.stallWarning.pusherElevator);
-    c.controls.rudder = clamp(in.yaw + def_.controls.riggingRudder, -1.0, 1.0);
+    c.controls.rudder = clamp(in.yaw + def_.controls.riggingRudder + ydCommand_, -1.0, 1.0);
     if (def_.controls.rudderLimiterIas > 0) {
         const Real eas = length(s_.body.velocity - c.air.wind) * std::sqrt(c.air.state.density / isa::kSeaLevelDensity);
         if (eas > def_.controls.rudderLimiterIas)
@@ -964,6 +964,27 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
     instruments_.update(dt, sensorInputs());
     tel_.stallWarning = vane;
     tel_.stickPusher = pusher_;
+
+    // ---- Yaw damper: washed-out yaw rate to the rudder, for the next step ----
+    {
+        const auto& yd = def_.controls.yawDamper;
+        // Turn compensation: the yaw rate of a coordinated turn at this bank
+        // (g sin(roll) cos(pitch) / V) is left alone; only the rest is damped.
+        // Without it the damper fought every turn entry, saturated, and left
+        // the airplane skidding (10 deg of sideslip in a Learjet 45 rolling in).
+        const Real r = tel_.omega.z - kStandardGravity * std::sin(tel_.roll) * std::cos(tel_.pitch) / std::max(tel_.trueAirspeed, 30.0);
+        ydLowPass_ += (r - ydLowPass_) * std::min(dt / std::max(yd.washout, 0.1), 1.0);
+        const Real eas = tel_.trueAirspeed * std::sqrt(tel_.air.state.density / isa::kSeaLevelDensity);
+        const bool on = yd.gain > 0 && yawDamperOn_ && !tel_.onGround && eas > 30.9;
+        if (on) {
+            const Real schedule = clamp(sq(yd.referenceIas / eas), 0.25, 4.0);
+            ydCommand_ = clamp(-yd.gain * schedule * (r - ydLowPass_), -yd.authority, yd.authority);
+        } else {
+            ydCommand_ = 0;
+        }
+        tel_.yawDamper = on;
+        tel_.yawDamperRudder = ydCommand_;
+    }
 
     // ---- Events ----
     for (int i = 0; i < engineCount(); ++i) {

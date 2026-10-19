@@ -22,7 +22,9 @@ is marked *predicted* as a sanity check, not a validation.
 2. **Layout on the Top G** (`data/aircraft/top_g.json`): the wing planform
    family scaled in span and chord to the type's area, sweep Λ outboard and
    Λ − 6° inboard; the Top G's sections, flaps and spoiler layout; tail
-   areas from its volume coefficients (V_H 0.688, V_V 0.0577); empty CG at
+   areas from its volume coefficients (V_H 0.688; V_V from the Top G's
+   0.0577, raised for a fuselage longer than the wing can balance, see
+   *Dutch roll* below); empty CG at
    27.5 % MAC, CG limits and main gear in % MAC; inertia scaled by mass and
    size; drag build-up scaled by wetted area, nacelle size and wing area;
    nacelle radius 0.79 m · √(T / 75.2 kN). The 737's engines hang under
@@ -43,13 +45,13 @@ is marked *predicted* as a sanity check, not a validation.
 
 | Type | Target | Calibrated value | Result |
 |---|---|---|---|
-| Phenom 300E | 464 KTAS max cruise, FL300 | lapse 0.367 | 464 KTAS, M 0.787 |
-| Citation CJ4 | 451 KTAS max cruise, FL300 | lapse 0.398 | 451 KTAS, M 0.765 |
+| Phenom 300E | 464 KTAS max cruise, FL300 | lapse 0.358 | 464 KTAS, M 0.788 |
+| Citation CJ4 | 451 KTAS max cruise, FL300 | lapse 0.393 | 451 KTAS, M 0.765 |
 | Citation CJ4 | Vref 112 KIAS at 15,660 lb (×1.3)¹ | flap clmax ratio 0.256 | VS LDG 86.2 KCAS (Top G layout: 72.2) |
-| Learjet 45 | 465 KTAS max cruise, FL330 | lapse 0.240 | 465 KTAS, M 0.799 |
-| CRJ700 | 473 KTAS max cruise, FL370 | lapse 0.447 | 473 KTAS, M 0.825 |
+| Learjet 45 | 465 KTAS max cruise, FL330 | lapse 0.229 | 465 KTAS, M 0.799 |
+| CRJ700 | 473 KTAS max cruise, FL370 | lapse 0.440 | 473 KTAS, M 0.825 |
 | CRJ700 | Vref flaps 45 135 KIAS at 67,000 lb (×1.23)² | flap clmax ratio 0.641 | VS LDG 109.8 KCAS (Top G layout: 103.1) |
-| 737-800 | 460 KTAS max cruise, FL350 (about M 0.80) | lapse 0.512 | 460 KTAS, M 0.798 |
+| 737-800 | 460 KTAS max cruise, FL350 (about M 0.80) | lapse 0.507 | 460 KTAS, M 0.798 |
 
 ¹ Weight not stated in the source; taken at MLW. Unverified.
 ² A pilot forum quoting the CRJ-701ER handbook (secondary source).
@@ -80,15 +82,40 @@ generator now gives the nose tyre the mains' cornering stiffness per newton
 of static load (mid CG at MTOW). The heading drift at 115 kt is now under 2°.
 The test above fails with the old stiffness.
 
+## Dutch roll and the yaw damper (October 2026)
+
+Flown in the browser, the CRJ700 was "extremely unstable below 130–140
+KTAS": its Dutch roll grew, and in Sport mode it diverged. Two causes, both
+fixed:
+
+- **A fin sized for the Top G.** The fin came from the Top G's volume
+  coefficient V_V 0.0577, but the destabilising yawing moment of a fuselage
+  (Munk) grows with its length and cross-section, not with the wing. The
+  CRJ's long, slim fuselage on a small wing needed more fin. The generator
+  now adds fin volume in proportion to the fuselage's yawing moment
+  (length × radius²) per wing area × span, beyond the Top G's own:
+  V_V = 0.0577 + 0.6 · max(105 · L · R² / (S · b) − 0.0304, 0). That gives
+  CRJ700 0.082, 737-800 0.077, Learjet 45 0.078, Phenom 300E 0.070 and
+  CJ4 0.067.
+- **No yaw damper.** All five types (and the Top G) have one. The core now
+  models a series yaw damper (`controls.yaw_damper`). It washes out the yaw
+  rate (3 s) less the rate a coordinated turn at the present bank needs, so
+  it does not fight turn entries. The rudder it commands is that rate times
+  2 s, scaled with (160 KEAS / EAS)² (within 0.25–4) and limited to 30 % of
+  the rudder. It is active in flight above 60 KIAS and switchable
+  (`setYawDamper`).
+
+Test: a rudder doublet on the approach (1.35 VS, landing flap, gear down)
+and clean at 200 KIAS. With the damper, the late bank swing is under a
+quarter of the early one; without it, the swing does not grow (the fin
+alone damps it, or holds it neutral).
+
 ## Known limits
 
 - **Aerodynamics are the Top G's, scaled.** The wing sections, flap
   effectiveness (except where calibrated), tail sizes and drag build-up are
   not the types' own. Stall characteristics, pitch-up and handling
   qualities are the Top G's.
-- **Dutch roll.** The CRJ700 and 737-800 Dutch roll is lightly damped and
-  grows slowly with no yaw damper (the real aircraft have one). The business
-  jets' Dutch roll decays.
 - **No type performance data beyond the targets.** No take-off field length
   or climb figure is compared yet. The Phenom's published 3,209 ft take-off
   at MTOW sea-level ISA is the next one to add.

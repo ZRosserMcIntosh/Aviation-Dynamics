@@ -56,7 +56,13 @@
    "field": "surfaces[1], surfaces[2]",
    "kind": "estimated",
    "source": "EST",
-   "note": "Tail areas from the Top G's volume coefficients (Vh 0.69, Vv 0.058) at this type's arms; T-tail."
+   "note": "Tail areas from the Top G's volume coefficients at this type's arms (Vh 0.69; Vv 0.070: the Top G's 0.058 plus what this fuselage's extra destabilising moment needs); T-tail."
+  },
+  {
+   "field": "controls.yaw_damper",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Yaw damper (these types have one): washed-out yaw rate (3 s) to the rudder, 2 per rad/s at 160 KEAS scheduled with 1/EAS^2, 30 % authority."
   },
   {
    "field": "mass.empty_cg_m, mass.cg_*_limit, gear",
@@ -86,7 +92,7 @@
    "field": "turbofans[*].lapse_mach_coefficient",
    "kind": "calibrated",
    "source": "MATTINGLY",
-   "note": "0.367 (Mattingly's lapse law) so the maximum level speed at full thrust at FL300 is the published maximum cruise 464 KTAS (sim 464 KTAS, M 0.787)."
+   "note": "0.358 (Mattingly's lapse law) so the maximum level speed at full thrust at FL300 is the published maximum cruise 464 KTAS (sim 464 KTAS, M 0.788)."
   }
  ],
  "mass": {
@@ -335,9 +341,9 @@
    "panels": [
     {
      "root_quarter_chord_m": [
-      -13.9549,
+      -14.1258,
       0,
-      -3.1222
+      -3.3602
      ],
      "span_m": 2.615,
      "root_chord_m": 1.628,
@@ -389,9 +395,9 @@
       0,
       -0.7492
      ],
-     "span_m": 2.423,
-     "root_chord_m": 3.008,
-     "tip_chord_m": 1.839,
+     "span_m": 2.661,
+     "root_chord_m": 3.303,
+     "tip_chord_m": 2.019,
      "sweep_deg": 40.0,
      "mirrored": false,
      "vertical": true,
@@ -490,7 +496,7 @@
    "static_thrust_kn": 15.47,
    "bypass_ratio": 2.6,
    "throttle_ratio": 1.05,
-   "lapse_mach_coefficient": 0.367,
+   "lapse_mach_coefficient": 0.358,
    "idle_n1": 0.22,
    "idle_n2": 0.6,
    "idle_thrust_fraction": 0.035,
@@ -516,7 +522,7 @@
    "static_thrust_kn": 15.47,
    "bypass_ratio": 2.6,
    "throttle_ratio": 1.05,
-   "lapse_mach_coefficient": 0.367,
+   "lapse_mach_coefficient": 0.358,
    "idle_n1": 0.22,
    "idle_n2": 0.6,
    "idle_thrust_fraction": 0.035,
@@ -808,9 +814,9 @@
   {
    "name": "fin top",
    "position_m": [
-    -14.2549,
+    -14.4258,
     0,
-    -3.1722
+    -3.4102
    ],
    "friction": 0.5
   },
@@ -841,6 +847,12 @@
   "rigging_aileron": 0.0,
   "rigging_rudder": 0.0,
   "rudder_limiter_kias": 160,
+  "yaw_damper": {
+   "gain_s": 2.0,
+   "reference_kias": 160,
+   "washout_s": 3.0,
+   "authority": 0.3
+  },
   "landing_gear": {
    "retractable": true,
    "transit_time_s": 7.0,

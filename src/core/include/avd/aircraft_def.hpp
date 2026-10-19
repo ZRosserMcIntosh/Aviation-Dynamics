@@ -381,6 +381,17 @@ struct FlightControlsDef {
     // EAS, then travel scaled by (V/EAS)^2 so the yaw authority stays roughly
     // constant with dynamic pressure (floor 15 %). 0 = none.
     Real rudderLimiterIas = 0;        // m/s
+    // Yaw damper (swept-wing jets, whose Dutch roll is lightly damped or
+    // divergent at low speed without it): rudder = -gain * (yaw rate less the
+    // coordinated-turn rate for the bank, through a washout filter), the gain scheduled as
+    // (reference EAS / EAS)^2 within 0.25..4, limited to +-authority of full
+    // travel, in flight above 60 KIAS. gain 0 = none.
+    struct YawDamperDef {
+        Real gain = 0;            // rudder fraction per rad/s of yaw rate at the reference EAS
+        Real referenceIas = 82;   // m/s
+        Real washout = 3;         // s
+        Real authority = 0.3;     // fraction of full rudder travel
+    } yawDamper;
     GearRetractionDef gear;
     SpeedbrakeDef speedbrake;
 };

@@ -52,7 +52,13 @@
    "field": "surfaces[1], surfaces[2]",
    "kind": "estimated",
    "source": "EST",
-   "note": "Tail areas from the Top G's volume coefficients (Vh 0.69, Vv 0.058) at this type's arms; low-set tail."
+   "note": "Tail areas from the Top G's volume coefficients at this type's arms (Vh 0.69; Vv 0.067: the Top G's 0.058 plus what this fuselage's extra destabilising moment needs); low-set tail."
+  },
+  {
+   "field": "controls.yaw_damper",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Yaw damper (these types have one): washed-out yaw rate (3 s) to the rudder, 2 per rad/s at 160 KEAS scheduled with 1/EAS^2, 30 % authority."
   },
   {
    "field": "mass.empty_cg_m, mass.cg_*_limit, gear",
@@ -88,7 +94,7 @@
    "field": "turbofans[*].lapse_mach_coefficient",
    "kind": "calibrated",
    "source": "MATTINGLY",
-   "note": "0.398 (Mattingly's lapse law) so the maximum level speed at full thrust at FL300 is the published maximum cruise 451 KTAS (sim 451 KTAS, M 0.765)."
+   "note": "0.393 (Mattingly's lapse law) so the maximum level speed at full thrust at FL300 is the published maximum cruise 451 KTAS (sim 451 KTAS, M 0.765)."
   }
  ],
  "mass": {
@@ -376,9 +382,9 @@
       0,
       -0.7144
      ],
-     "span_m": 2.22,
-     "root_chord_m": 2.756,
-     "tip_chord_m": 1.684,
+     "span_m": 2.389,
+     "root_chord_m": 2.966,
+     "tip_chord_m": 1.812,
      "sweep_deg": 40.0,
      "mirrored": false,
      "vertical": true,
@@ -477,7 +483,7 @@
    "static_thrust_kn": 16.11,
    "bypass_ratio": 3.3,
    "throttle_ratio": 1.05,
-   "lapse_mach_coefficient": 0.398,
+   "lapse_mach_coefficient": 0.393,
    "idle_n1": 0.22,
    "idle_n2": 0.6,
    "idle_thrust_fraction": 0.035,
@@ -503,7 +509,7 @@
    "static_thrust_kn": 16.11,
    "bypass_ratio": 3.3,
    "throttle_ratio": 1.05,
-   "lapse_mach_coefficient": 0.398,
+   "lapse_mach_coefficient": 0.393,
    "idle_n1": 0.22,
    "idle_n2": 0.6,
    "idle_thrust_fraction": 0.035,
@@ -797,7 +803,7 @@
    "position_m": [
     -14.5659,
     0,
-    -2.9344
+    -3.1034
    ],
    "friction": 0.5
   },
@@ -827,6 +833,12 @@
   "rigging_aileron": 0.0,
   "rigging_rudder": 0.0,
   "rudder_limiter_kias": 160,
+  "yaw_damper": {
+   "gain_s": 2.0,
+   "reference_kias": 160,
+   "washout_s": 3.0,
+   "authority": 0.3
+  },
   "landing_gear": {
    "retractable": true,
    "transit_time_s": 7.0,
