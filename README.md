@@ -6,11 +6,18 @@ JSON definitions with per-field provenance. The same core runs natively and in
 the browser as WebAssembly.
 
 Status: **Milestone 1 (single-engine piston foundation)** and **Milestone 2a
-(analog cockpit instrumentation)** are implemented. The roster has one
-aircraft, the fictional **Tupi T-180**, whose simulation reference is the
-Cessna 172S Skyhawk SP. Everything else in the long-term brief (more aircraft,
-helicopters, jets, damage, multiplayer) is on the roadmap and is not claimed
-here.
+(analog cockpit instrumentation)** are implemented, with turbofan jets and the
+second aerodynamics step (nonlinear lifting line) on top. The roster:
+
+- **Tupi T-180**, fictional, simulation reference the Cessna 172S Skyhawk SP
+  (validated against its POH: [docs/validation/c172s-validation.md](docs/validation/c172s-validation.md));
+- **Top G**, fictional twin jet, simulation reference the Gulfstream G650ER;
+- five jets generated from published figures by `tools/jetgen` and calibrated
+  where those figures pin them down: **Phenom 300E**, **Citation CJ4**,
+  **Learjet 45**, **CRJ700**, **737-800**
+  ([docs/validation/generated-jets.md](docs/validation/generated-jets.md)).
+
+Helicopters, damage and multiplayer are on the roadmap and are not claimed here.
 
 ## What works today
 
@@ -85,5 +92,7 @@ The full statements are in [docs/architecture/overview.md](docs/architecture/ove
 
 ## Licence
 
-MIT. The Tupi T-180 is a fictional aircraft. Its performance reference comes
-from public Cessna 172S data, and no manufacturer branding or artwork is used.
+MIT. The Tupi T-180 and the Top G are fictional aircraft; their performance
+references come from public Cessna 172S and Gulfstream G650ER data. The
+generated jets are named for the real types whose public figures they are
+built from; no manufacturer branding, logos or liveries are used.

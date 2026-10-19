@@ -106,6 +106,8 @@ public:
         }
     }
     void err(const std::string& path, const std::string& m) { err_.push_back(path + ": " + m); }
+    // A key the simulation does not read (data for renderers): accepted as is.
+    void skip(const std::string& k) { seen_.push_back(k); }
 
 private:
     std::string p(const std::string& k) const { return path_.empty() ? k : path_ + "." + k; }
@@ -350,6 +352,7 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
     r.str("display_name", d.displayName);
     r.str("manufacturer", d.manufacturer);
     r.str("reference_aircraft", d.referenceAircraft);
+    r.skip("visual");  // the 3-D model's shape and livery: for renderers only
     r.str("description", d.description);
     r.each("sources", [&](Obj& o, std::size_t) {
         SourceRef s;

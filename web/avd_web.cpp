@@ -419,6 +419,23 @@ void finishReset(bool seedInstruments) {
 
 }  // namespace
 
+// Trimmed maximum lift coefficients (clean is per flight condition; take-off
+// and landing flap at low Mach), computed once per aircraft.
+void ensureClmaxModel() {
+    if (g->clmaxModel) return;
+    const std::vector<Real>& det = g->def.controls.flapDetents;
+    g->clmaxModel = std::make_unique<AeroModel>(g->def);
+    const Vec3 cg0 = g->ac->massProperties().cg;
+    g->clmaxTakeoff = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det[det.size() / 2], 0.2);
+    g->clmaxLanding = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det.back(), 0.2);
+}
+Real jetApproachKias() {
+    ensureClmaxModel();
+    const Real m = g->ac->massProperties().mass;
+    const Real vs = std::sqrt(2 * m * 9.80665 / (1.225 * g->def.referenceArea * std::max(g->clmaxLanding, 0.5)));
+    return std::clamp(msToKt(1.23 * vs) + 5.0, 90.0, 180.0);
+}
+
 AVD_EXPORT void avd_reset(int mode) {
     if (!g) return;
     newAircraft();
@@ -439,7 +456,9 @@ AVD_EXPORT void avd_reset(int mode) {
         const Real dist = final ? (jet ? -6000.0 : -3000.0) : -8000.0;
         const Real path = final ? degToRad(-3.0) : 0.0;
         const Real alt = g->airport.elevation + (final ? (-dist + 300.0) * std::tan(-path) : (jet ? 1500.0 : 850.0));
-        const Real kias = final ? (jet ? 125.0 : 65.0) : (jet ? 250.0 : 100.0);
+        // Jets fly the final at their own approach speed: Vref (1.23 times the
+        // landing-flap stall speed at this weight) + 5 kt.
+        const Real kias = final ? (jet ? jetApproachKias() : 65.0) : (jet ? 250.0 : 100.0);
         placeTrimmed(scenarios::runwayPoint(rw, dist), alt, rw.headingTrue, kias, final ? landingFlap : 0, path);
     }
     finishReset(mode >= 1);
@@ -702,12 +721,7 @@ AVD_EXPORT double* avd_jet() {
     // Low-speed awareness and V-speeds: 1-g stall CAS from the trimmed CLmax at
     // this weight (current flap and Mach; take-off and landing flap at low Mach).
     const std::vector<Real>& det = g->def.controls.flapDetents;
-    if (!g->clmaxModel) {
-        g->clmaxModel = std::make_unique<AeroModel>(g->def);
-        const Vec3 cg0 = ac.massProperties().cg;
-        g->clmaxTakeoff = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det[det.size() / 2], 0.2);
-        g->clmaxLanding = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det.back(), 0.2);
-    }
+    ensureClmaxModel();
     const Real key = std::round(radToDeg(t.flapAngle) * 2) * 1000 + std::round(std::max(t.mach, 0.2) * 20);
     if (key != g->clmaxKey) {
         g->clmaxKey = key;

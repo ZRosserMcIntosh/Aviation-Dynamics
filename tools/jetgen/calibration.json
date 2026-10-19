@@ -1,0 +1,71 @@
+{
+ "phenom300": {
+  "calibration": [
+   {
+    "field": "turbofans[*].lapse_mach_coefficient",
+    "kind": "calibrated",
+    "source": "MATTINGLY",
+    "note": "0.367 (Mattingly's lapse law) so the maximum level speed at full thrust at FL300 is the published maximum cruise 464 KTAS (sim 464 KTAS, M 0.787)."
+   }
+  ],
+  "lapse": 0.367
+ },
+ "cj4": {
+  "calibration": [
+   {
+    "field": "surfaces[0].panels[*].controls[flap].clmax_increment_ratio",
+    "kind": "calibrated",
+    "source": "EST",
+    "note": "0.256 so the landing-flap stall speed at 15660 lb is 86.2 KCAS (Vref 112 KIAS (Aerocorner; weight not stated, taken at MLW 15,660 lb; unverified), VSO = Vref / 1.3); the Top G layout gave 72.2."
+   },
+   {
+    "field": "turbofans[*].lapse_mach_coefficient",
+    "kind": "calibrated",
+    "source": "MATTINGLY",
+    "note": "0.398 (Mattingly's lapse law) so the maximum level speed at full thrust at FL300 is the published maximum cruise 451 KTAS (sim 451 KTAS, M 0.765)."
+   }
+  ],
+  "flap_clmax_ratio": 0.256,
+  "lapse": 0.398
+ },
+ "learjet45": {
+  "calibration": [
+   {
+    "field": "turbofans[*].lapse_mach_coefficient",
+    "kind": "calibrated",
+    "source": "MATTINGLY",
+    "note": "0.240 (Mattingly's lapse law) so the maximum level speed at full thrust at FL330 is the published maximum cruise 465 KTAS (sim 465 KTAS, M 0.799)."
+   }
+  ],
+  "lapse": 0.24
+ },
+ "crj700": {
+  "calibration": [
+   {
+    "field": "surfaces[0].panels[*].controls[flap].clmax_increment_ratio",
+    "kind": "calibrated",
+    "source": "EST",
+    "note": "0.641 so the landing-flap stall speed at 67000 lb is 109.8 KCAS (Vref flaps 45 135 KIAS at 67,000 lb (pilot forum quoting the CRJ-701ER handbook), VSR = Vref / 1.23); the Top G layout gave 103.1."
+   },
+   {
+    "field": "turbofans[*].lapse_mach_coefficient",
+    "kind": "calibrated",
+    "source": "MATTINGLY",
+    "note": "0.447 (Mattingly's lapse law) so the maximum level speed at full thrust at FL370 is the published maximum cruise 473 KTAS (sim 473 KTAS, M 0.825)."
+   }
+  ],
+  "flap_clmax_ratio": 0.641,
+  "lapse": 0.447
+ },
+ "b738": {
+  "calibration": [
+   {
+    "field": "turbofans[*].lapse_mach_coefficient",
+    "kind": "calibrated",
+    "source": "MATTINGLY",
+    "note": "0.512 (Mattingly's lapse law) so the maximum level speed at full thrust at FL350 is the published maximum cruise 460 KTAS (sim 460 KTAS, M 0.798)."
+   }
+  ],
+  "lapse": 0.512
+ }
+}

@@ -31,4 +31,5 @@ done
 cp "$HERE/avd_loader.mjs" "$OUT/avd.mjs"
 cp "$REPO/data/aircraft/tupi_t180.json" "$OUT/tupi_t180.json"
 cp "$REPO/data/aircraft/top_g.json" "$OUT/top_g.json"
+for t in phenom300 cj4 learjet45 crj700 b738; do cp "$REPO/data/aircraft/$t.json" "$OUT/$t.json"; done
 ls -l "$OUT"
