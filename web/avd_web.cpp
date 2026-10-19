@@ -5,6 +5,7 @@
 // only renders and reads input. World positions are returned in the São Paulo
 // World frame (ENU metres from MASP); see web/README.md for the buffer layout.
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -38,7 +39,8 @@ struct Sim {
     AircraftDefinition def;
     LocalFrame frame = scenarios::saoPauloWorldFrame();
     scenarios::Airport airport;
-    std::unique_ptr<AirfieldGround> ground;
+    std::unique_ptr<RegionGround> ground;  // every airport of the region at its own elevation
+    GpsNavigator gps;
     std::unique_ptr<SimpleWeather> weather;
     SimpleWeatherParams weatherParams;
     // Weather controls; the field is rebuilt from them (rebuildWeather).
@@ -83,18 +85,81 @@ double g_load[256];
 // Airport for spawns: 0 Campo de Marte (SBMT, runway 12), 1 Congonhas (SBSP,
 // runway 35L). Kept across aircraft loads.
 int g_airportId = 1;
+// Destination: index into saoPauloRegionAirports() and the runway end to land
+// on (-1: none). Kept across aircraft loads.
+int g_destAirport = -1, g_destRunway = 0;
 
-scenarios::Airport makeAirport(int id, const LocalFrame& f) {
-    return id == 0 ? scenarios::campoDeMarte(f) : scenarios::congonhas(f);
-}
+const scenarios::Airport& regionAirport(int i) { return scenarios::saoPauloRegionAirports()[static_cast<std::size_t>(i)]; }
+int regionCount() { return static_cast<int>(scenarios::saoPauloRegionAirports().size()); }
 
 void rebuildWeather();
 
 void buildAirport() {
-    g->airport = makeAirport(g_airportId, g->frame);
-    g->ground = scenarios::makeAirfieldGround(g->airport, g->frame);
+    g->airport = regionAirport(g_airportId == 0 ? 1 : 0);
+    g->ground = scenarios::makeRegionGround(scenarios::saoPauloRegionAirports());
     g->ground->setWaterDepth(g->runwayWater);
     rebuildWeather();  // the wind surroundings and hazards are placed around it
+}
+
+// The destination runway's ILS, or nullptr.
+const scenarios::IlsDef* destinationIls() {
+    if (g_destAirport < 0) return nullptr;
+    for (const scenarios::IlsDef& i : regionAirport(g_destAirport).ils)
+        if (i.runway == g_destRunway) return &i;
+    return nullptr;
+}
+
+// The GPS route to the destination: from the runway in use when on the
+// ground at the origin, else from the present position.
+void buildRoute() {
+    if (!g || !g->ac) return;
+    if (g_destAirport < 0) {
+        g->gps.clear();
+        return;
+    }
+    const scenarios::Airport& dest = regionAirport(g_destAirport);
+    int faf = -1;
+    std::vector<RouteWaypoint> r;
+    const Vec3 p = g->ac->state().body.position;
+    const RunwayDef& dep = g->airport.runways[0];
+    const Vec3 rp = scenarios::runwayPoint(dep, 0);
+    const bool onDeparture = g->ac->telemetry().onGround && std::hypot(p.x - rp.x, p.y - rp.y) < dep.length + 500 &&
+                             g->airport.icao != dest.icao;
+    if (onDeparture) {
+        r = scenarios::approachRoute(dest, g_destRunway, p, faf, &dep);
+    } else {
+        r = scenarios::approachRoute(dest, g_destRunway, p, faf);
+        r.insert(r.begin(), RouteWaypoint{"PPOS", p, -1, false});
+        ++faf;
+    }
+    g->gps.setRoute(std::move(r), faf);
+    // Already established on the final (within 1 NM of the centreline, headed
+    // within 45 deg of it, inside the IF): join it on the leg it is flying.
+    if (!onDeparture) {
+        const RunwayDef& rw = dest.runways[static_cast<std::size_t>(g_destRunway)];
+        const Vec3 thr = scenarios::landingThreshold(rw);
+        const Real c = std::cos(rw.headingTrue), sn = std::sin(rw.headingTrue);
+        const Real out = -((p.x - thr.x) * c + (p.y - thr.y) * sn), lateral = -(p.x - thr.x) * sn + (p.y - thr.y) * c;
+        const Real hdgErr = std::abs(wrapPi(g->ac->telemetry().heading - rw.headingTrue));
+        if (std::abs(lateral) < 1852 && out > 0 && out < 10.2 * 1852 && hdgErr < degToRad(45))
+            g->gps.activate(out > 5 * 1852 ? faf : faf + 1);
+    }
+}
+
+// NAV 1 on the destination runway's ILS (else the origin runway's), the test
+// VOR in standby; OBS on that localizer's magnetic course.
+void tuneRadios(bool headingBugToo) {
+    InstrumentPanel& p = g->ac->instruments();
+    const scenarios::IlsDef* di = destinationIls();
+    const scenarios::Airport& a = di ? regionAirport(g_destAirport) : g->airport;
+    const RunwayDef& rw = a.runways[static_cast<std::size_t>(di ? di->runway : 0)];
+    const int khz = di ? di->khz : (g->airport.ilsKhz ? g->airport.ilsKhz : 113700);
+    p.setNavStandby(0, khz);
+    p.swapNav(0);
+    p.setNavStandby(0, 113700);
+    const Real course = std::round(radToDeg(rw.headingTrue - a.magneticVariation));
+    p.setObs(degToRad(course));
+    if (headingBugToo) p.setHeadingBug(degToRad(course));
 }
 
 // The planned load onto an aircraft (stations and tanks), mass refreshed.
@@ -402,19 +467,21 @@ void finishReset(bool seedInstruments) {
     g->ac->step(kDt, in, *g->ground, *g->weather);
     g->ac->instruments().setAltimeterSetting(g->weather->atmosphere().conditions().seaLevelPressure);
     if (seedInstruments) g->ac->resetInstrumentsToTruth();
-    // Radios: NAV 1 on the (synthetic) localizer of the runway in use, the test
-    // VOR in standby; OBS and heading bug on the runway's magnetic course.
+    // Radios: NAV 1 on the destination's ILS (else the runway in use's), the
+    // test VOR in standby; OBS on its course; heading bug on the runway in use
+    // (on the departure runway) or that course.
     InstrumentPanel& p = g->ac->instruments();
-    p.setNavStandby(0, g->airport.ilsKhz ? g->airport.ilsKhz : 113700);
-    p.swapNav(0);
-    p.setNavStandby(0, 113700);
-    const Real course = std::round(radToDeg(g->airport.runways[0].headingTrue - g->airport.magneticVariation));
-    p.setObs(degToRad(course));
-    p.setHeadingBug(degToRad(course));
+    tuneRadios(true);
+    if (g->ac->telemetry().onGround) {
+        const Real rwy = std::round(radToDeg(g->airport.runways[0].headingTrue - g->airport.magneticVariation));
+        p.setHeadingBug(degToRad(rwy));
+    }
     p.setComStandby(0, 132800);
     p.setTransponderMode(TransponderMode::Altitude);
     g->ac->drainEvents();
     if (g->wake) g->wake->reset();  // a new start leaves nothing in the air
+    buildRoute();
+    g->gps.update(g->ac->state().body.position, g->ac->telemetry().altitudeMsl, g->ac->telemetry().groundSpeed);
 }
 
 }  // namespace
@@ -448,7 +515,21 @@ Real jetApproachKias() {
 AVD_EXPORT void avd_reset(int mode) {
     if (!g) return;
     newAircraft();
-    const RunwayDef& rw = g->airport.runways[0];
+    // Modes 4 and 5: the destination's approach (at the intermediate fix,
+    // 10 NM out and level at its altitude on the final course; or on its final
+    // like mode 2). Without a destination, the runway in use.
+    const bool atDest = (mode == 4 || mode == 5) && g_destAirport >= 0;
+    const scenarios::Airport& ap = atDest ? regionAirport(g_destAirport) : g->airport;
+    const RunwayDef& rw = ap.runways[static_cast<std::size_t>(atDest ? g_destRunway : 0)];
+    if (mode == 4) {
+        const bool jet = g->ac->turbofanCount() > 0;
+        const Real dist = 10 * 1852.0;
+        const Real alt = ap.elevation + 15.24 + dist * std::tan(degToRad(3.0));
+        placeTrimmed(scenarios::runwayPoint(rw, rw.displaced - dist), alt, rw.headingTrue, jet ? 180.0 : 90.0, jet ? 1 : 0, 0.0);
+        finishReset(true);
+        return;
+    }
+    if (mode == 5) mode = 2;
     if (mode <= 1) {
         const Vec3 p = scenarios::runwayPoint(rw, 30);
         if (mode == 1) g->ac->setEngineRunning(true, 1000);
@@ -456,15 +537,15 @@ AVD_EXPORT void avd_reset(int mode) {
         if (mode == 0) g->ac->setColdAndDark();
     } else {
         // Mode 2: on the 3 deg final for the runway in use (65 KIAS, flaps 20), exactly
-        // on the glide path, which starts at the glideslope antenna 300 m beyond
-        // the paved end (scenarios/airports.cpp). Mode 3: level cruise, 100 KIAS.
+        // on the glide path, which starts at the glideslope antenna 300 m past
+        // the landing threshold (scenarios/airports.cpp). Mode 3: level cruise, 100 KIAS.
         // Jets: final at 125 KIAS (about Vref + 10) with landing flap and the gear down, cruise at 250 KIAS.
         const bool final = mode == 2;
         const bool jet = g->ac->turbofanCount() > 0;
         const int landingFlap = jet ? static_cast<int>(g->def.controls.flapDetents.size()) - 1 : 2;
         const Real dist = final ? (jet ? -6000.0 : -3000.0) : -8000.0;
         const Real path = final ? degToRad(-3.0) : 0.0;
-        const Real alt = g->airport.elevation + (final ? (-dist + 300.0) * std::tan(-path) : (jet ? 1500.0 : 850.0));
+        const Real alt = ap.elevation + (final ? (-dist + rw.displaced + 300.0) * std::tan(-path) : (jet ? 1500.0 : 850.0));
         // Jets fly the final at their own approach speed: Vref (1.23 times the
         // landing-flap stall speed at this weight) + 5 kt.
         const Real kias = final ? (jet ? jetApproachKias() : 65.0) : (jet ? 250.0 : 100.0);
@@ -790,6 +871,10 @@ AVD_EXPORT int avd_advance(double seconds) {
         g->windAvg = g->windAvg + (w - g->windAvg) * (kDt / 3.0);
         g->windAvgValid = true;
     }
+    if (n > 0) {
+        const AircraftTelemetry& t = g->ac->telemetry();
+        g->gps.update(g->ac->state().body.position, t.altitudeMsl, t.groundSpeed);
+    }
     updateJetStart();
     collectEvents();
     return n;
@@ -828,6 +913,124 @@ AVD_EXPORT void avd_set_airport(int id) {
     if (g) buildAirport();
 }
 
+// Destination (index into the region's airports, avd_destinations_text; and
+// the runway end to land on); -1 clears it. Tunes NAV 1 to its ILS and builds
+// the GPS route from where the aircraft is (on the departure runway: from it).
+AVD_EXPORT void avd_set_destination(int airport, int runway) {
+    if (airport < 0 || airport >= regionCount()) {
+        g_destAirport = -1;
+    } else {
+        g_destAirport = airport;
+        g_destRunway = std::clamp(runway, 0, static_cast<int>(regionAirport(airport).runways.size()) - 1);
+    }
+    if (!g || !g->ac) return;
+    tuneRadios(!g->ac->telemetry().onGround);
+    buildRoute();
+    g->gps.update(g->ac->state().body.position, g->ac->telemetry().altitudeMsl, g->ac->telemetry().groundSpeed);
+}
+AVD_EXPORT int avd_destination() { return g_destAirport; }
+AVD_EXPORT int avd_destination_runway() { return g_destRunway; }
+
+// The region's airports, one per line: "ICAO|name|elevation m|ends", ends
+// ";"-separated as "runway:ILS ident:kHz:synthetic" (ident and kHz empty
+// without an ILS).
+AVD_EXPORT int avd_destinations_text() {
+    std::string out;
+    for (const scenarios::Airport& a : scenarios::saoPauloRegionAirports()) {
+        out += a.icao + "|" + a.name + "|" + std::to_string(static_cast<int>(std::lround(a.elevation))) + "|";
+        for (std::size_t k = 0; k < a.runways.size(); ++k) {
+            const scenarios::IlsDef* ils = nullptr;
+            for (const scenarios::IlsDef& i : a.ils)
+                if (i.runway == static_cast<int>(k)) ils = &i;
+            out += (k ? ";" : "") + a.runways[k].ident + ":" + (ils ? ils->ident + ":" + std::to_string(ils->khz) + ":" + (ils->synthetic ? "1" : "0") : "::");
+        }
+        out += "\n";
+    }
+    return putText(out);
+}
+
+// Every runway of the region, world frame, for drawing: per airport
+// [elevation m, number of ends, then per end: east, north (paved end),
+// heading true deg, length, width, displaced threshold m].
+double g_region[512];
+AVD_EXPORT double* avd_region() {
+    int k = 0;
+    for (const scenarios::Airport& a : scenarios::saoPauloRegionAirports()) {
+        g_region[k++] = a.elevation;
+        g_region[k++] = static_cast<double>(a.runways.size());
+        for (const RunwayDef& r : a.runways) {
+            const Vec3 e = world::enuFromNed(r.threshold);
+            g_region[k++] = e.x;
+            g_region[k++] = e.y;
+            g_region[k++] = radToDeg(r.headingTrue);
+            g_region[k++] = r.length;
+            g_region[k++] = r.width;
+            g_region[k++] = r.displaced;
+        }
+    }
+    return g_region;
+}
+
+// Terrain elevation (m MSL) under a world point (east, north m).
+AVD_EXPORT double avd_ground_height(double east, double north) {
+    if (!g) return 0;
+    return -g->ground->terrainDown(north, east);
+}
+
+// The GPS route: [n, active, FAF index, then per waypoint east, north,
+// crossing altitude m (-1 none)]; names in avd_route_text ("A;B;...").
+constexpr int kRouteMax = 16;
+double g_route[3 + 3 * kRouteMax];
+AVD_EXPORT double* avd_route() {
+    std::fill(std::begin(g_route), std::end(g_route), 0.0);
+    if (!g) return g_route;
+    const auto& r = g->gps.route();
+    const int n = std::min(static_cast<int>(r.size()), kRouteMax);
+    g_route[0] = n;
+    g_route[1] = g->gps.indication().active;
+    g_route[2] = g->gps.finalApproachFix();
+    for (int i = 0; i < n; ++i) {
+        const Vec3 e = world::enuFromNed(r[static_cast<std::size_t>(i)].position);
+        g_route[3 + 3 * i] = e.x;
+        g_route[4 + 3 * i] = e.y;
+        g_route[5 + 3 * i] = r[static_cast<std::size_t>(i)].altitudeMsl;
+    }
+    return g_route;
+}
+AVD_EXPORT int avd_route_text() {
+    if (!g) return putText("");
+    std::string s;
+    for (const RouteWaypoint& w : g->gps.route()) s += (s.empty() ? "" : ";") + w.ident;
+    return putText(s);
+}
+
+// The GPS: [valid, active, mode (0 ENR, 1 TERM, 2 APR), desired track deg
+// true, cross-track m (+ right), full scale m, CDI -1..1 (+ fly right),
+// distance to the waypoint m, bearing to it deg true, distance to the
+// destination m, vertical valid, vertical deviation m (+ above), VDI -1..1
+// (+ fly up), magnetic variation deg (east +)].
+double g_gps[16];
+AVD_EXPORT double* avd_gps() {
+    std::fill(std::begin(g_gps), std::end(g_gps), 0.0);
+    if (!g) return g_gps;
+    const GpsIndication& i = g->gps.indication();
+    g_gps[0] = i.valid;
+    g_gps[1] = i.active;
+    g_gps[2] = i.mode == "APR" ? 2 : (i.mode == "TERM" ? 1 : 0);
+    g_gps[3] = radToDeg(i.desiredTrack);
+    g_gps[4] = i.crossTrack;
+    g_gps[5] = i.fullScale;
+    g_gps[6] = i.cdi;
+    g_gps[7] = i.distanceToWaypoint;
+    g_gps[8] = radToDeg(i.bearingToWaypoint);
+    g_gps[9] = i.distanceToDestination;
+    g_gps[10] = i.verticalValid;
+    g_gps[11] = i.verticalDeviation;
+    g_gps[12] = i.vdi;
+    g_gps[13] = radToDeg(g->airport.magneticVariation);
+    return g_gps;
+}
+
 // "ICAO|name|runway in use|reciprocal" in the text buffer.
 AVD_EXPORT int avd_airport_text() {
     if (!g) return 0;
@@ -862,7 +1065,7 @@ AVD_EXPORT double* avd_state() {
     s[3] = q.w; s[4] = q.x; s[5] = q.y; s[6] = q.z;
     s[7] = radToDeg(t.roll); s[8] = radToDeg(t.pitch); s[9] = std::fmod(radToDeg(t.heading) + 360.0, 360.0);
     s[10] = msToKt(r.indicatedAirspeed); s[11] = msToKt(t.trueAirspeed); s[12] = msToKt(t.groundSpeed);
-    s[13] = mToFt(r.indicatedAltitude); s[14] = mToFt(t.altitudeMsl - g->airport.elevation); s[15] = msToFpm(r.verticalSpeed);
+    s[13] = mToFt(r.indicatedAltitude); s[14] = mToFt(t.heightAgl); s[15] = msToFpm(r.verticalSpeed);
     s[16] = radToDeg(t.alpha); s[17] = radToDeg(t.beta); s[18] = t.loadFactor;
     s[19] = r.tachometerRpm; s[20] = paToInHg(e.engine.manifoldPressure);
     s[21] = m3ToGal(r.fuelFlow / g->def.fuel.density) * 3600; s[22] = r.fuelGauge[0] * 1000; s[23] = r.fuelGauge[1] * 1000;

@@ -44,6 +44,7 @@ add_library(avd_core
   src/core/src/procedures.cpp
   src/core/src/telemetry.cpp
   src/core/src/navigation.cpp
+  src/core/src/gps.cpp
   src/core/src/world_ground.cpp
 )
 add_library(avd::core ALIAS avd_core)

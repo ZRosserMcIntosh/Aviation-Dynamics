@@ -87,9 +87,11 @@ NavIndication evaluateNav(const NavDatabase& db, Real freqKhz, Real obs, const G
     if (gs && out.valid) {
         const Vec3 g = LocalFrame(gs->position).nedFromGeodetic(ac);
         const Real gh = std::hypot(g.x, g.y);
-        const Real gBearing = std::atan2(g.y, g.x);
-        const Real gOff = wrapPi(gBearing - (gs->course + kPi));
-        if (std::abs(gOff) < 0.14 && gh < 10 * units::kNauticalMile && gh > 50) {  // +-8 deg, 10 NM
+        // Coverage (ICAO Annex 10): 8 deg either side of the localizer
+        // centreline, to 10 NM. Measured about the localizer course, not from
+        // the glideslope antenna, which stands ~120 m off the centreline: from
+        // there an aircraft close in and slightly off course looked outside it.
+        if (std::abs(off) < 0.14 && gh < 10 * units::kNauticalMile && gh > 50) {
             const Real angle = std::atan2(-g.z, gh);
             out.glideslopeValid = true;
             out.glideslope = clamp((gs->glidepathAngle - angle) / kGsFullScale, -1.0, 1.0);

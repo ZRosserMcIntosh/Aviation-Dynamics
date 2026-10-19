@@ -94,6 +94,7 @@ struct RunwayDef {
     Real headingTrue = 0;             // rad, direction of travel for this runway
     Real length = 1000, width = 30;
     Real slope = 0;                   // rise per metre along the heading (+ uphill)
+    Real displaced = 0;               // m from the paved end to the landing threshold
     SurfaceProperties surface = surfaces::kAsphalt;
 };
 
@@ -114,6 +115,33 @@ private:
     Real fieldDown_;
     SurfaceProperties field_;
     std::vector<RunwayDef> runways_;
+};
+
+// Several airfields in one region, each at its own elevation: flat within
+// `radius` of its centre (with its runways), and between the fields a smooth
+// blend of their elevations (inverse-distance weighting, power 2, on the
+// distance beyond each field's flat area). Grass off the runways. Not real
+// terrain: the hills and valleys between the fields are absent.
+class RegionGround final : public GroundQuery {
+public:
+    struct Field {
+        Real north = 0, east = 0;  // centre (NED m)
+        Real radius = 2000;        // flat within this distance of the centre
+        Real down = 0;             // NED down coordinate of the field
+        std::vector<RunwayDef> runways;
+    };
+    void addField(const Field& f) { fields_.push_back(f); }
+    const std::vector<Field>& fields() const { return fields_; }
+    void setWaterDepth(Real m) { waterDepth_ = std::max(m, 0.0); }
+    Real waterDepth() const { return waterDepth_; }
+    // The terrain's down coordinate at a horizontal position (runways lie on it).
+    Real terrainDown(Real north, Real east) const;
+    void surfaceAt(Real north, Real east, Real& down, Vec3& normal, SurfaceProperties& s) const;
+    GroundHit raycast(const Vec3& origin, const Vec3& dir, Real maxDistance) const override;
+
+private:
+    Real waterDepth_ = 0;
+    std::vector<Field> fields_;
 };
 
 }  // namespace avd

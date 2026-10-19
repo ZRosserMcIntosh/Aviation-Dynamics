@@ -80,6 +80,27 @@ export default async function createAvdModule(wasmBytes) {
       limits: { ramp: b[12], takeoff: b[13], landing: b[14], zeroFuel: b[15] }, density: b[16], stations, tanks, groups, fwd, aft,
     };
   };
+  // The region's airports: [{ icao, name, elevation, ends: [{ runway, ils, khz, synthetic }] }].
+  A.destinations = () => A.text(ex.avd_destinations_text()).split('\n').filter(Boolean).map((l) => {
+    const [icao, name, elev, ends] = l.split('|');
+    return { icao, name, elevation: +elev, ends: ends.split(';').map((e) => { const [runway, ils, khz, syn] = e.split(':'); return { runway, ils: ils || null, khz: khz ? +khz : 0, synthetic: syn === '1' }; }) };
+  });
+  // Every runway end of the region (world frame) per airport, in avd_destinations order.
+  A.region = () => {
+    const b = new Float64Array(memory.buffer, ex.avd_region(), 512), out = [];
+    for (let k = 0, i = 0; i < 6; ++i) {
+      const elevation = b[k++], n = b[k++], ends = [];
+      for (let j = 0; j < n; ++j, k += 6) ends.push({ east: b[k], north: b[k + 1], heading: b[k + 2], length: b[k + 3], width: b[k + 4], displaced: b[k + 5] });
+      out.push({ elevation, ends });
+    }
+    return out;
+  };
+  // The GPS route: { active, faf, wp: [{ ident, east, north, alt }] } (alt m, -1 none).
+  A.route = () => {
+    const b = new Float64Array(memory.buffer, ex.avd_route(), 51), names = A.text(ex.avd_route_text()).split(';');
+    return { active: b[1], faf: b[2], wp: Array.from({ length: b[0] }, (_, i) => ({ ident: names[i], east: b[3 + 3 * i], north: b[4 + 3 * i], alt: b[5 + 3 * i] })) };
+  };
+  A.gps = () => new Float64Array(memory.buffer, ex.avd_gps(), 16);
   A.events = () => { const n = ex.avd_events(); return n ? A.text(n).split('\n').filter(Boolean) : []; };
   A.cockpit = () => {
     const out = [];

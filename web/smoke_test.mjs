@@ -166,13 +166,44 @@ B.avd_set_weather(0, 0, 0, 0, 0.6);
 B.avd_set_runway_water(8);
 check(B.state()[63] === 8, 'standing water on the runway (8 mm)');
 B.avd_set_runway_water(0);
-// The default airport is Congonhas (runway 35L), with its test ILS on NAV 1.
+// The default airport is Congonhas (runway 35L), with its ILS (ISO) on NAV 1.
 const ap = B.airport();
 check(ap.icao === 'SBSP' && ap.runway === '35L', `default airport ${ap.icao} runway ${ap.runway}`);
 B.avd_reset(2);
 for (let i = 0; i < 60; ++i) B.avd_advance(1 / 60);
 const cg = B.cockpitState();
-check(cg[32] === 110.5 && cg[37] === 1 && cg[40] === 1 && Math.abs(cg[38]) < 0.1, `Congonhas 35L final: ILS 110.50 received (CDI ${cg[38].toFixed(2)}, GS ${cg[41].toFixed(2)})`);
+check(cg[32] === 109.7 && cg[37] === 1 && cg[40] === 1 && Math.abs(cg[38]) < 0.1, `Congonhas 35L final: ILS ISO 109.70 received (CDI ${cg[38].toFixed(2)}, GS ${cg[41].toFixed(2)})`);
+// Destinations: Guarulhos 10L. On the departure runway the route starts
+// there and NAV 1 is already on IUC; at the intermediate fix the localizer is
+// centred and the glideslope above; the 172 flown hands-off down the final
+// lands on Guarulhos' own elevation (750 m, not Congonhas' 802 m).
+{
+  const dl = B.destinations();
+  const gi = dl.findIndex((d) => d.icao === 'SBGR');
+  check(dl.length === 6 && gi >= 0 && dl[gi].ends[0].ils === 'IUC' && dl[gi].ends[0].khz === 110700, `destinations: ${dl.map((d) => d.icao).join(' ')}; SBGR 10L ${dl[gi].ends[0].ils} ${dl[gi].ends[0].khz}`);
+  B.avd_set_destination(gi, 0);
+  B.avd_reset(1);
+  let r = B.route();
+  check(r.wp[0].ident === 'RW35L' && r.wp.at(-1).ident === 'RW10L' && B.cockpitState()[32] === 110.7, `departure route ${r.wp.map((w) => w.ident).join(' ')}, NAV 1 ${B.cockpitState()[32]}`);
+  B.avd_reset(4);
+  for (let i = 0; i < 120; ++i) B.avd_advance(1 / 60);
+  const c4 = B.cockpitState(), g4 = B.gps();
+  r = B.route();
+  // (The glideslope's 10 NM coverage starts just inside the IF.)
+  check(c4[37] === 1 && c4[42] === 1 && Math.abs(c4[38]) < 0.15 && g4[0] === 1 && r.wp[g4[1]].ident === 'FF10L' && Math.abs(g4[4]) < 100,
+    `SBGR ILS 10L at the IF: LOC CDI ${c4[38].toFixed(2)}, GS ${c4[40] ? c4[41].toFixed(2) : 'not yet'}; GPS ${r.wp.map((w) => w.ident).join(' ')} to ${r.wp[g4[1]]?.ident} ${(g4[7] / 1852).toFixed(1)} NM, XTK ${g4[4].toFixed(0)} m`);
+  check(Math.abs(B.avd_ground_height(r.wp.at(-1).east, r.wp.at(-1).north) - 750.1) < 0.5, `SBGR ground at ${B.avd_ground_height(r.wp.at(-1).east, r.wp.at(-1).north).toFixed(1)} m`);
+  B.avd_reset(5);
+  let landed = false;
+  for (let i = 0; i < 60 * 240 && !landed; ++i) {
+    B.avd_set_input(0, 0, 0, i < 60 * 150 ? B.avd_trim_throttle() : 0, 1, 0, 0, 0, 0);
+    B.avd_advance(1 / 60);
+    landed = B.state()[28] === 1;
+  }
+  const s5 = B.state();
+  check(landed && !s5[48] && Math.abs(s5[2] - 750.1) < 3, `hands-off 172 on the SBGR 10L final: ${landed ? 'touched down' : 'airborne'} at ${s5[2].toFixed(1)} m, crashed ${s5[48]}`);
+  B.avd_set_destination(-1, 0);
+}
 // Wind physics through the page API: a hands-off approach flown into the
 // microburst on final loses its airspeed and sinks far faster than the
 // 3 deg path; moderate turbulence shakes the airspeed.

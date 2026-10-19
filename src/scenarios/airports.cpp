@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: MIT
 #include "airports.hpp"
 
+#include <algorithm>
+#include <cmath>
+
 #include "avd/units.hpp"
 
 namespace avd::scenarios {
@@ -31,6 +34,7 @@ Airport campoDeMarte(const LocalFrame& frame) {
     // Paved end of runway 12: 300 m before its displaced threshold.
     r12.threshold = thr12 - dir * 300.0;
     r12.threshold.z = -a.elevation;
+    r12.displaced = 300;
     r12.surface = surfaces::kAsphalt;
     a.runways.push_back(r12);
     RunwayDef r30 = r12;
@@ -38,8 +42,11 @@ Airport campoDeMarte(const LocalFrame& frame) {
     r30.headingTrue = wrapPi(heading + kPi);
     r30.threshold = r12.threshold + dir * r12.length;
     r30.threshold.z = -a.elevation;
+    r30.displaced = 150;
     a.runways.push_back(r30);
     a.ilsKhz = 110300;
+    a.ils.push_back({0, 110300, "ITMT", true, "synthetic test facility (Aviation Dynamics); SBMT has no ILS"});
+    a.source = "SkyVector threshold coordinates (see airports.hpp)";
     return a;
 }
 
@@ -66,6 +73,7 @@ Airport congonhas(const LocalFrame& frame) {
     // Paved end of 35L: 61 m before its displaced threshold.
     r35.threshold = thr35 - dir * 61.0;
     r35.threshold.z = -a.elevation;
+    r35.displaced = 61;
     r35.surface = surfaces::kAsphalt;
     a.runways.push_back(r35);
     RunwayDef r17 = r35;
@@ -73,9 +81,149 @@ Airport congonhas(const LocalFrame& frame) {
     r17.headingTrue = wrapPi(heading + kPi);
     r17.threshold = r35.threshold + dir * r35.length;
     r17.threshold.z = -a.elevation;
+    r17.displaced = 126;
     a.runways.push_back(r17);
-    a.ilsKhz = 110500;
+    // On the runway as modelled (aligned with the map imagery).
+    const char* src = "OurAirports airport-frequencies.csv (public domain), also Airportroutes and Metarcentral listings";
+    a.ilsKhz = 109700;
+    a.ils.push_back({0, 109700, "ISO", false, src});
+    a.ils.push_back({1, 109300, "ISP", false, src});
+    a.source = "SkyVector threshold coordinates (see airports.hpp)";
     return a;
+}
+
+namespace {
+
+constexpr Real kFt = 0.3048;
+constexpr const char* kOurAirports = "OurAirports runways.csv and airports.csv (public domain, retrieved October 2026)";
+
+Airport fieldAt(const char* icao, const char* name, Real elevationFt) {
+    Airport a;
+    a.icao = icao;
+    a.name = name;
+    a.elevation = elevationFt * kFt;
+    a.magneticVariation = units::degToRad(-21.5);  // regional estimate, as above
+    a.source = kOurAirports;
+    return a;
+}
+
+// A runway from OurAirports' records: the two ends' coordinates give its
+// centre and direction, the published length (ft) its extent (the end
+// coordinates are not always the paved ends: Guarulhos' are ~150 m short);
+// displaced thresholds and width in ft; flat at the field elevation.
+void addRunway(Airport& a, const LocalFrame& f, const char* id1, Real lat1, Real lon1, Real disp1Ft, const char* id2,
+               Real lat2, Real lon2, Real disp2Ft, Real lengthFt, Real widthFt) {
+    const Vec3 c1 = f.nedFromGeodetic(deg(lat1, lon1, 0)), c2 = f.nedFromGeodetic(deg(lat2, lon2, 0));
+    const Real heading = std::atan2(c2.y - c1.y, c2.x - c1.x), half = 0.5 * lengthFt * kFt;
+    const Vec3 mid = (c1 + c2) * 0.5, dir{std::cos(heading), std::sin(heading), 0};
+    Vec3 e1 = mid - dir * half, e2 = mid + dir * half;
+    e1.z = e2.z = -a.elevation;
+    RunwayDef r1;
+    r1.ident = id1;
+    r1.headingTrue = heading;
+    r1.length = 2 * half;
+    r1.width = widthFt * kFt;
+    r1.threshold = e1;
+    r1.displaced = disp1Ft * kFt;
+    RunwayDef r2 = r1;
+    r2.ident = id2;
+    r2.headingTrue = wrapPi(r1.headingTrue + kPi);
+    r2.threshold = e2;
+    r2.displaced = disp2Ft * kFt;
+    a.runways.push_back(r1);
+    a.runways.push_back(r2);
+}
+
+}  // namespace
+
+const std::vector<Airport>& saoPauloRegionAirports() {
+    static const std::vector<Airport> list = [] {
+        const LocalFrame f = saoPauloWorldFrame();
+        std::vector<Airport> v{congonhas(f), campoDeMarte(f)};
+        // Guarulhos: runways renumbered 09/27 -> 10/28 in September 2022.
+        Airport gr = fieldAt("SBGR", "Guarulhos", 2461);
+        addRunway(gr, f, "10L", -23.434059, -46.482548, 0, "28R", -23.425043, -46.449203, 0, 12139, 148);
+        addRunway(gr, f, "10R", -23.438801, -46.487, 0, "28L", -23.4312, -46.4589, 0, 9843, 148);
+        const char* grSrc = "OurAirports airport-frequencies.csv (public domain); DECEA chart ILS RWY 10L (AMDT 2209A1) for IUC";
+        gr.ils = {{0, 110700, "IUC", false, grSrc}, {1, 111900, "IGS", false, grSrc},
+                  {2, 111700, "IGH", false, grSrc}, {3, 111100, "IBC", false, grSrc}};
+        gr.ilsKhz = 110700;
+        v.push_back(gr);
+        Airport kp = fieldAt("SBKP", "Viracopos", 2170);
+        addRunway(kp, f, "15", -22.9985, -47.147, 0, "33", -23.0164, -47.122, 300, 10630, 148);
+        kp.ils = {{0, 110300, "IKP", false, "Flight Plan Database listing for SBKP (single secondary source; unverified)"}};
+        kp.ilsKhz = 110300;
+        v.push_back(kp);
+        Airport sj = fieldAt("SBSJ", "São José dos Campos", 2120);
+        addRunway(sj, f, "16", -23.2197, -45.872, 0, "34", -23.2368, -45.8535, 0, 8780, 148);
+        v.push_back(sj);
+        Airport jd = fieldAt("SBJD", "Jundiaí", 2470);
+        addRunway(jd, f, "18", -23.17495, -46.94665, 0, "36", -23.18658, -46.94127, 0, 4593, 98);
+        v.push_back(jd);
+        return v;
+    }();
+    return list;
+}
+
+Vec3 landingThreshold(const RunwayDef& r) { return runwayPoint(r, r.displaced); }
+
+std::unique_ptr<RegionGround> makeRegionGround(const std::vector<Airport>& airports) {
+    auto g = std::make_unique<RegionGround>();
+    for (const Airport& a : airports) {
+        RegionGround::Field fld;
+        fld.down = -a.elevation;
+        Vec3 c;
+        int n = 0;
+        for (std::size_t i = 0; i < a.runways.size(); i += 2) {
+            fld.runways.push_back(a.runways[i]);  // one paved strip serves both ends
+            c = c + runwayPoint(a.runways[i], 0.5 * a.runways[i].length);
+            ++n;
+        }
+        if (n == 0) continue;
+        c = c * (1.0 / n);
+        fld.north = c.x;
+        fld.east = c.y;
+        Real r = 0;
+        for (const RunwayDef& rw : a.runways) r = std::max(r, std::hypot(rw.threshold.x - c.x, rw.threshold.y - c.y));
+        fld.radius = r + 1500;
+        g->addField(fld);
+    }
+    return g;
+}
+
+std::vector<RouteWaypoint> approachRoute(const Airport& dest, int runway, const Vec3& from, int& faf,
+                                         const RunwayDef* departure) {
+    constexpr Real kNm = 1852, kGp = 0.0524, kTch = 15.24;
+    const RunwayDef& rw = dest.runways[static_cast<std::size_t>(runway)];
+    const Vec3 thr = landingThreshold(rw);
+    const Real c = std::cos(rw.headingTrue), s = std::sin(rw.headingTrue);
+    auto onFinal = [&](Real nm) { return Vec3{thr.x - c * nm * kNm, thr.y - s * nm * kNm, thr.z}; };
+    auto pathAlt = [&](Real nm) { return dest.elevation + kTch + nm * kNm * std::tan(kGp); };
+    std::vector<RouteWaypoint> r;
+    Vec3 start = from;
+    if (departure) {
+        const Vec3 d0 = landingThreshold(*departure);
+        const Real dc = std::cos(departure->headingTrue), ds = std::sin(departure->headingTrue);
+        r.push_back({"RW" + departure->ident, d0, -1, true});
+        start = {d0.x + dc * (departure->length - departure->displaced + 3 * kNm), d0.y + ds * (departure->length - departure->displaced + 3 * kNm), d0.z};
+        r.push_back({"DP" + departure->ident, start, -1, false});
+    }
+    const Vec3 itf = onFinal(10);
+    // Arriving from well off the final course: an initial fix 5 NM abeam the
+    // intermediate fix, on the arrival's side. Not when already on the final
+    // (within 1 NM of the extended centreline, inside the IF).
+    const Real out = -((start.x - thr.x) * c + (start.y - thr.y) * s), lateral = -(start.x - thr.x) * s + (start.y - thr.y) * c;
+    const bool onFinalAlready = std::abs(lateral) < kNm && out > -kNm && out < 10.5 * kNm;
+    const Real inbound = std::atan2(itf.y - start.y, itf.x - start.x);
+    if (!onFinalAlready && std::abs(wrapPi(inbound - rw.headingTrue)) > units::degToRad(60)) {
+        const Real side = (-(start.x - thr.x) * s + (start.y - thr.y) * c) >= 0 ? 1.0 : -1.0;  // + right of the final
+        r.push_back({"IA" + rw.ident, {itf.x - s * side * 5 * kNm, itf.y + c * side * 5 * kNm, thr.z}, pathAlt(10), false});
+    }
+    r.push_back({"IF" + rw.ident, itf, pathAlt(10), false});
+    faf = static_cast<int>(r.size());
+    r.push_back({"FF" + rw.ident, onFinal(5), pathAlt(5), false});
+    r.push_back({"RW" + rw.ident, thr, dest.elevation + kTch, true});
+    return r;
 }
 
 std::unique_ptr<AirfieldGround> makeAirfieldGround(const Airport& a, const LocalFrame&) {
@@ -89,7 +237,6 @@ const NavEnvironment& saoPauloNavEnvironment() {
     static NavDatabase db = [] {
         NavDatabase d;
         const LocalFrame f = saoPauloWorldFrame();
-        const Airport a = campoDeMarte(f);
         const Real var = units::degToRad(-21.5);
         const std::string src = "synthetic test facility (Aviation Dynamics); not a real-world navaid";
         Navaid vor;
@@ -104,39 +251,43 @@ const NavEnvironment& saoPauloNavEnvironment() {
         vor.synthetic = true;
         vor.source = src;
         d.add(vor);
-        // Localizer antenna 300 m beyond the far end of runway 12.
         auto geo = [&](const Vec3& ned, Real h) {
             Geodetic g = f.geodeticFromNed(ned);
             g.height = h;
             return g;
         };
-        // Localizer antenna 300 m beyond the far end; glideslope 300 m in from
-        // the paved end, 120 m right of the centreline; 3 degrees.
-        auto ils = [&](const Airport& ap, const std::string& ident, const std::string& name) {
-            const RunwayDef& rw = ap.runways[0];
-            Navaid loc;
-            loc.type = Navaid::Type::Localizer;
-            loc.ident = ident;
-            loc.name = name;
-            loc.frequencyKhz = ap.ilsKhz;
-            loc.position = geo(runwayPoint(rw, rw.length + 300), ap.elevation + 2);
-            loc.course = rw.headingTrue;
-            // Width giving 700 ft (213 m) full-scale span at the threshold.
-            loc.courseWidth = 2 * std::atan2(106.7, rw.length + 300);
-            loc.rangeNm = 18;
-            loc.synthetic = true;
-            loc.source = src;
-            d.add(loc);
-            Navaid gs = loc;
-            gs.type = Navaid::Type::Glideslope;
-            gs.ident = ident + " GS";
-            gs.position = geo(runwayPoint(rw, 300, 120), ap.elevation + 2);
-            gs.glidepathAngle = units::degToRad(3.0);
-            gs.rangeNm = 10;
-            d.add(gs);
-        };
-        ils(a, "ITMT", "Test ILS Campo de Marte RWY 12 (synthetic)");
-        ils(congonhas(f), "ITCG", "Test ILS Congonhas RWY 35L (synthetic)");
+        // Every ILS of the region (IlsDef): localizer antenna 300 m beyond the
+        // far end, glideslope 300 m past the landing threshold and 120 m right
+        // of the centreline; 3 degrees.
+        for (const Airport& ap : saoPauloRegionAirports()) {
+            for (const IlsDef& i : ap.ils) {
+                const RunwayDef& rw = ap.runways[static_cast<std::size_t>(i.runway)];
+                Navaid loc;
+                loc.type = Navaid::Type::Localizer;
+                loc.ident = i.ident;
+                loc.name = ap.icao + " ILS " + rw.ident + (i.synthetic ? " (synthetic)" : "");
+                loc.frequencyKhz = i.khz;
+                loc.position = geo(runwayPoint(rw, rw.length + 300), ap.elevation + 2);
+                // The course in the antenna's own tangent frame: far from the
+                // world origin its north is turned by the meridians' convergence
+                // (0.2 deg at Viracopos), which would offset the beam.
+                const Vec3 along = f.rotationTo(LocalFrame(loc.position)) * Vec3{std::cos(rw.headingTrue), std::sin(rw.headingTrue), 0};
+                loc.course = std::atan2(along.y, along.x);
+                // Width giving 700 ft (213 m) full-scale span at the landing threshold.
+                loc.courseWidth = 2 * std::atan2(106.7, rw.length + 300 - rw.displaced);
+                loc.rangeNm = 18;
+                loc.synthetic = i.synthetic;
+                loc.source = i.source;
+                d.add(loc);
+                Navaid gs = loc;
+                gs.type = Navaid::Type::Glideslope;
+                gs.ident = i.ident + " GS";
+                gs.position = geo(runwayPoint(rw, rw.displaced + 300, 120), ap.elevation + 2);
+                gs.glidepathAngle = units::degToRad(3.0);
+                gs.rangeNm = 10;
+                d.add(gs);
+            }
+        }
         return d;
     }();
     static NavEnvironment env = [] {
