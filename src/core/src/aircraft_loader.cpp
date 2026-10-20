@@ -435,6 +435,12 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         }
         o.boolean("ground_effect", s.groundEffect);
         o.boolean("lifting_line", s.liftingLine);
+        // Sweep stall progression, k in clmax(eta) = clmax (1 - k sin(sweep)
+        // (eta - 1/2)), the same factor on the separated section's normal
+        // force: the outboard sections of a swept wing stall below the
+        // section's clmax and carry less when separated, the inboard above it
+        // and more (default 0: uniform).
+        o.num("sweep_stall_gradient", s.sweepStallGradient);
         o.boolean("trimmable_stabilizer", s.trimmableStabilizer);
         o.num("thickness_ratio", s.thicknessRatio);
         o.num("korn_factor", s.kornFactor);
