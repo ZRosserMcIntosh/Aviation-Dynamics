@@ -424,6 +424,9 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
             dw.integer("source", s.downwashSource, true);
             dw.num("gradient", s.downwashGradient);
             dw.num("at_zero_lift_deg", s.downwashAtZeroLift, kDeg);
+            dw.boolean("wake_blanking", s.wakeBlanking);
+            dw.num("wake_spread", s.wakeSpread);
+            dw.num("wake_q_ratio", s.wakeDynamicPressureRatio);
         }
         if (o.has("slipstream")) {
             Obj ss = o.child("slipstream");
@@ -435,6 +438,12 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.boolean("trimmable_stabilizer", s.trimmableStabilizer);
         o.num("thickness_ratio", s.thicknessRatio);
         o.num("korn_factor", s.kornFactor);
+        o.num("mach_clmax_knee", s.machClMaxKnee);
+        o.num("mach_clmax_factor", s.machClMaxFactor);
+        o.num("mach_ac_shift", s.machAcShift);
+        o.num("mach_cm0_shift", s.machCm0Shift);
+        o.num("mach_control_exponent", s.machControlExponent);
+        o.num("mach_control_floor", s.machControlFloor);
         o.each("panels", [&](Obj& po, std::size_t) {
             PanelDef p;
             po.vec3("root_quarter_chord_m", p.rootQuarterChord, 1, true);

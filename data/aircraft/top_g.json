@@ -181,6 +181,30 @@
    "kind": "estimated",
    "source": "EST",
    "note": "Ground spoilers: every panel to full on main-wheel contact with the throttles at idle above 30 kt ground speed (a landing or a rejected take-off); stowed when the throttles come up or below 15 kt."
+  },
+  {
+   "field": "surfaces[*].mach_clmax_knee, mach_clmax_factor",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Buffet boundary: the section's clmax falls as 1 - 5 (Mn - 0.5)^2 above a normal Mach number of 0.5 (Mn = M cos(sweep); simple sweep theory as the Korn drag rise), floor 0.35. Shape after the CL-buffet-onset curves of supercritical transport wings (Obert, Aerodynamic Design of Transport Aircraft, ch. 20): the trimmed 1-g CLmax falls from 1.27 at low speed to 0.90 at M0.85 (71 %), a 1.3-g buffet margin at CL ~0.7, in the range of the class at FL410 mid weight. No G650 buffet-onset data published."
+  },
+  {
+   "field": "surfaces[0].mach_ac_shift, mach_cm0_shift",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Mach tuck: through the drag rise (Mcrit = Korn Mdd - 0.1077 to Mdd + 0.05) the rear-loaded supercritical section's aft loading grows (cm0 shift -0.06, the order of the cm(M) trend of NASA SC(2) sections, Harris NASA TP-2969), and from about Mdd the section's force point moves aft from c/4 toward c/2 at M1 (thin-airfoil limits; Hilton, High-Speed Aerodynamics, 1951; Raymer 12.4.2). Stabiliser trimmed at FL410 M0.80 and the speed raised, the 1-g pitching moment reverses from nose up to nose down in the mid-0.8s and is a push at M0.92; the elevator per g about triples toward Mmo (figures in tests/test_transonic.cpp). No G650 trim-vs-Mach data published."
+  },
+  {
+   "field": "surfaces[*].mach_control_exponent, mach_control_floor",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Hinged-control effectiveness x max(0.2, 1 - (M/Mdd0)^10), Mdd0 the zero-lift Korn Mdd of the surface (0.95 for the tailplane): the shock standing ahead of the hinge line unloads the flap. Elevator pitching power at M0.92 is 29 % of its M0.5 value, 91 % at M0.80 (Hilton 1951 on control effectiveness through the transonic range). No G650 data."
+  },
+  {
+   "field": "surfaces[1].downwash.wake_blanking, wake_spread, wake_q_ratio",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "T-tail deep stall: the stalled wing's separated wake leaves the mid-chord at (alpha - downwash) with half-thickness c/2 sin(alpha - eps) plus 0.16 per metre aft (a turbulent wake's ~9 deg half-angle), as strong as the wing's separated fraction; inside it the tail (6 m above the wing plane, ~12 m behind the mid-chord) sees 20 % of the dynamic pressure at the core (the ~55 % velocity deficit a few chords behind a stalled wing; Taylor & Ray, AIAA 65-737: the tail's pitching contribution nearly lost in the wake) and the downwash of the wing at its CLmax rather than one falling with the collapsing lift. The tail is in the wake from alpha ~25 to ~40 deg. Without the stick pusher, full aft stick at idle settles into a deep stall near 40 deg of alpha (1 g, ~7,000 fpm) with the elevator's pitching power below 15 % of its unstalled value; the pusher keeps the airplane out of it. The airframe still pitches down on its own once the stick goes forward (no swept-wing post-stall pitch-up in the regularised lifting line), so the model does not lock in."
   }
  ],
  "mass": {
@@ -279,6 +303,12 @@
    "lifting_line": true,
    "thickness_ratio": 0.11,
    "korn_factor": 0.95,
+   "mach_clmax_knee": 0.4,
+   "mach_clmax_factor": 2.0,
+   "mach_ac_shift": 0.25,
+   "mach_cm0_shift": -0.06,
+   "mach_control_exponent": 10,
+   "mach_control_floor": 0.2,
    "panels": [
     {
      "root_quarter_chord_m": [
@@ -422,10 +452,18 @@
    "span_efficiency": 0.85,
    "trimmable_stabilizer": true,
    "downwash": {
-    "source": 0
+    "source": 0,
+    "wake_blanking": true,
+    "wake_spread": 0.16,
+    "wake_q_ratio": 0.2
    },
    "thickness_ratio": 0.1,
    "korn_factor": 0.92,
+   "mach_clmax_knee": 0.4,
+   "mach_clmax_factor": 2.0,
+   "mach_ac_shift": 0.25,
+   "mach_control_exponent": 10,
+   "mach_control_floor": 0.2,
    "panels": [
     {
      "root_quarter_chord_m": [

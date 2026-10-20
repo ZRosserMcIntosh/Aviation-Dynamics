@@ -96,6 +96,8 @@ struct SurfaceOutput {
     Real alphaMean = 0;        // area-weighted mean strip alpha
     Real downwash = 0;         // instantaneous downwash it generates on others' strips (rad)
     int stalledStrips = 0;
+    Real separated = 0;        // area-weighted separated fraction (1 - attached) of its strips
+    Real wakeImmersion = 0;    // 0..1: how far the surface sits in its downwash source's stalled wake
 };
 
 // Section values are in the plane normal to the strip's span (simple sweep
@@ -156,6 +158,14 @@ public:
     Real downwashGradient(int s) const { return surfaces_[s].downwashGradient; }
     int downwashSource(int s) const { return surfaces_[s].def.downwashSource; }
     Vec3 surfaceCentroid(int s) const { return surfaces_[s].centroid; }
+    // A strip of the surface's main plane (within 45 deg of its area-weighted
+    // normal): a winglet or other canted panel is not, and does not stand in
+    // for the wing where a stall angle is scanned (stall warning, pusher,
+    // assist margins); its own stall is still in the forces.
+    bool stripIsPrimary(int i) const {
+        const Strip& s = strips_[static_cast<std::size_t>(i)];
+        return dot(s.normalAxis, surfaces_[static_cast<std::size_t>(s.surface)].meanNormal) > 0.7071;
+    }
     // Strip geometry for visualisation and analysis (structural frame).
     struct StripGeometry {
         int surface = 0, side = 1;
@@ -214,7 +224,10 @@ private:
         Real area = 0, span = 0, aspectRatio = 0, sweep = 0;
         Real liftSlope = 0;     // incompressible 3-D slope, per rad
         Real downwashGradient = 0;
+        Real wakeDownwash = 0;  // downwash the source's stalled wake holds (rad), wake blanking
+        Real meanChord = 0;     // area / span
         Vec3 centroid;
+        Vec3 meanNormal{0, 0, -1};  // area-weighted strip normal (unit): the surface's main plane
         bool horizontal = true;
         // Lifting line: spanwise smoothing of the control effects (n x n,
         // rows summing to 1). A flap's lift carries past its end over about
