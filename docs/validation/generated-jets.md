@@ -30,7 +30,20 @@ is marked *predicted* as a sanity check, not a validation.
    nacelle radius 0.79 m · √(T / 75.2 kN). The 737's engines hang under
    the wing at 29 % semispan, with gear legs long enough for 0.5 m of
    nacelle clearance.
-3. **Calibration** in the web build (the same core):
+3. **Systems from the template.** The Top G's `electrical` and
+   `hydraulics` blocks come over whole (any field added to the template
+   reaches every generated jet) and only the values that scale with the
+   type are overridden: two engine-driven generators at the type's rating
+   (Phenom 300E, CJ4 and Learjet 45 2 × 300 A starter-generators; CRJ700
+   2 × 400 A and 737-800 2 × 600 A as the 28 V DC equivalent of their
+   30 and 90 kVA IDGs), the single-alternator fallback at their sum, the
+   battery (44, 44, 40, 43 and 48 Ah), the loads' currents (0.8, 0.8, 0.9,
+   1.3 and 1.6 × the Top G's, same names), two 3,000 psi hydraulic systems
+   each on one engine with the electric pump's current scaled with the
+   generators (on A; on A and B for the 737). The CRJ700's third system
+   and the 737's standby system are not modelled. Each is an *estimated*
+   entry in the file's provenance.
+4. **Calibration** in the web build (the same core):
    - **Engine lapse.** Mattingly's lapse coefficient, bisected so that the
      maximum level speed at full thrust, with the altitude held, is the
      published maximum cruise speed.
@@ -65,6 +78,7 @@ is marked *predicted* as a sanity check, not a validation.
 | Approach trim at 1.23 VS + 5 kt, α in −2…9° (test) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Vref vs published (test) | 105 vs 104 KIAS, *predicted* (±8 %) | calibrated (±2 %) | — | calibrated (±2 %) | — |
 | Hands-off take-off roll: heading within 3° at VR, lift-off and climb (test) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Two generators, two hydraulic systems; a dual flame-out at 250 KCAS drops both and stops the gear (test, `test_engine_out.cpp`) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Take-off on the take-off flap (the largest detent up to 20°), rotate at 1.12 VS TO, to 400 ft (`check.mjs`, SBSP 2,631 ft, spawn weight) | 1,700 ft roll (flap 8) | 1,323 ft | 1,639 ft | 2,913 ft | 3,411 ft |
 | Stabilised final at Vref + 5 (`check.mjs`) | 99 KIAS, −535 fpm, α 4.6° | 105, −564, 0.9° | 100, −544, 5.2° | 133, −700, 1.9° | 135, −689, 3.7° |
 

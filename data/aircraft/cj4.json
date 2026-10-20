@@ -67,10 +67,22 @@
    "note": "Empty CG 27 % MAC, CG limits 7-11 % to 36 % MAC, main gear at 45 % MAC (the Top G arrangement); inertia scaled by mass and size."
   },
   {
-   "field": "drag_items",
+   "field": "drag_items, turbofans[*].fan_diameter_m, turbofans[*].windmill_drag_area_m2",
    "kind": "estimated",
    "source": "ROSKAM",
-   "note": "The Top G build-up scaled with fuselage wetted area, nacelle size and wing area."
+   "note": "The Top G build-up scaled with fuselage wetted area, nacelle size and wing area; the fan and its windmilling drag area with the nacelle."
+  },
+  {
+   "field": "electrical",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Two engine-driven generators (GEN 1, GEN 2) of 300 A each at 28 V, on line from 45 % N2 (two 300 A starter-generators, typical of the light-jet class); battery 44 Ah; the Top G's loads (same names) at 0.8 x its currents for this airframe class."
+  },
+  {
+   "field": "hydraulics",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "The Top G's two-system layout at 3,000 psi: A on engine 1, B on engine 2, an electric pump of 60 A on generator power on A; gear, flaps, speedbrake, steering and brakes on either system, a brake accumulator for 6 applications, gear free fall at 35 % rate (the CJ4 has one engine-pump system; two systems is the template layout)."
   },
   {
    "field": "controls.speedbrake, turbofans[*].thrust_reverser",
@@ -193,6 +205,12 @@
    "lifting_line": true,
    "thickness_ratio": 0.11,
    "korn_factor": 0.95,
+   "mach_clmax_knee": 0.4,
+   "mach_clmax_factor": 2.0,
+   "mach_ac_shift": 0.25,
+   "mach_cm0_shift": -0.06,
+   "mach_control_exponent": 10,
+   "mach_control_floor": 0.2,
    "panels": [
     {
      "root_quarter_chord_m": [
@@ -321,10 +339,18 @@
    "span_efficiency": 0.85,
    "trimmable_stabilizer": true,
    "downwash": {
-    "source": 0
+    "source": 0,
+    "wake_blanking": true,
+    "wake_spread": 0.16,
+    "wake_q_ratio": 0.2
    },
    "thickness_ratio": 0.1,
    "korn_factor": 0.92,
+   "mach_clmax_knee": 0.4,
+   "mach_clmax_factor": 2.0,
+   "mach_ac_shift": 0.25,
+   "mach_control_exponent": 10,
+   "mach_control_floor": 0.2,
    "panels": [
     {
      "root_quarter_chord_m": [
@@ -497,7 +523,16 @@
    "itt_idle_k": 760,
    "itt_takeoff_k": 1170,
    "oil_pressure_idle_psi": 40,
-   "oil_pressure_max_psi": 70
+   "oil_pressure_max_psi": 70,
+   "fan_diameter_m": 0.59,
+   "windmill_drag_area_m2": 0.033,
+   "ratings": {
+    "max_continuous": 0.92,
+    "max_climb": 0.88,
+    "max_cruise": 0.84,
+    "takeoff_time_s": 300,
+    "takeoff_time_engine_out_s": 600
+   }
   },
   {
    "name": "right engine",
@@ -524,7 +559,16 @@
    "itt_takeoff_k": 1170,
    "oil_pressure_idle_psi": 40,
    "oil_pressure_max_psi": 70,
-   "fuel_feed": 0
+   "fuel_feed": 0,
+   "fan_diameter_m": 0.59,
+   "windmill_drag_area_m2": 0.033,
+   "ratings": {
+    "max_continuous": 0.92,
+    "max_climb": 0.88,
+    "max_cruise": 0.84,
+    "takeoff_time_s": 300,
+    "takeoff_time_engine_out_s": 600
+   }
   }
  ],
  "fuel": {
@@ -568,92 +612,153 @@
  },
  "electrical": {
   "battery_voltage_v": 24.0,
-  "battery_capacity_ah": 40.0,
+  "battery_capacity_ah": 44.0,
   "battery_resistance_ohm": 0.02,
   "alternator_voltage_v": 28.0,
   "alternator_max_current_a": 600,
+  "bus_minimum_v": 18,
+  "generators": [
+   {
+    "name": "GEN 1",
+    "engine": 0,
+    "max_current_a": 300,
+    "cut_in_n2": 0.45
+   },
+   {
+    "name": "GEN 2",
+    "engine": 1,
+    "max_current_a": 300,
+    "cut_in_n2": 0.45
+   }
+  ],
   "loads": [
    {
     "name": "avionics",
     "label": "Avionics (displays, radios, transponder)",
-    "current_a": 25.0,
+    "current_a": 20.0,
     "minimum_voltage_v": 20,
     "avionics_bus": true
    },
    {
     "name": "ahrs",
     "label": "Attitude and Heading Reference",
-    "current_a": 3.0,
+    "current_a": 2.4,
     "minimum_voltage_v": 18
    },
    {
     "name": "turn_coordinator",
     "label": "Standby Instruments",
-    "current_a": 1.0,
+    "current_a": 0.8,
     "minimum_voltage_v": 18
    },
    {
     "name": "engine_gauges",
     "label": "Engine Indication",
-    "current_a": 2.0,
+    "current_a": 1.6,
     "minimum_voltage_v": 18
    },
    {
     "name": "fuel_pump",
     "label": "Fuel Boost Pumps",
-    "current_a": 8.0,
+    "current_a": 6.4,
     "minimum_voltage_v": 18
    },
    {
     "name": "beacon",
     "label": "Beacon",
-    "current_a": 2.0,
+    "current_a": 1.6,
     "minimum_voltage_v": 18,
     "initially_on": false
    },
    {
     "name": "nav_lights",
     "label": "Navigation Lights",
-    "current_a": 3.0,
+    "current_a": 2.4,
     "minimum_voltage_v": 18,
     "initially_on": false
    },
    {
     "name": "strobes",
     "label": "Strobes",
-    "current_a": 4.0,
+    "current_a": 3.2,
     "minimum_voltage_v": 18,
     "initially_on": false
    },
    {
     "name": "taxi_light",
     "label": "Taxi Lights",
-    "current_a": 6.0,
+    "current_a": 4.8,
     "minimum_voltage_v": 18,
     "initially_on": false
    },
    {
     "name": "landing_light",
     "label": "Landing Lights",
-    "current_a": 10.0,
+    "current_a": 8.0,
     "minimum_voltage_v": 18,
     "initially_on": false
    },
    {
     "name": "pitot_heat",
     "label": "Probe Heat",
-    "current_a": 12.0,
+    "current_a": 9.6,
     "minimum_voltage_v": 18,
     "initially_on": false
    },
    {
     "name": "panel_lights",
     "label": "Panel Lights",
-    "current_a": 2.0,
+    "current_a": 1.6,
     "minimum_voltage_v": 18,
     "initially_on": false
    }
   ]
+ },
+ "hydraulics": {
+  "systems": [
+   {
+    "name": "A",
+    "engines": [
+     0
+    ],
+    "electric_pump": {
+     "current_a": 60,
+     "generator_only": true
+    },
+    "nominal_pressure_psi": 3000,
+    "rise_time_s": 2.0
+   },
+   {
+    "name": "B",
+    "engines": [
+     1
+    ],
+    "nominal_pressure_psi": 3000,
+    "rise_time_s": 2.0
+   }
+  ],
+  "gear": [
+   0,
+   1
+  ],
+  "flaps": [
+   0,
+   1
+  ],
+  "speedbrake": [
+   0,
+   1
+  ],
+  "steering": [
+   0,
+   1
+  ],
+  "brakes": [
+   0,
+   1
+  ],
+  "brake_accumulator_applications": 6,
+  "free_fall_rate_fraction": 0.35
  },
  "gear": [
   {
