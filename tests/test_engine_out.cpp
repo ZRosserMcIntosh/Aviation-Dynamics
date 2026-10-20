@@ -383,6 +383,40 @@ TEST_CASE("dual flame-out: generators drop, the battery carries the essentials, 
     CHECK(ac.electrical().generatorOnline(1));
 }
 
+TEST_CASE("generated jets: two generators and two hydraulic systems each; a dual flame-out stops the gear") {
+    // The template's electrical and hydraulics blocks reach every generated
+    // jet (tools/jetgen). Regression: the generated jets carried one aggregate
+    // alternator and no hydraulics block, so a dual flame-out left the gear
+    // and flaps working.
+    SimpleWeather atm;
+    FlatGround ground(0);
+    for (const char* id : {"phenom300", "cj4", "learjet45", "crj700", "b738"}) {
+        std::printf("    %s\n", id);
+        Aircraft ac(loadReference(id));
+        const TrimResult tr = trimJet(ac, 15000, 250);
+        CHECK(tr.converged);
+        for (const char* c : {"electrical.battery", "electrical.alternator", "engine1.fuel", "engine2.fuel"}) ac.setCockpitControl(c, 1);
+        PilotInput in = tr.input;
+        hold(ac, in, tr, 8, radToDeg(tr.theta), ground, atm);
+        CHECK(ac.electrical().generatorCount() == 2);
+        CHECK(ac.electrical().generatorOnline(0) && ac.electrical().generatorOnline(1));
+        CHECK(ac.hydraulicSystemCount() == 2);
+        CHECK(ac.hydraulicPressure(0) > 0.95 && ac.hydraulicPressure(1) > 0.95);
+        CHECK_NEAR(ac.telemetry().gearPower, 1, 1e-9);
+        ac.setCockpitControl("engine1.fuel", 0);
+        ac.setCockpitControl("engine2.fuel", 0);
+        hold(ac, in, tr, 30, -2, ground, atm);
+        CHECK(!ac.turbofanState(0).running && !ac.turbofanState(1).running);
+        CHECK(!ac.electrical().alternatorOnline());
+        CHECK(ac.electrical().busVoltage() >= ac.electrical().busMinimum());  // the battery carries the essentials
+        CHECK(ac.hydraulicPressure(0) < 0.05 && ac.hydraulicPressure(1) < 0.05);
+        CHECK_NEAR(ac.telemetry().gearPower, 0, 0.05);  // the gear actuator's rate is zero
+        ac.setCockpitControl("gear.lever", 1);
+        hold(ac, in, tr, 10, -2, ground, atm);
+        CHECK_NEAR(ac.gearPosition(), 0, 1e-9);
+    }
+}
+
 TEST_CASE("hydraulics: with both engines off the brakes hold for the accumulator's applications, then fade") {
     Aircraft ac(jet());
     SimpleWeather atm;
