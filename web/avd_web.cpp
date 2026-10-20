@@ -35,6 +35,42 @@ namespace {
 constexpr Real kDt = 1.0 / 240.0;
 constexpr int kStateSize = 64;
 
+// ---- ABI handshake ----------------------------------------------------------
+// Every array the page reads has its size, stride and index meaning fixed
+// here. Bump kAbiVersion on ANY change to a layout below or to the meaning of
+// an index (web/README.md, "ABI version"): avd_loader.mjs refuses a module
+// whose avd_abi_version() is not its EXPECTED_ABI, and web/abi_check.mjs
+// checks the README's tables against avd_layout(). The static_asserts at the
+// end of this file tie these numbers to the arrays themselves.
+constexpr int kAbiVersion = 1;
+namespace abi {
+constexpr int state = kStateSize;          // avd_state()
+constexpr int cockpit = 96;                // avd_cockpit(); avd_markings() shares the buffer
+constexpr int jet = 64;                    // avd_jet()
+constexpr int loadsheet = 256;             // avd_loadsheet()
+constexpr int flowHeader = 16, flowStrips = 64, flowStride = 20, flowEngines = 4, flowEngineStride = 14;
+constexpr int flow = flowHeader + flowStrips * flowStride + flowEngines * flowEngineStride;  // avd_flow(): 1,352
+constexpr int compassCard = 12;            // avd_compass_card()
+constexpr int runway = 6;                  // avd_runway()
+constexpr int region = 1024;               // avd_region()
+constexpr int routeMax = 16, route = 3 + 3 * routeMax;  // avd_route(): 51
+constexpr int gps = 16;                    // avd_gps()
+constexpr int wakeHeader = 8, wakeStride = 9, wakeMax = 4096;  // avd_wake()
+constexpr int wake = wakeHeader + wakeStride * wakeMax;
+constexpr int bodiesMax = 32, bodyStride = 10, bodies = 1 + bodiesMax * bodyStride;  // avd_bodies()
+constexpr int windGridMax = 3 * 16 * 12 * 8;   // avd_wind_grid(): the largest grid
+constexpr int windBoxMax = 3 * 24 * 24 * 12;   // avd_wind_box()
+constexpr int textSlack = 1024;            // avd_text(n) returns at least n + 1 bytes; the buffer grows by this
+constexpr int eventsMax = 4096;            // avd_events() keeps at most this many bytes
+// The order avd_layout(which) returns them in (web/README.md, "ABI version").
+constexpr int layout[] = {state, cockpit, jet, loadsheet, flowHeader, flowStride, flowStrips, flowEngineStride, flowEngines, flow,
+                          cockpit /* markings */, compassCard, runway, region, route, routeMax, gps, wakeHeader, wakeStride, wakeMax,
+                          bodiesMax, bodyStride, bodies, windBoxMax, windGridMax, textSlack, eventsMax};
+}  // namespace abi
+#ifndef AVD_BUILD_ID
+#define AVD_BUILD_ID "dev"  // web/build_wasi.sh bakes "<git short hash>[-dirty] <date>"
+#endif
+
 struct Sim {
     AircraftDefinition def;
     LocalFrame frame = scenarios::saoPauloWorldFrame();
@@ -78,10 +114,11 @@ struct Sim {
 constexpr Real kOwnWakeAge = 4.0;
 
 Sim* g = nullptr;
-double g_state[kStateSize];
-double g_cockpit[96];
-double g_jet[64];
-double g_load[256];
+// Bump kAbiVersion (above) when any of these change.
+double g_state[abi::state];
+double g_cockpit[abi::cockpit];
+double g_jet[abi::jet];
+double g_load[abi::loadsheet];
 // Airport for spawns: 0 Campo de Marte (SBMT, runway 12), 1 Congonhas (SBSP,
 // runway 35L). Kept across aircraft loads.
 int g_airportId = 1;
@@ -188,8 +225,8 @@ void applyLoad(Aircraft& ac) {
     for (std::size_t i = 0; i < g->loadTanks.size(); ++i) ac.fuel().setTankQuantity(static_cast<int>(i), g->loadTanks[i]);
     ac.refreshMass();
 }
-constexpr int kFlowStrips = 64, kFlowStride = 20, kFlowEngine = 14;
-double g_flow[16 + kFlowStrips * kFlowStride + 4 * kFlowEngine];
+constexpr int kFlowStrips = abi::flowStrips, kFlowStride = abi::flowStride, kFlowEngine = abi::flowEngineStride;
+double g_flow[abi::flow];  // bump kAbiVersion when the layout changes
 char* g_text = nullptr;
 int g_textCap = 0;
 std::vector<std::string> g_errors;
@@ -197,13 +234,30 @@ std::vector<std::string> g_errors;
 int putText(const std::string& s) {
     if (static_cast<int>(s.size()) + 1 > g_textCap) {
         std::free(g_text);
-        g_textCap = static_cast<int>(s.size()) + 1024;
+        g_textCap = static_cast<int>(s.size()) + abi::textSlack;
         g_text = static_cast<char*>(std::malloc(static_cast<std::size_t>(g_textCap)));
     }
     std::memcpy(g_text, s.data(), s.size());
     g_text[s.size()] = 0;
     return static_cast<int>(s.size());
 }
+
+}  // namespace
+
+// ---- ABI handshake exports (see the abi namespace above) ----
+// The layout version: the loader's EXPECTED_ABI must equal it.
+AVD_EXPORT int avd_abi_version() { return kAbiVersion; }
+// Size, stride or count `which` of the exported arrays (doubles; bytes for
+// the text entries), in the order of abi::layout; -1 for an unknown index.
+AVD_EXPORT int avd_layout(int which) {
+    constexpr int n = static_cast<int>(sizeof(abi::layout) / sizeof(abi::layout[0]));
+    return which >= 0 && which < n ? abi::layout[which] : -1;
+}
+// The build's identity ("<git short hash>[-dirty] <date>", or "dev") in the
+// text buffer; returns its length. The site shows it next to the version.
+AVD_EXPORT int avd_build_id() { return putText(AVD_BUILD_ID); }
+
+namespace {
 
 const char* eventText(FlightEventType t) {
     switch (t) {
@@ -1467,3 +1521,19 @@ AVD_EXPORT void avd_failure(int which, int on) {
         default: break;
     }
 }
+
+// ---- ABI layout guards: the arrays above against the abi namespace at the top.
+// A failure here means the layout changed: update abi::* and bump kAbiVersion.
+static_assert(sizeof(g_state) / sizeof(double) == abi::state, "avd_state layout: bump kAbiVersion");
+static_assert(sizeof(g_cockpit) / sizeof(double) == abi::cockpit, "avd_cockpit layout: bump kAbiVersion");
+static_assert(sizeof(g_jet) / sizeof(double) == abi::jet, "avd_jet layout: bump kAbiVersion");
+static_assert(sizeof(g_load) / sizeof(double) == abi::loadsheet, "avd_loadsheet layout: bump kAbiVersion");
+static_assert(sizeof(g_flow) / sizeof(double) == abi::flow, "avd_flow layout: bump kAbiVersion");
+static_assert(sizeof(g_region) / sizeof(double) == abi::region, "avd_region layout: bump kAbiVersion");
+static_assert(kRouteMax == abi::routeMax && sizeof(g_route) / sizeof(double) == abi::route, "avd_route layout: bump kAbiVersion");
+static_assert(sizeof(g_gps) / sizeof(double) == abi::gps, "avd_gps layout: bump kAbiVersion");
+static_assert(kWakeHeader == abi::wakeHeader && kWakeStride == abi::wakeStride && kWakeMax == abi::wakeMax &&
+                  sizeof(g_wake) / sizeof(double) == abi::wake,
+              "avd_wake layout: bump kAbiVersion");
+static_assert(sizeof(g_windBox) / sizeof(double) == abi::windBoxMax, "avd_wind_box layout: bump kAbiVersion");
+static_assert(sizeof(g_bodies) / sizeof(double) == abi::bodies, "avd_bodies layout: bump kAbiVersion");

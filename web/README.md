@@ -7,6 +7,7 @@ I/O. The C ABI is in `avd_web.cpp`.
 ```sh
 WASI_SDK=/path/to/wasi-sdk web/build_wasi.sh   # → web/dist/avd.wasm, avd.mjs, tupi_t180.json, top_g.json
 node web/smoke_test.mjs                        # take-off, Quick Start, ILS reception, instruments
+node web/abi_check.mjs                         # the tables below against the module's avd_layout()
 node web/cockpit/build_page.mjs                # → web/dist/cockpit.html (one self-contained file)
 node web/cockpit/browser_test.mjs              # headless Chromium check of the bundled page (needs playwright)
 ```
@@ -17,7 +18,64 @@ exports plus these helpers:
 - `load(json)`, which returns a list of errors;
 - `state()` and `cockpitState()`, which return Float64Array views (copy them
   before the next call);
-- `markings()`, `runway()`, `events()`, `cockpit()`, `procedure()`.
+- `markings()`, `runway()`, `events()`, `cockpit()`, `procedure()`;
+- `abiVersion`, `layout` (every array size and stride from `avd_layout()`)
+  and `buildId()`; see *ABI version* below.
+
+## ABI version
+
+The module and the loader must agree on the layout of every array below.
+`avd_abi_version()` returns the module's layout version (`kAbiVersion` in
+`avd_web.cpp`, currently **1**); `createAvdModule` throws if it is not the
+loader's `EXPECTED_ABI`, so a stale `avd.wasm` next to a newer `avd.mjs` (or
+the reverse) fails at load instead of reading garbage. **Bump `kAbiVersion`
+on any change to a size, a stride or the meaning of an index** in the tables
+of this file, and `EXPECTED_ABI` in `avd_loader.mjs` with it; the
+`static_assert`s at the end of `avd_web.cpp` and `node web/abi_check.mjs`
+(CI) catch a layout that changed without the tables.
+
+`avd_layout(which)` returns the sizes (doubles; bytes for the text entries)
+the loader sizes its views with, so the page never carries a literal:
+
+| which | Name | Value | Describes |
+|---|---|---|---|
+| 0 | `state` | 64 | `avd_state()` |
+| 1 | `cockpit` | 96 | `avd_cockpit()` |
+| 2 | `jet` | 64 | `avd_jet()` |
+| 3 | `loadsheet` | 256 | `avd_loadsheet()` |
+| 4 | `flowHeader` | 16 | `avd_flow()` header doubles |
+| 5 | `flowStride` | 20 | doubles per lifting strip |
+| 6 | `flowStrips` | 64 | strips at most |
+| 7 | `flowEngineStride` | 14 | doubles per engine |
+| 8 | `flowEngines` | 4 | engines at most |
+| 9 | `flow` | 1,352 | `avd_flow()` total |
+| 10 | `markings` | 96 | `avd_markings()` (31 fields used) |
+| 11 | `compassCard` | 12 | `avd_compass_card()` |
+| 12 | `runway` | 6 | `avd_runway()` |
+| 13 | `region` | 1,024 | `avd_region()` |
+| 14 | `route` | 51 | `avd_route()` (3 + 3 · 16) |
+| 15 | `routeMax` | 16 | waypoints at most |
+| 16 | `gps` | 16 | `avd_gps()` |
+| 17 | `wakeHeader` | 8 | `avd_wake()` header doubles |
+| 18 | `wakeStride` | 9 | doubles per vortex segment |
+| 19 | `wakeMax` | 4,096 | segments at most |
+| 20 | `bodiesMax` | 32 | `avd_bodies()` bodies at most |
+| 21 | `bodyStride` | 10 | doubles per body |
+| 22 | `bodies` | 321 | `avd_bodies()` total (1 + 32 · 10) |
+| 23 | `windBoxMax` | 20,736 | `avd_wind_box()` largest grid (3 · 24 · 24 · 12) |
+| 24 | `windGridMax` | 4,608 | `avd_wind_grid()` largest grid (3 · 16 · 12 · 8) |
+| 25 | `textSlack` | 1,024 | `avd_text(n)` returns at least n + 1 bytes; the buffer grows by this |
+| 26 | `eventsMax` | 4,096 | bytes `avd_events()` keeps at most |
+
+`avd_build_id()` puts the build's identity in the text buffer and returns its
+length (`A.buildId()`): `"<git short hash>[-dirty] <UTC date>"` as baked by
+`web/build_wasi.sh` (`AVD_BUILD_ID` in the environment overrides it; a build
+without it says `dev`). The site should show it where it shows its own
+version, for example in the settings or about panel as
+`flight core <buildId> · ABI <abiVersion>`, and send it with bug reports, so
+a report can be matched to the commit that built the module. The cockpit
+page's CSV replay still sizes its own buffers (`cockpit.js`); it should read
+`A.layout.state` and `A.layout.cockpit` too.
 
 ## Lifecycle
 
@@ -30,7 +88,7 @@ call is clamped to 0.25 s. It returns the number of steps run.
 
 | Function | Meaning |
 |---|---|
-| `avd_reset(mode)` | Reset scenario: 0 cold and dark on runway 12, 1 engine running on runway 12, 2 on final for runway 12 (3 km), 3 cruising over the city. Sets NAV 1 to 110.30 active and 113.70 standby, OBS and bug 122, COM standby 132.80, transponder ALT |
+| `avd_reset(mode)` | Reset on the runway in use (`avd_set_airport`; Congonhas 35L by default): 0 cold and dark 30 m down the runway, 1 engine running there, 2 trimmed on the 3° final 3 km out (jets 6 km) at 65 KIAS with flaps 20 (jets: Vref + 5 KIAS, landing flap, gear down), exactly on the glide path (which starts at the glideslope antenna 300 m past the landing threshold), 3 trimmed level cruise 8 km before the runway, 850 m above the field (jets 1,500 m), 100 KIAS (jets 250), 4 trimmed at the destination's intermediate fix (10 NM out on the final course, level at the 3° path's altitude, 90 KIAS; jets 180 KIAS with flaps 1), 5 like 2 but on the destination's final; 4 and 5 use the runway in use when no destination is set. Every reset sets the altimeter to QNH, NAV 1 to the destination's ILS (else the runway in use's, else 113.70) with 113.70 in standby, the OBS to that course, the heading bug to the runway heading on the ground (else the course), COM standby 132.80 and the transponder to ALT; modes 1–5 seed the instruments to the truth |
 | `avd_reset_air(east, north, heightAboveField, headingDeg, kias, flap)` | Trimmed, level, hands-off spawn anywhere in the world (ENU metres from the world anchor, height in m above the field elevation, true track (the spawn crabs into the mean wind to make it good), 55–350 KIAS, flap detent 0–3). Read the levers with `avd_trim_throttle()` / `avd_trim_mixture()` |
 | `avd_set_weather(windMs, windFromDeg, turbulenceMs, isaDevC, humidity)` | Weather (rebuilds the field). The wind is the airfield report; it brings its own mechanical turbulence, weaker wind and stronger gusts over the city around SBMT, backing with height, and Cantareira ridge lift. `turbulenceMs` is an extra RMS on top |
 | `avd_set_wind_detail(severity, wStarMs, ziM)` | Turbulence class (0 none, 1 light, 2 moderate, 3 severe; MIL-HDBK-1797) and thermals (w*, convective-layer depth m AGL; w* 0 = none) |
