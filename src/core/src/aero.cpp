@@ -20,6 +20,7 @@
 
 #include <stdexcept>
 
+#include "avd/atmosphere.hpp"
 #include "avd/error.hpp"
 
 namespace avd {
@@ -836,7 +837,7 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
 Real trimmedMaxLiftCoefficient(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach) {
     const Real a = 340.3, v = std::max(mach, 0.15) * a;
     AeroInputs in;
-    in.density = 1.225;
+    in.density = isa::kSeaLevelDensity;
     in.speedOfSound = a;
     in.cg = cg;
     in.controls.flap = flap;

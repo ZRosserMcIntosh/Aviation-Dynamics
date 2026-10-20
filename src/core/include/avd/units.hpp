@@ -4,7 +4,7 @@
 // Aviation unit conversions. The core is SI internally; these are used only at
 // boundaries (data files, instruments, reports). Exact definitions:
 // ft = 0.3048 m, NM = 1852 m, lb = 0.45359237 kg, US gal = 3.785411784 L,
-// inHg (0 degC) = 3386.389 Pa, hp (mechanical) = 745.69987 W.
+// inHg (0 degC) = 3386.389 Pa, psi = 6894.757 Pa, hp (mechanical) = 745.69987 W.
 #pragma once
 
 #include "avd/math.hpp"
@@ -19,6 +19,7 @@ inline constexpr Real kPound = 0.45359237;
 inline constexpr Real kPoundForce = kPound * kStandardGravity;
 inline constexpr Real kUsGallon = 3.785411784e-3;  // m^3
 inline constexpr Real kInHg = 3386.389;
+inline constexpr Real kPsi = 6894.757;  // Pa (lbf / in^2)
 inline constexpr Real kHectoPascal = 100.0;
 inline constexpr Real kHorsepower = 745.69987158227022;
 inline constexpr Real kSlug = kPoundForce / kFoot;
@@ -39,6 +40,8 @@ constexpr Real hpToW(Real hp) { return hp * kHorsepower; }
 constexpr Real wToHp(Real w) { return w / kHorsepower; }
 constexpr Real inHgToPa(Real inHg) { return inHg * kInHg; }
 constexpr Real paToInHg(Real pa) { return pa / kInHg; }
+constexpr Real psiToPa(Real psi) { return psi * kPsi; }
+constexpr Real paToPsi(Real pa) { return pa / kPsi; }
 constexpr Real degToRad(Real d) { return d * (kPi / 180.0); }
 constexpr Real radToDeg(Real r) { return r * (180.0 / kPi); }
 constexpr Real rpmToRadS(Real rpm) { return rpm * (kTwoPi / 60.0); }
