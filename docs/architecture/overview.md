@@ -84,9 +84,27 @@ costs about 30 µs natively (`avdemo bench`).
   also covers magnetos and the starter, lumped EGT/CHT/oil temperatures, and
   oil pressure from a pump, relief valve and temperature-dependent viscosity.
 - **Ground.** Struts are springs with damping and a preload. Tyres use a
-  bristle model with rolling resistance. The model includes
-  differential brakes, nose-wheel steering, and hard points for wingtips, tail
-  and propeller that report contact events. Steering follows the rudder
+  relaxation-length bristle model in both directions with one friction
+  ellipse on the resultant: past the peak the tyre slides at
+  `sliding_friction_ratio` of the peak friction with the force along the
+  sliding velocity. The cornering stiffness follows the load,
+  C_alpha = c1 N (1 − c2 N/N_ref). Each wheel's spin is part of the RK4
+  state (I_w ω̇ = r F_x − T_brake − T_roll): the longitudinal bristle sees the
+  slip velocity v − rω, the brakes are a torque capacity (`brake_torque_nm`,
+  so a lightly loaded wheel locks), wheels spin up at touchdown with the aft
+  force that pitches the nose down, and a Coulomb stop holds a parked wheel
+  (a wheel that would stop within the step is held while the brakes, or the
+  rolling threshold, can hold the tread force). Anti-skid
+  (`anti_skid_efficiency`) is a sampled slip-ratio controller that modulates
+  the pedal's torque to hold that fraction of the peak force. The model
+  includes differential brakes, nose-wheel steering, and hard points for
+  wingtips, tail and propeller that report contact events. A castoring nose
+  wheel (`castor_trail_m`, `castor_deg`) has its heading as a state that
+  relaxes, over about a trail plus a relaxation length of rolling, to the
+  balance of the pedal linkage spring (`steer_linkage_nm_per_rad`, yielding at
+  `steer_linkage_breakout_nm`) against the tyre's aligning moment on the
+  trail: it lines up with its velocity when free and follows the pedals
+  through the linkage range. Steering follows the rudder
   pedals and, where a gear leg has one, a tiller (`tiller_steer_deg`); the two
   commands add, limited to the larger authority. A powered steering actuator
   has a slew-rate limit (`steer_rate_deg_per_s`); without one the wheel

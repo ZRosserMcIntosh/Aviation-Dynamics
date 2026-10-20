@@ -24,8 +24,8 @@ speed is a validation, not a calibration**. Only the flap's clmax increment
 | Rate of climb, sea level, 74 KIAS | 730 fpm | 707 fpm | −3.1% | ±15% |
 | Take-off ground roll (short field) | 960 ft | 812 ft | −15.4% | ±20% |
 | Take-off over 50 ft | 1630 ft | 1606 ft | −1.5% | ±20% |
-| Landing ground roll, pilot braking technique | 575 ft | 459 ft | −20.1% | ±25% (see below) |
-| ↳ tyre-limited bound (full pedal at touchdown) | — | 257 ft | | physics check |
+| Landing ground roll, pilot braking technique | 575 ft | 468 ft | −18.6% | ±25% (see below) |
+| ↳ tyre-limited bound (full pedal at touchdown) | — | 315 ft | | physics check |
 | Static rpm, full throttle | 2300–2420 rpm | 2335 rpm | | in range |
 | Stall warning | 5–10 kt above the stall | 8.5 kt (flaps up), 7.9 kt (flaps 30) | | in range |
 
@@ -104,6 +104,22 @@ chosen before running the comparison and not solved for the POH number. The
 result is 468 ft. The tyre-limited 254 ft stays as a physics bound, and a
 test checks that softer braking lengthens the roll.
 
+**Torque-limited brakes (ground-handling model): the sustained pedal became
+50%.** The brakes were a force in proportion to the wheel load (0.65 N at
+any pedal), so they did little while the full-flap wing still carried the
+airplane. They are now a torque capacity (630 N·m per main, the old model's
+value at the static load) acting on a spinning wheel, with the tyre sliding
+at 0.75 of its peak friction once it locks. At 70% pedal that gave 2 kN per
+main from the moment the wheels took any load and a 386 ft roll (−33%). A
+pilot without anti-skid holds the pressure the wheels take without locking
+once the wing has unloaded; with these brakes that is about half the pedal
+(1.4 kN per main, which the wheels hold above ~1.8 kN of load), so the
+technique's sustained effort is 0.5. The roll is 468 ft (−18.6%); the
+tyre-limited bound (full pedal from touchdown, locking and sliding until
+the wing unloads) is 315 ft. The effort was chosen from the lock-up
+threshold, not solved for the POH number; 0.55 would give 439 ft and 0.4
+gives 547 ft.
+
 ## Behavioural checks (tests)
 
 - **Flight** (`tests/test_flight.cpp`, `tests/test_components.cpp`):
@@ -123,7 +139,17 @@ test checks that softer braking lengthens the roll.
   - the airplane rests in static equilibrium;
   - the parking brake holds full power;
   - steering geometry and differential braking work;
-  - hard steering at speed can overturn the airplane.
+  - hard steering at speed can overturn the airplane;
+  - (`tests/test_ground_handling.cpp`) braking and cornering share one
+    friction ellipse; a full-brake stop on a wet runway locks the mains,
+    which slide at 0.75 of the peak friction, stop 12% longer than with an
+    anti-skid system and ground-loop without pedals; touchdown spins the
+    wheels up in under 0.1 s with an aft force and a nose-down pitch; parked
+    on a 2° slope it does not creep in 60 s, and the rolling threshold holds
+    it brakes-off on 1° but not 4°; a 15 kt crosswind take-off roll stays
+    on the centreline with the pedals and weathervanes without them; the
+    castoring nose wheel turns toward its velocity in a brake turn and the
+    bungee linkage yields under a dragged tyre.
 - **Systems and procedures:**
   - Scenario A, fuel exhaustion from real consumption, then a glide.
   - Scenario C, shutoff valve in cruise.
