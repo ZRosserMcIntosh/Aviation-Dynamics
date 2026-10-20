@@ -343,6 +343,25 @@ TEST_CASE("piston engine: rated power, altitude lapse, mixture, ignition and fue
     hi.ambientDensity = a8.density;
     hi.mixture = scenarios::bestPowerMixture(ref(), a8.density);
     CHECK_RANGE(e.evaluate(hi, wr).brakePower / sl.brakePower, 0.68, 0.80);
+    // Temperature at a pressure altitude: the heated charge damps the power's
+    // sensitivity to ambient temperature from the ideal-gas 1/T toward the
+    // sqrt(T_std/T) of Lycoming's manuals; the exponent follows from the
+    // definition's charge heating. Sea level, ISA+20, full throttle, rated rpm.
+    const PistonEngineDef& d = ref().engines[0];
+    PistonEngineInputs hot = in;
+    hot.ambientTemperature = isa::kSeaLevelTemperature + 20;
+    hot.ambientDensity = isa::kSeaLevelDensity * isa::kSeaLevelTemperature / hot.ambientTemperature;
+    hot.mixture = scenarios::bestPowerMixture(ref(), hot.ambientDensity);
+    const Real hotRatio = e.evaluate(hot, wr).brakePower / sl.brakePower;
+    const Real theta = hot.ambientTemperature / isa::kSeaLevelTemperature;
+    const Real eps = d.chargeHeating / (d.chargeWallTemperature - isa::kSeaLevelTemperature);
+    const Real n = (1 - eps) * isa::kSeaLevelTemperature / (isa::kSeaLevelTemperature + d.chargeHeating);
+    CHECK_RANGE(n, 0.5, 0.85);
+    CHECK_NEAR(hotRatio, 1.132 * std::pow(theta, -n) - 0.132, 0.01);
+    CHECK(hotRatio > 1.132 / theta - 0.132 + 0.01);                 // damped against the ideal gas
+    CHECK(hotRatio < 1.132 / std::sqrt(theta) - 0.132);             // but not below the sqrt rule
+    // The heating is normalised out at sea-level ISA: the rated point is untouched.
+    CHECK_NEAR(e.chargeTemperature(isa::kSeaLevelTemperature), isa::kSeaLevelTemperature, 1e-9);
     // Full rich at altitude is too rich: less power than best-power mixture.
     PistonEngineInputs rich = hi;
     rich.mixture = 1.0;
