@@ -52,24 +52,31 @@ moment, and they have a yaw damper.
 | Assists | Easy, Sport and Simulation, plus an auto-trim that holds straight and level. They act only through the pilot's controls; the physics is the same in all three ([ADR 0004](docs/decisions/0004-assistance-is-not-physics.md)) | `tests/test_systems_scenarios.cpp`, `tests/test_jet.cpp` |
 | Browser | WebAssembly build (wasi-sdk, no exceptions or RTTI) with a C ABI. Streams the airflow, wake and body data the 3D site draws (streamlines, smoke, wind tunnel). Node smoke test, a self-contained 2D cockpit page, flight replay | `web/`, `web/smoke_test.mjs` |
 
-Everything in this table is tested: 186 test cases, on Linux (gcc, clang,
+Everything in this table is tested: <!-- validation:begin tests -->204<!-- validation:end --> test cases, on Linux (gcc, clang,
 sanitizers), macOS, Windows and WASM in CI. How far each area is validated,
-and its main gap, is in the [fidelity matrix](docs/fidelity-matrix.md).
+and its main gap, is in the [fidelity matrix](docs/fidelity-matrix.md); the
+comparisons with published data, with their sources and every row that is
+outside its band, are in [docs/validation](docs/validation/c172s-validation.md)
+and are regenerated from the test output so they cannot drift.
 
 ## Build and run
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/tests/avd_tests             # 186 test cases
+./build/tests/avd_tests             # <!-- validation:begin tests -->204<!-- validation:end --> test cases
 ./build/tests/avd_tests "blind"     # a filter: the blind landings
-./build/avdemo validate             # the POH comparison table
+./build/avdemo validate [--json f]  # the comparison tables against published data (172S POH, G650ER)
+./build/tools/avdtrace --record     # record the golden traces (tests/golden/README.md)
 ./build/avdemo flight               # SBMT circuit: quick start, take-off, stall, pattern, landing
 ./build/avdemo instruments [csv]    # truth against display through a scripted flight
 ./build/avdemo starvation | shutdown | cockpit | bench
 ```
 
-Options: `AVD_BUILD_TESTS`, `AVD_BUILD_TOOLS`, `AVD_WARNINGS_AS_ERRORS`.
+Options: `AVD_BUILD_TESTS`, `AVD_BUILD_TOOLS`, `AVD_WARNINGS_AS_ERRORS`, `AVD_FUZZ`
+(libFuzzer target for the JSON parser and the aircraft loader, clang only),
+`AVD_FUZZ_DRIVER` (the same target as a stand-alone mutation driver for any
+compiler, e.g. under the gcc sanitizers).
 
 The browser build needs [wasi-sdk](https://github.com/WebAssembly/wasi-sdk);
 version 25 is tested.
@@ -95,9 +102,12 @@ node tools/jetgen/check.mjs                    # cruise, stall speeds, final app
 src/core/      avd_core: the engine-independent flight core (namespace avd)
 src/scenarios/ trim, test and approach pilots, airports, approaches, the São Paulo region
 tools/avdemo/  headless demos and the validation report
+tools/avdtrace/ golden-trace recorder and checker (tests/golden)
+tools/fuzz/    libFuzzer / stand-alone fuzz target for the JSON parser and the aircraft loader
+tools/update_validation_docs.py  rewrites the generated validation tables in the docs from the test output
 tools/jetgen/  the generated jets: generator, calibration, checks
 tools/navdata/ Brazil's airports from OurAirports
-tests/         dependency-free test harness and suites
+tests/         dependency-free test harness and suites; tests/golden holds the recorded traces
 data/          aircraft definitions (JSON, with provenance) and world data
 web/           C ABI, WASM build, JS loader, smoke test, 2D cockpit
 docs/          architecture, decisions (ADRs), aircraft, validation, fidelity matrix, roadmap
