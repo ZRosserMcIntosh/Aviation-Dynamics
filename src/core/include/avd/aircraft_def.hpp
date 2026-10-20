@@ -117,6 +117,37 @@ struct LiftingSurfaceDef {
     // aerodynamics are a separate model (Milestone 7).
     Real thicknessRatio = 0.12;
     Real kornFactor = 0.87;           // 0.87 conventional, ~0.95 supercritical
+    // Transonic section behaviour, on the Mach number normal to the span
+    // (simple sweep theory, as the Korn drag rise). The defaults are an
+    // ordinary subsonic section's; below M ~0.4 they change nothing.
+    //  - clmax x max(0.35, 1 - k (Mn - knee)^2) above the knee: shock-induced
+    //    separation, the buffet boundary at altitude (Mn = M cos(sweep)).
+    //  - The section's force point moves aft from c/4 toward c/2 between
+    //    about Mdd (Korn, with the lift coefficient) and M 1: Mach tuck.
+    //  - Hinged controls lose effectiveness by (1 - (M/Mdd0)^n), floored, Mdd0
+    //    the zero-lift Korn Mdd: the shock ahead of the hinge line.
+    Real machClMaxKnee = 0.4;         // normal Mach
+    Real machClMaxFactor = 2.0;       // k, per (normal Mach)^2: 0.92 at Mn 0.6, 0.68 at 0.8, 0.5 at 0.9
+    Real machAcShift = 0.25;          // chord fraction at M 1 (c/4 -> c/2)
+    //  - Optional cm0 shift through the drag rise (Mcrit = Mdd - 0.1077 to
+    //    Mdd + 0.05): a rear-loaded supercritical section's aft loading grows
+    //    with Mach (more nose-down); 0 for conventional sections.
+    Real machCm0Shift = 0;            // added to cm0 past the drag rise (negative: nose down)
+    Real machControlExponent = 10;    // n
+    Real machControlFloor = 0.2;      // effectiveness kept at and above Mdd
+    // A horizontal tail with a downwash source sits in that wing's separated
+    // wake when the wing is stalled: a band about the wake centreline (from
+    // the mid-chord, deflected by alpha less the downwash) of half-thickness
+    // c/2 sin(alpha - eps) plus the spreading aft, thickness and strength
+    // both scaled by the wing's separated fraction; inside it the tail sees reduced dynamic pressure
+    // and a wake-fixed downwash (the T-tail deep stall). The spreading is a
+    // turbulent wake's (~9 deg half-angle); the core's q ratio the ~55 %
+    // velocity deficit a few chords behind a stalled wing (Taylor & Ray, AIAA
+    // 65-737: the tail's contribution nearly lost in the wake core). Off:
+    // the downwash model alone.
+    bool wakeBlanking = true;
+    Real wakeSpread = 0.16;           // half-thickness per metre aft
+    Real wakeDynamicPressureRatio = 0.2;  // q ratio at the band's centre
     // Span loading from a nonlinear lifting line (horseshoe vortices solved
     // together, ground images) instead of independent strips with the
     // Helmbold slope: tip stall, swept-wing pitch-up, winglets, roll damping.
@@ -174,11 +205,27 @@ struct PistonEngineDef {
     Real ratedPower = 134226;         // W, brake, sea-level ISA, full throttle, best power
     Real ratedRpm = 2700;
     Real displacement = 5.916e-3;     // m^3
-    Real volumetricEfficiency = 0.85;
-    Real frictionMepAtRated = 1.6e5;  // Pa, friction+pumping mean effective pressure
-    Real frictionMepAtZero = 0.6e5;   // Pa
-    Real idleManifoldRatio = 0.33;    // MAP / ambient at closed throttle
-    Real intakeLossRatio = 0.03;      // MAP loss at full throttle
+    Real compressionRatio = 8.5;      // geometric; sets the residual-gas loss of volumetric efficiency at low MAP
+    Real volumetricEfficiency = 0.85; // referred to manifold density, at full throttle and rated rpm
+    // Inlet-port and valve flow losses grow with the square of the flow, so
+    // the trapped charge falls with speed: eta_v x (1 - loss (rpm/rated)^2),
+    // normalised to 1 at rated rpm (Heywood 6.2.4). Sets how much the
+    // full-throttle torque rises below rated rpm (Lycoming's sea-level curve:
+    // about +9 % from 2,700 to 1,800 rpm).
+    Real volumetricEfficiencySpeedLoss = 0.08;
+    Real frictionMepAtRated = 1.6e5;  // Pa, mechanical friction (rubbing, accessories) mean effective pressure
+    Real frictionMepAtZero = 0.6e5;   // Pa (pumping, exhaust minus manifold pressure, is separate)
+    // Induction: a butterfly throttle plate (effective area 1 - cos of the
+    // plate angle, lever-linear) in series with the engine's pumping. The
+    // closed plate leaves an idle orifice sized so that MAP = idleManifoldRatio
+    // x ambient at idleRpm (the idle stop a mechanic sets); the wide-open
+    // plate is sized so that MAP = (1 - intakeLossRatio) x ambient at rated
+    // rpm (about 1 inHg). Between, MAP follows from rpm and lever: closed
+    // throttle is choked, so the air flow is fixed and MAP falls as 1/rpm
+    // when the propeller windmills the engine.
+    Real idleManifoldRatio = 0.33;    // MAP / ambient at closed throttle at idleRpm
+    Real idleRpm = 650;               // rpm the idle orifice is sized at
+    Real intakeLossRatio = 0.03;      // MAP loss at full throttle, rated rpm
     Real engineInertia = 0.6;         // kg m^2 crankshaft etc. (propeller separate)
     Real starterTorque = 60;          // N m at the crankshaft
     Real starterCurrent = 150;        // A
@@ -208,6 +255,14 @@ struct PistonEngineDef {
 // with delta0, theta0 the free-stream total pressure and temperature ratios.
 // Part throttle follows the fan speed N1; the spools lag the throttle, and
 // fuel flow is thrust times a TSFC that rises with Mach number.
+//
+// FADEC thrust ratings (TurbofanDef::*Fraction): the fuel control caps the
+// commanded N1 at the active rating's limit; the lever still commands N1
+// below it. Take-off (TO/GA) is time-limited after lift-off, then maximum
+// continuous (one engine out) or maximum climb apply, and maximum cruise in
+// level flight (Aircraft schedules this in ThrustMode::Auto).
+enum class ThrustRating { Takeoff = 0, MaxContinuous = 1, MaxClimb = 2, MaxCruise = 3 };
+
 struct TurbofanDef {
     std::string name = "engine";
     Vec3 position;                    // thrust line point (nozzle exit), structural frame
@@ -231,6 +286,30 @@ struct TurbofanDef {
     Real oilPressureIdle = 2.4e5;     // Pa
     Real oilPressureMax = 4.1e5;      // Pa
     int fuelFeed = 0;
+    // Thrust ratings as fractions of the take-off thrust at sea level, static,
+    // ISA (Estimated: typical of modern business-jet turbofans, maximum
+    // continuous 0.90-0.93, maximum climb 0.85-0.90, maximum cruise
+    // 0.80-0.87). The ratings are turbine-temperature limits: the flat-rated
+    // take-off thrust is held up to the throttle ratio by raising T_t4, and
+    // each lower rating holds a fixed fraction of the temperature-limited
+    // thrust (Mattingly's temperature branch, slope 3/(1.5 + M) per unit
+    // theta0, on both sides of TR). They therefore give these fractions at
+    // sea level and converge on the flat-rated line in the cold air at
+    // altitude, where the take-off rating itself sits well below its
+    // temperature limit (TurbofanEngine::ratingThrust).
+    Real maxContinuousFraction = 0.92;
+    Real maxClimbFraction = 0.88;
+    Real maxCruiseFraction = 0.84;
+    Real takeoffRatingTime = 300;           // s of take-off thrust after lift-off (all engines)
+    Real takeoffRatingTimeEngineOut = 600;  // s with an engine out
+    // Fan diameter, m (0: twice the reverser's cowl radius). Sets the default
+    // windmilling drag area.
+    Real fanDiameter = 0;
+    // Unlit engine: the windmilling fan and core are a drag along the thrust
+    // line, D = q CdA. Default (< 0): 0.12 x the fan disc area (Estimated,
+    // Torenbeek App. G: windmilling drag ~0.1 q x inlet area for a high-bypass
+    // turbofan); the engine-out yaw comes from this plus the live engine.
+    Real windmillDragArea = -1;       // m^2
     // Thrust reverser (optional): fan-flow reverser (cascade type), deployed
     // and stowed automatically on the landing roll.
     struct Reverser {
@@ -307,13 +386,70 @@ struct ElectricalLoadDef {
     bool initiallyOn = true;          // switch position on a fresh airframe
 };
 
+// An engine-driven generator (alternator, starter-generator) on the main bus.
+// Declared generators share the bus in parallel (their ratings add); each
+// comes on line when its own engine is fast enough and has its own switch
+// (cockpit control "electrical.generator<N>") and failure. Without a list the
+// definition has one alternator rated `alternatorMaxCurrent`, driven by the
+// first piston engine or by the fastest turbofan core.
+struct GeneratorDef {
+    std::string name;                 // e.g. "GEN 1"
+    int engine = 0;                   // engine (piston or turbofan index) that drives it
+    Real maxCurrent = 300;            // A at the regulated voltage
+    // Turbofan starter-generators: core speed (fraction of take-off N2) from
+    // which the generator holds the bus; a windmilling core (~20 %) does not.
+    Real cutInN2 = 0.45;
+};
+
 struct ElectricalDef {
-    Real batteryVoltage = 24.0;       // open circuit, full
+    Real batteryVoltage = 24.0;       // nominal (12 cells); the loaded plateau is ~1.017 x this
     Real batteryCapacity = 13.0 * 3600;  // A s
     Real batteryResistance = 0.05;    // ohm
-    Real alternatorVoltage = 28.0;
-    Real alternatorMaxCurrent = 60;
+    Real alternatorVoltage = 28.0;    // regulated bus voltage with a generator on line
+    Real alternatorMaxCurrent = 60;   // A, the single alternator when `generators` is empty
+    std::vector<GeneratorDef> generators;
+    // Bus voltage below which bus-powered devices (gauges, annunciators,
+    // actuators, pumps) stop: < 0 means 0.75 x batteryVoltage (18 V on a
+    // 24 V system, 9 V on a 12 V one).
+    Real busMinimumVoltage = -1;
     std::vector<ElectricalLoadDef> loads;
+    Real busMinimum() const { return busMinimumVoltage >= 0 ? busMinimumVoltage : 0.75 * batteryVoltage; }
+};
+
+// ---- Hydraulics (optional; absent = every actuator moves unconditionally) ----
+//
+// Each system is pressurised by engine-driven pumps (full pressure from
+// about 40 % of idle core speed up; a windmilling core gives none) and/or an
+// electric pump on the main bus. Pressure follows its source through a
+// first-order lag. An actuator draws on one or more systems (the best of
+// them): below 20 % pressure it does not move, from there its rate grows
+// linearly to the full rate at full pressure. Brakes keep an accumulator good
+// for a number of applications once every supplying system is down.
+struct HydraulicElectricPumpDef {
+    Real current = 0;                 // A drawn from the bus while running (0 = no electric pump)
+    // The pump contactor is held by generator power (the battery cannot carry
+    // a 3,000 psi pump for long): off with every generator off line.
+    bool generatorOnly = true;
+};
+
+struct HydraulicSystemDef {
+    std::string name = "A";
+    std::vector<int> engines;         // engine-driven pumps: engine indices (piston or turbofan)
+    HydraulicElectricPumpDef electricPump;
+    Real nominalPressure = 2.068e7;   // Pa (3,000 psi), for display
+    Real riseTime = 2.0;              // s, pressure time constant toward its source
+};
+
+struct HydraulicsDef {
+    bool present = false;
+    std::vector<HydraulicSystemDef> systems;
+    // Supplying systems (indices) of each actuator; an empty list means that
+    // actuator is not hydraulic (moves unconditionally, as without the block).
+    std::vector<int> gear, flaps, speedbrake, steering, brakes;
+    int brakeAccumulatorApplications = 6;   // full brake applications with every brake system down
+    // Emergency (free-fall) extension: the gear lowers at this fraction of
+    // its normal rate with the uplocks released, whatever the pressure.
+    Real freeFallRateFraction = 0.35;
 };
 
 // ---- Landing gear and contact --------------------------------------------
@@ -329,7 +465,7 @@ struct GearDef {
     Real maxCompression = 0.25;       // m; beyond this the stiffness rises 20x (bottoming)
     Real wheelRadius = 0.2;
     Real rollingResistance = 0.02;    // coefficient on a paved surface
-    Real maxBrakeForceCoefficient = 0;  // brake force capacity / normal load (0 = no brake)
+    Real maxBrakeForceCoefficient = 0;  // brake force / static load; sets brakeTorque when that is 0 (0 = no brake)
     int brakeGroup = -1;              // 0 = left, 1 = right
     Real maxSteerAngle = 0;           // rad, by the rudder pedals
     // Tiller (nose-wheel steering handwheel on transport aircraft): wheel angle
@@ -339,11 +475,35 @@ struct GearDef {
     // Slew-rate limit of a powered steering actuator (0 = direct mechanical
     // linkage, the wheel follows the command at once).
     Real steerRate = 0;               // rad/s
+    // Castoring (swivelling) wheel: the wheel's heading is its own state,
+    // turned by the tyre's side force acting on the mechanical trail of the
+    // swivel axis toward the direction it rolls in, and held toward the pedal
+    // command by the steering linkage (a spring that yields at a breakout
+    // torque: the C172's steering bungees). castorAngle is the free swivel
+    // range beyond the pedal steering (hard stops at +-(maxSteer + castor)).
+    // castorTrail = 0 means a rigidly steered wheel (hydraulic steering).
     Real castorAngle = 0;             // rad, free castoring range beyond pedal steering
-    Real corneringStiffness = 4e4;    // N/rad
+    Real castorTrail = 0;             // m, mechanical trail of the swivel axis (0 = rigid steering)
+    Real steerLinkageStiffness = 0;   // N m/rad, pedal linkage spring (0 with a trail = free castor, no linkage)
+    Real steerLinkageBreakout = 0;    // N m, torque at which the linkage yields (0 = never: the spring alone)
+    // Tyre: cornering stiffness at the leg's static load N_ref, with the usual
+    // load sensitivity C_alpha = c1 N (1 - c2 N / N_ref) (Pacejka's pKy form;
+    // the stiffness peaks at N_ref / (2 c2)). c1 follows from the value at N_ref.
+    Real corneringStiffness = 4e4;    // N/rad at the static load
+    Real corneringLoadSensitivity = 0.25;  // c2 (0 = constant stiffness)
+    Real staticLoad = 0;              // N, design static load N_ref (0 = from the geometry at MTOW)
     Real relaxationLength = 0.3;      // m
     Real longitudinalStiffness = 2e5; // N/m (bristle model for braking/stiction)
     Real tyrePressure = 0;            // Pa, inflation (wet-runway friction, hydroplaning); 0 = unknown
+    // Wheel spin: I_w omega_dot = r F_x - T_brake - T_rolling. The brakes are a
+    // torque capacity (full pedal), so a lightly loaded wheel locks; a locked
+    // or skidding tyre slides at slidingFrictionRatio x the peak friction.
+    Real wheelInertia = 0;            // kg m^2 about the axle (0 = estimated from the static load and radius)
+    Real brakeTorque = 0;             // N m at full pedal (0 = maxBrakeForceCoefficient x static load x radius)
+    Real slidingFrictionRatio = 0.75; // mu_slide / mu_peak
+    // Anti-skid: 0 = none (the wheel can lock); otherwise the fraction of the
+    // peak braking force the system holds by modulating the brake torque.
+    Real antiSkidEfficiency = 0;
 };
 
 // Hard points that should never touch the ground (tail, wingtips, prop tip,
@@ -503,6 +663,7 @@ struct AircraftDefinition {
     std::vector<TurbofanDef> turbofans;
     FuelSystemDef fuel;
     ElectricalDef electrical;
+    HydraulicsDef hydraulics;
     std::vector<GearDef> gear;
     std::vector<ContactPointDef> contacts;
     FlightControlsDef controls;

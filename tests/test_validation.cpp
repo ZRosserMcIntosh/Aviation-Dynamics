@@ -1,33 +1,78 @@
-// Aviation Dynamics — validation against published Cessna 172S POH data.
+// Aviation Dynamics — validation against published data: the Cessna 172S
+// POH for the Tupi T-180, published and representative G650ER figures for
+// the Top G.
 // SPDX-License-Identifier: MIT
 //
-// Tolerances and their rationale: docs/validation/c172s-validation.md. These
-// tests guard calibration; they are evidence of agreement with a handful of
-// published performance points, not of manufacturer-level fidelity.
+// The rows, their sources and tolerances live in src/scenarios/validation.cpp
+// (shared with `avdemo validate` and the docs generator). These tests guard
+// calibration: they are evidence of agreement with a handful of published
+// performance points, not of manufacturer-level fidelity. A failing row is
+// reported, never tuned away here: see docs/validation/*.md.
+//
+// With AVD_VALIDATION_JSON=<path> in the environment the rows that ran are
+// written there at exit (tools/update_validation_docs.py reads it; the file
+// says whether every row ran, so a filtered run cannot rewrite the docs).
+#include <cstdlib>
+#include <fstream>
+#include <iostream>
+#include <set>
+
 #include "avd/units.hpp"
 #include "avd_test.hpp"
 #include "scenarios.hpp"
+#include "validation.hpp"
 
 using namespace avd;
 using namespace avd::scenarios;
 using namespace avd::units;
+namespace val = avd::scenarios::validation;
 
 namespace {
+
+struct Sink {
+    val::Rows rows;
+    ~Sink() {
+        const char* path = std::getenv("AVD_VALIDATION_JSON");
+        if (!path || rows.empty()) return;
+        std::set<std::string> have;
+        for (const val::Row& r : rows) have.insert(r.id);
+        bool complete = true;
+        for (const std::string& id : val::allIds()) complete = complete && have.count(id);
+        std::ofstream f(path);
+        val::writeJson(f, rows, complete);
+        std::cerr << "validation report (" << rows.size() << " rows" << (complete ? "" : ", INCOMPLETE") << "): " << path << "\n";
+    }
+};
+Sink& sink() {
+    static Sink s;
+    return s;
+}
+
+// Assert every row of a group and keep it for the report.
+void expect(val::Rows rows) {
+    for (const val::Row& r : rows) {
+        if (!r.pass()) {
+            ++avdtest::failures();
+            std::cerr << "  FAILED validation row " << r.id << ": " << r.quantity << " = " << r.value << " " << r.unit
+                      << ", published " << r.published << " (band " << r.low << ".." << r.high << " " << r.unit << ")\n";
+        } else if (r.kind != val::Row::Kind::Info) {
+            std::cout << "    " << r.id << ": " << r.value << " " << r.unit << " vs " << r.published << "\n";
+        }
+        sink().rows.push_back(r);
+    }
+}
+
 const AircraftDefinition& ref() {
     static const AircraftDefinition d = loadReference();
     return d;
 }
-Aircraft grossAircraft() {
-    Aircraft ac(ref());
-    ac.setStationMass(0, 170);
-    ac.setStationMass(1, ref().maxTakeoffMass - ac.massProperties().mass);
-    return ac;
-}
-void within(Real sim, Real poh, Real pct) { CHECK_RANGE(sim, poh * (1 - pct / 100), poh * (1 + pct / 100)); }
+
 }  // namespace
 
 TEST_CASE("validation: gross weight loading is inside the published CG envelope") {
-    Aircraft ac = grossAircraft();
+    Aircraft ac(ref());
+    ac.setStationMass(0, 170);
+    ac.setStationMass(1, ref().maxTakeoffMass - ac.massProperties().mass);
     const Real m = ac.massProperties().mass, x = ac.massProperties().cg.x;
     CHECK_NEAR(m, ref().maxTakeoffMass, 0.5);
     CHECK(x <= ref().cgForwardLimitVsMass(m));  // structural x is negative aft
@@ -38,85 +83,74 @@ TEST_CASE("validation: gross weight loading is inside the published CG envelope"
     CHECK_RANGE(ac.massProperties().inertia.m[2][2], 2667 * 0.75, 2667 * 1.25);
 }
 
-TEST_CASE("validation: stall speeds (POH 53 KCAS flaps up, 48 KCAS flaps 30, power off)") {
-    within(msToKt(stallTest(ref(), 0).minCas), 53, 6);
-    within(msToKt(stallTest(ref(), 3).minCas), 48, 6);
+TEST_CASE("validation: stall speeds (POH 53 KCAS flaps up, 48 KCAS flaps 30) and the warning margin") {
+    expect(val::c172Stalls());
 }
 
-TEST_CASE("validation: maximum level speed at sea level (POH 126 KTAS) below red line") {
-    Aircraft ac = grossAircraft();
-    SimpleWeather atm;
-    TrimRequest r;
-    r.tas = ktToMs(120);
-    r.throttle = 1;
-    r.solveTas = true;
-    const TrimResult t = trim(ac, r, atm);
-    CHECK(t.converged);
-    within(msToKt(t.tas), 126, 5);
-    CHECK(t.rpm < 2700);
+TEST_CASE("validation: maximum level speed at sea level (POH 126 KTAS) below the red line") {
+    expect(val::c172MaxLevelSpeed());
 }
 
 TEST_CASE("validation: full-throttle cruise at 8000 ft (POH 124 KTAS at 75% power)") {
-    Aircraft ac = grossAircraft();
-    SimpleWeather atm;
-    TrimRequest r;
-    r.altitude = ftToM(8000);
-    r.tas = ktToMs(120);
-    r.throttle = 1;
-    r.solveTas = true;
-    const TrimResult t = trim(ac, r, atm);
-    CHECK(t.converged);
-    within(msToKt(t.tas), 124, 5);
-    within(t.brakePower / ref().engines[0].ratedPower * 100, 75, 8);
-    CHECK_RANGE(m3ToGal(t.fuelFlow / ref().fuel.density) * 3600, 8.5, 12.0);
+    expect(val::c172FullThrottle8000());
 }
 
-TEST_CASE("validation: sea-level rate of climb at Vy 74 KIAS (POH 730 fpm)") {
-    Aircraft ac = grossAircraft();
-    SimpleWeather atm;
-    TrimRequest r;
-    r.tas = tasFromCas(ktToMs(74), 1.225);
-    r.throttle = 1;
-    r.solveFlightPath = true;
-    const TrimResult t = trim(ac, r, atm);
-    CHECK(t.converged);
-    within(msToFpm(t.tas * std::sin(t.flightPath)), 730, 15);
+TEST_CASE("validation: rate of climb at sea level, 4,000, 8,000 and 12,000 ft; time, fuel and distance to 8,000 ft (POH Figure 5-7)") {
+    expect(val::c172ClimbRates());
+}
+
+TEST_CASE("validation: cruise table at 2,000 and 8,000 ft, 55/65/75 % power (POH Figure 5-8)") {
+    expect(val::c172CruiseTable());
+}
+
+TEST_CASE("validation: best glide at 68 KIAS, engine failed and propeller windmilling, is about 9:1 (POH maximum glide, 1.5 NM per 1,000 ft)") {
+    expect(val::c172BestGlide());
 }
 
 TEST_CASE("validation: short-field take-off (POH 960 ft ground roll, 1630 ft over 50 ft)") {
-    const TakeoffResult t = takeoffTest(ref(), 0, 0, 0, 0, 51);  // POH: lift off at 51 KIAS
-    CHECK(t.success);
-    within(mToFt(t.groundRoll), 960, 20);
-    within(mToFt(t.distanceTo50ft), 1630, 20);
-    CHECK_RANGE(msToKt(t.liftoffIas), 48, 55);  // POH: lift-off 51 KIAS
+    expect(val::c172Takeoff());
 }
 
 TEST_CASE("validation: static rpm within the published full-throttle static range (2300-2420)") {
-    Aircraft ac(ref());
-    SimpleWeather atm;
-    FlatGround g(0);
-    ac.setEngineRunning(true, 1000);
-    ac.placeOnGround(0, 0, 0, g, atm);
-    PilotInput in;
-    in.throttle = 1;
-    for (int i = 0; i < 6 * 240; ++i) ac.step(kDefaultDt, in, g, atm);
-    CHECK_RANGE(ac.telemetry().engines[0].rpm, 2300, 2420);
+    expect(val::c172StaticRpm());
 }
 
 TEST_CASE("validation: landing roll with a pilot's braking technique (POH 575 ft)") {
-    // Touchdown just above the flaps-30 stall (POH 48 KCAS), then a pilot
-    // without anti-skid: 1 s to lower the nose and reach the pedals, 1 s to
-    // build pressure, 70% sustained pedal. +-25%: the POH roll is a
-    // demonstrated landing with an unpublished technique, and the nose-high
-    // roll puts the full-flap wing just past its stall in ground effect, a
-    // regime no data here constrains (see docs/validation).
-    const Real roll = mToFt(landingRollTest(ref(), 50, kDefaultDt, scenarios::BrakingTechnique::pilot()));
-    CHECK_RANGE(roll, 0.75 * 575, 1.25 * 575);
-    // The tyre-limited bound (full pedal from touchdown) stops much sooner,
-    // and harder braking never lengthens the roll.
-    const Real limit = mToFt(landingRollTest(ref(), 50));
-    CHECK(limit < roll);
-    scenarios::BrakingTechnique soft = scenarios::BrakingTechnique::pilot();
+    // +-25%: the POH roll is a demonstrated landing with an unpublished
+    // technique, and the nose-high roll puts the full-flap wing just past its
+    // stall in ground effect, a regime no data here constrains.
+    const val::Rows rows = val::c172LandingRoll();
+    expect(rows);
+    // The tyre-limited bound stops sooner, and harder braking never lengthens the roll.
+    CHECK(rows[1].value < rows[0].value);
+    BrakingTechnique soft = BrakingTechnique::pilot();
     soft.effort = 0.4;
-    CHECK(mToFt(landingRollTest(ref(), 50, kDefaultDt, soft)) > roll);
+    CHECK(mToFt(landingRollTest(ref(), 50, kDefaultDt, soft)) > rows[0].value);
+}
+
+TEST_CASE("validation: Top G time to climb to FL410 at the maximum-climb rating, mid weight and MTOW (representative 20-25 min at MTOW, +-25 %)") {
+    expect(val::topGTimeToClimb());
+}
+
+TEST_CASE("validation: Top G high-speed cruise Mach 0.90 at FL410 is inside the maximum-cruise rating; FL450 Mach 0.85 fuel flow") {
+    expect(val::topGMaxCruise());
+}
+
+TEST_CASE("validation: Top G Vref at the maximum landing weight (published about 121 kt) and at 27.5 t by the square-root-of-weight law") {
+    expect(val::topGVref());
+}
+
+TEST_CASE("validation: Top G landing distance from 50 ft at the maximum landing weight (published 3,000 ft)") {
+    expect(val::topGLandingDistance());
+}
+
+TEST_CASE("validation: the report lists every row the docs expect") {
+    // allIds() is the contract between the rows and tools/update_validation_docs.py.
+    std::set<std::string> ids;
+    for (const std::string& id : val::allIds()) CHECK(ids.insert(id).second);  // no duplicates
+    std::set<std::string> ran;
+    for (const val::Row& r : sink().rows) ran.insert(r.id);
+    // Only meaningful when the whole group ran (an unfiltered run); a filtered
+    // run has fewer rows and the JSON is then marked incomplete.
+    for (const std::string& id : ran) CHECK(ids.count(id) == 1);
 }

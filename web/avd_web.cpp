@@ -35,6 +35,42 @@ namespace {
 constexpr Real kDt = 1.0 / 240.0;
 constexpr int kStateSize = 64;
 
+// ---- ABI handshake ----------------------------------------------------------
+// Every array the page reads has its size, stride and index meaning fixed
+// here. Bump kAbiVersion on ANY change to a layout below or to the meaning of
+// an index (web/README.md, "ABI version"): avd_loader.mjs refuses a module
+// whose avd_abi_version() is not its EXPECTED_ABI, and web/abi_check.mjs
+// checks the README's tables against avd_layout(). The static_asserts at the
+// end of this file tie these numbers to the arrays themselves.
+constexpr int kAbiVersion = 1;
+namespace abi {
+constexpr int state = kStateSize;          // avd_state()
+constexpr int cockpit = 96;                // avd_cockpit(); avd_markings() shares the buffer
+constexpr int jet = 96;                    // avd_jet()
+constexpr int loadsheet = 256;             // avd_loadsheet()
+constexpr int flowHeader = 16, flowStrips = 64, flowStride = 20, flowEngines = 4, flowEngineStride = 14;
+constexpr int flow = flowHeader + flowStrips * flowStride + flowEngines * flowEngineStride;  // avd_flow(): 1,352
+constexpr int compassCard = 12;            // avd_compass_card()
+constexpr int runway = 6;                  // avd_runway()
+constexpr int region = 1024;               // avd_region()
+constexpr int routeMax = 16, route = 3 + 3 * routeMax;  // avd_route(): 51
+constexpr int gps = 16;                    // avd_gps()
+constexpr int wakeHeader = 8, wakeStride = 9, wakeMax = 4096;  // avd_wake()
+constexpr int wake = wakeHeader + wakeStride * wakeMax;
+constexpr int bodiesMax = 32, bodyStride = 10, bodies = 1 + bodiesMax * bodyStride;  // avd_bodies()
+constexpr int windGridMax = 3 * 16 * 12 * 8;   // avd_wind_grid(): the largest grid
+constexpr int windBoxMax = 3 * 24 * 24 * 12;   // avd_wind_box()
+constexpr int textSlack = 1024;            // avd_text(n) returns at least n + 1 bytes; the buffer grows by this
+constexpr int eventsMax = 4096;            // avd_events() keeps at most this many bytes
+// The order avd_layout(which) returns them in (web/README.md, "ABI version").
+constexpr int layout[] = {state, cockpit, jet, loadsheet, flowHeader, flowStride, flowStrips, flowEngineStride, flowEngines, flow,
+                          cockpit /* markings */, compassCard, runway, region, route, routeMax, gps, wakeHeader, wakeStride, wakeMax,
+                          bodiesMax, bodyStride, bodies, windBoxMax, windGridMax, textSlack, eventsMax};
+}  // namespace abi
+#ifndef AVD_BUILD_ID
+#define AVD_BUILD_ID "dev"  // web/build_wasi.sh bakes "<git short hash>[-dirty] <date>"
+#endif
+
 struct Sim {
     AircraftDefinition def;
     LocalFrame frame = scenarios::saoPauloWorldFrame();
@@ -78,10 +114,11 @@ struct Sim {
 constexpr Real kOwnWakeAge = 4.0;
 
 Sim* g = nullptr;
-double g_state[kStateSize];
-double g_cockpit[96];
-double g_jet[64];
-double g_load[256];
+// Bump kAbiVersion (above) when any of these change.
+double g_state[abi::state];
+double g_cockpit[abi::cockpit];
+double g_jet[abi::jet];
+double g_load[abi::loadsheet];
 // Airport for spawns: 0 Campo de Marte (SBMT, runway 12), 1 Congonhas (SBSP,
 // runway 35L). Kept across aircraft loads.
 int g_airportId = 1;
@@ -188,8 +225,8 @@ void applyLoad(Aircraft& ac) {
     for (std::size_t i = 0; i < g->loadTanks.size(); ++i) ac.fuel().setTankQuantity(static_cast<int>(i), g->loadTanks[i]);
     ac.refreshMass();
 }
-constexpr int kFlowStrips = 64, kFlowStride = 20, kFlowEngine = 14;
-double g_flow[16 + kFlowStrips * kFlowStride + 4 * kFlowEngine];
+constexpr int kFlowStrips = abi::flowStrips, kFlowStride = abi::flowStride, kFlowEngine = abi::flowEngineStride;
+double g_flow[abi::flow];  // bump kAbiVersion when the layout changes
 char* g_text = nullptr;
 int g_textCap = 0;
 std::vector<std::string> g_errors;
@@ -197,13 +234,30 @@ std::vector<std::string> g_errors;
 int putText(const std::string& s) {
     if (static_cast<int>(s.size()) + 1 > g_textCap) {
         std::free(g_text);
-        g_textCap = static_cast<int>(s.size()) + 1024;
+        g_textCap = static_cast<int>(s.size()) + abi::textSlack;
         g_text = static_cast<char*>(std::malloc(static_cast<std::size_t>(g_textCap)));
     }
     std::memcpy(g_text, s.data(), s.size());
     g_text[s.size()] = 0;
     return static_cast<int>(s.size());
 }
+
+}  // namespace
+
+// ---- ABI handshake exports (see the abi namespace above) ----
+// The layout version: the loader's EXPECTED_ABI must equal it.
+AVD_EXPORT int avd_abi_version() { return kAbiVersion; }
+// Size, stride or count `which` of the exported arrays (doubles; bytes for
+// the text entries), in the order of abi::layout; -1 for an unknown index.
+AVD_EXPORT int avd_layout(int which) {
+    constexpr int n = static_cast<int>(sizeof(abi::layout) / sizeof(abi::layout[0]));
+    return which >= 0 && which < n ? abi::layout[which] : -1;
+}
+// The build's identity ("<git short hash>[-dirty] <date>", or "dev") in the
+// text buffer; returns its length. The site shows it next to the version.
+AVD_EXPORT int avd_build_id() { return putText(AVD_BUILD_ID); }
+
+namespace {
 
 const char* eventText(FlightEventType t) {
     switch (t) {
@@ -222,8 +276,8 @@ const char* eventText(FlightEventType t) {
         case FlightEventType::PropStrike: return "PROPELLER STRIKE";
         case FlightEventType::HardPointContact: return "Airframe ground contact";
         case FlightEventType::BatteryDepleted: return "Battery depleted";
-        case FlightEventType::AlternatorOffline: return g && !g->def.turbofans.empty() ? "Generators offline" : "Alternator offline";
-        case FlightEventType::AlternatorOnline: return g && !g->def.turbofans.empty() ? "Generators online" : "Alternator online";
+        case FlightEventType::AlternatorOffline: return g && !g->def.turbofans.empty() ? "Generator offline" : "Alternator offline";
+        case FlightEventType::AlternatorOnline: return g && !g->def.turbofans.empty() ? "Generator online" : "Alternator online";
         case FlightEventType::CockpitControlChanged: return "";
     }
     return "";
@@ -238,6 +292,9 @@ void collectEvents() {
         }
         if (e.type == FlightEventType::Touchdown)
             s += " (" + std::to_string(static_cast<int>(msToFpm(e.value))) + " fpm)";
+        if ((e.type == FlightEventType::AlternatorOffline || e.type == FlightEventType::AlternatorOnline) &&
+            g->ac->electrical().generatorCount() > 1)
+            s.insert(s.find(' '), " " + std::to_string(e.index + 1));
         if (e.type == FlightEventType::HardPointContact || e.type == FlightEventType::PropStrike)
             s += " (" + g->def.contacts[static_cast<std::size_t>(e.index)].name + ")";
         if (!s.empty()) g->events += s + "\n";
@@ -636,11 +693,27 @@ AVD_EXPORT void avd_set_input(double pitch, double roll, double yaw, double thro
     g->raw.roll = roll;
     g->raw.yaw = yaw;
     g->raw.throttle = throttle;
+    g->raw.splitThrottles = false;  // every lever together again
     g->raw.mixture = mixture;
     g->raw.brakeLeft = brakeLeft;
     g->raw.brakeRight = brakeRight;
     g->raw.trimRate = trimRate;
     g->raw.starterHeld = starter != 0;
+}
+
+// One engine's throttle lever (0-based; -1 or out of range: every lever).
+// Splits the levers until the next avd_set_input, which sets them all again.
+AVD_EXPORT void avd_set_throttle(int engine, double v) {
+    if (!g) return;
+    const int n = g->ac->engineCount() + g->ac->turbofanCount();
+    if (engine < 0 || engine >= n) {
+        g->raw.throttle = v;
+        g->raw.splitThrottles = false;
+        return;
+    }
+    if (!g->raw.splitThrottles) g->raw.throttles.fill(g->raw.throttle);
+    g->raw.throttles[static_cast<std::size_t>(engine)] = v;
+    g->raw.splitThrottles = true;
 }
 
 // 0 Arcade, 1 Sport, 2 Simulation.
@@ -799,12 +872,21 @@ AVD_EXPORT void avd_ai_cage() {
 // fuel flow kg/h, thrust kN, running, starting, fuel switch; [24] MMO,
 // [25] VMO kt, [26] TAS kt, [27] flap deg, [28] trim, [29] weight on wheels,
 // [30], [31] oil pressure psi (engines 1, 2); ... [52..55] thrust reversers
-// (position, phase) engines 1, 2, [56] ground spoilers out, [57] reversers fitted.
+// (position, phase) engines 1, 2, [56] ground spoilers out, [57] reversers fitted,
+// [58..59] throttle levers, [60..61] generators on line, [62..63] hydraulic
+// pressure A, B psi, [64..68] gear / flap / speedbrake / steering / brake
+// power, [69] brake accumulator applications, [70] gear emergency release,
+// [71] hydraulics fitted, [72] battery charge, [73] battery current A,
+// [74 + 4i] truth N1 %, N2 %, ITT C, fuel flow kg/h (engines 1, 2).
+// The per-engine fields at 8 + 8i and the oil pressures are what the engine
+// indication shows (sensed: needle lag, blank without gauge power); the truth
+// is at 74 + 4i for the debug overlay.
 AVD_EXPORT double* avd_jet() {
     for (double& v : g_jet) v = 0;
     if (!g) return g_jet;
     const Aircraft& ac = *g->ac;
     const AircraftTelemetry& t = ac.telemetry();
+    const CockpitState& cs = ac.instruments().state();
     g_jet[0] = ac.turbofanCount();
     g_jet[1] = ac.gearPosition();
     g_jet[2] = ac.cockpitControl("gear.lever") != 0;
@@ -815,12 +897,25 @@ AVD_EXPORT double* avd_jet() {
     Real ff = 0;
     for (int i = 0; i < std::min(ac.turbofanCount(), 2); ++i) {
         const TurbofanState& e = ac.turbofanState(i);
+        const CockpitState::EngineGauges& s = cs.engines[static_cast<std::size_t>(i)];
         double* o = g_jet + 8 + 8 * i;
-        o[0] = e.n1 * 100; o[1] = e.n2 * 100; o[2] = e.itt - 273.15; o[3] = e.fuelFlow * 3600; o[4] = e.thrust / 1000;
+        o[0] = s.n1; o[1] = s.n2; o[2] = s.itt > 0 ? s.itt - 273.15 : 0.0; o[3] = s.fuelFlow * 3600; o[4] = e.thrust / 1000;
         o[5] = e.running; o[6] = e.starting; o[7] = ac.cockpitControl("engine" + std::to_string(i + 1) + ".fuel") == 1;
-        g_jet[30 + i] = e.oilPressure / 6894.757;
+        g_jet[30 + i] = s.oilPressure / 6894.757;
         ff += e.fuelFlow;
+        g_jet[58 + i] = t.throttles[static_cast<std::size_t>(i)];
+        g_jet[60 + i] = i < ac.electrical().generatorCount() ? ac.electrical().generatorOnline(i) : 0.0;
+        double* u = g_jet + 74 + 4 * i;
+        u[0] = e.n1 * 100; u[1] = e.n2 * 100; u[2] = e.itt - 273.15; u[3] = e.fuelFlow * 3600;
     }
+    for (int k = 0; k < std::min(ac.hydraulicSystemCount(), 2); ++k)
+        g_jet[62 + k] = ac.hydraulicPressure(k) * g->def.hydraulics.systems[static_cast<std::size_t>(k)].nominalPressure / 6894.757;
+    g_jet[64] = t.gearPower; g_jet[65] = t.flapPower; g_jet[66] = t.speedbrakePower; g_jet[67] = t.steeringPower; g_jet[68] = t.brakePower;
+    g_jet[69] = t.brakeAccumulator;
+    g_jet[70] = t.gearEmergency;
+    g_jet[71] = g->def.hydraulics.present;
+    g_jet[72] = ac.electrical().batteryCharge();
+    g_jet[73] = ac.electrical().batteryCurrent();
     g_jet[7] = ff * 3600;
     g_jet[24] = g->def.limits.maxOperatingMach;
     g_jet[25] = msToKt(g->def.limits.neverExceedIas);
@@ -1455,7 +1550,8 @@ AVD_EXPORT void avd_xpdr_mode(int m) {
     if (g && m >= 0 && m <= 3) g->ac->instruments().setTransponderMode(static_cast<TransponderMode>(m));
 }
 AVD_EXPORT void avd_dimmer(double v) { if (g) g->ac->instruments().setPanelLightDimmer(v); }
-// Failure injection: 0 pitot (drain open), 1 static port, 2 vacuum pump, 3 alternator.
+// Failure injection: 0 pitot (drain open), 1 static port, 2 vacuum pump,
+// 3 alternator / every generator, 4 generator 1 only, 5 generator 2 only.
 AVD_EXPORT void avd_failure(int which, int on) {
     if (!g) return;
     auto& f = g->ac->instruments().faults();
@@ -1464,6 +1560,24 @@ AVD_EXPORT void avd_failure(int which, int on) {
         case 1: f.staticBlocked = on != 0; break;
         case 2: g->ac->vacuum().setPumpFailed(on != 0); break;
         case 3: g->ac->electrical().setAlternatorFailed(on != 0); break;
+        case 4: g->ac->electrical().setGeneratorFailed(0, on != 0); break;
+        case 5: g->ac->electrical().setGeneratorFailed(1, on != 0); break;
         default: break;
     }
 }
+
+// ---- ABI layout guards: the arrays above against the abi namespace at the top.
+// A failure here means the layout changed: update abi::* and bump kAbiVersion.
+static_assert(sizeof(g_state) / sizeof(double) == abi::state, "avd_state layout: bump kAbiVersion");
+static_assert(sizeof(g_cockpit) / sizeof(double) == abi::cockpit, "avd_cockpit layout: bump kAbiVersion");
+static_assert(sizeof(g_jet) / sizeof(double) == abi::jet, "avd_jet layout: bump kAbiVersion");
+static_assert(sizeof(g_load) / sizeof(double) == abi::loadsheet, "avd_loadsheet layout: bump kAbiVersion");
+static_assert(sizeof(g_flow) / sizeof(double) == abi::flow, "avd_flow layout: bump kAbiVersion");
+static_assert(sizeof(g_region) / sizeof(double) == abi::region, "avd_region layout: bump kAbiVersion");
+static_assert(kRouteMax == abi::routeMax && sizeof(g_route) / sizeof(double) == abi::route, "avd_route layout: bump kAbiVersion");
+static_assert(sizeof(g_gps) / sizeof(double) == abi::gps, "avd_gps layout: bump kAbiVersion");
+static_assert(kWakeHeader == abi::wakeHeader && kWakeStride == abi::wakeStride && kWakeMax == abi::wakeMax &&
+                  sizeof(g_wake) / sizeof(double) == abi::wake,
+              "avd_wake layout: bump kAbiVersion");
+static_assert(sizeof(g_windBox) / sizeof(double) == abi::windBoxMax, "avd_wind_box layout: bump kAbiVersion");
+static_assert(sizeof(g_bodies) / sizeof(double) == abi::bodies, "avd_bodies layout: bump kAbiVersion");

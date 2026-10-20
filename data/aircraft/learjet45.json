@@ -693,6 +693,8 @@
    "max_steer_deg": 10,
    "tiller_steer_deg": 80,
    "steer_rate_deg_per_s": 20,
+   "static_load_n": 5933,
+   "wheel_inertia_kgm2": 0.37,
    "cornering_stiffness_n_per_rad": 11016,
    "relaxation_length_m": 0.5,
    "longitudinal_stiffness_n_per_m": 98939
@@ -714,7 +716,11 @@
    "wheel_radius_m": 0.326,
    "rolling_resistance": 0.02,
    "brake_coefficient": 0.5,
+   "brake_torque_nm": 6803,
+   "anti_skid_efficiency": 0.88,
    "brake_group": "left",
+   "static_load_n": 42628,
+   "wheel_inertia_kgm2": 3.36,
    "cornering_stiffness_n_per_rad": 79151,
    "relaxation_length_m": 0.8,
    "longitudinal_stiffness_n_per_m": 296816
@@ -736,7 +742,11 @@
    "wheel_radius_m": 0.326,
    "rolling_resistance": 0.02,
    "brake_coefficient": 0.5,
+   "brake_torque_nm": 6803,
+   "anti_skid_efficiency": 0.88,
    "brake_group": "right",
+   "static_load_n": 42628,
+   "wheel_inertia_kgm2": 3.36,
    "cornering_stiffness_n_per_rad": 79151,
    "relaxation_length_m": 0.8,
    "longitudinal_stiffness_n_per_m": 296816

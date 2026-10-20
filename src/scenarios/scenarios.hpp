@@ -35,6 +35,7 @@ struct TrimRequest {
     bool solveFlightPath = false;
     bool solveTas = false;
     Real mixture = -1;         // < 0: best power
+    ThrustMode thrustMode = ThrustMode::Auto;  // turbofans: the FADEC rating that caps N1 (Auto: take-off on a fresh aircraft)
 };
 
 struct TrimResult {
@@ -45,6 +46,7 @@ struct TrimResult {
     // stick still needed beyond the stabiliser's travel, usually 0).
     Real trim = 0;
     Real brakePower = 0, thrust = 0, propEfficiency = 0, fuelFlow = 0;
+    Real thrustAvailable = 0;  // turbofans: N the active rating allows at the trimmed condition, all engines
     Real residual = 0;
     DynamicState state;
     PilotInput input;
@@ -80,12 +82,15 @@ TakeoffResult takeoffTest(const AircraftDefinition& def, Real elevation, Real te
 // How the pilot brakes after touchdown. The default is the tyre-limited
 // physics check (full pedal from the instant of touchdown); `pilot()` is a
 // human technique without anti-skid (estimated values, see
-// docs/validation/c172s-validation.md).
+// docs/validation/c172s-validation.md). The pedal is a fraction of the brakes'
+// torque capacity: 50 % holds the C172's mains just short of locking once
+// the full-flap wing has shed about 60 % of the weight (it was 70 % while the
+// brakes were a force in proportion to the wheel load).
 struct BrakingTechnique {
     Real delay = 0;      // s from touchdown to the first pedal pressure (nose lowering, reaction)
     Real rampTime = 0;   // s to build pedal pressure to `effort`
     Real effort = 1.0;   // sustained pedal, 0..1 (a pilot without anti-skid keeps margin)
-    static BrakingTechnique pilot() { return {1.0, 1.0, 0.7}; }
+    static BrakingTechnique pilot() { return {1.0, 1.0, 0.5}; }
 };
 
 // Ground roll from touchdown (`touchdownKias`, flaps 30, idle) to stop with

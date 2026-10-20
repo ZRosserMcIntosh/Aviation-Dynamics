@@ -167,7 +167,7 @@ Provenance provenanceFrom(const std::string& s, Obj& o) {
     return Provenance::Estimated;
 }
 
-constexpr Real kPsi = 6894.757;
+using units::kPsi;
 Real fToK(Real f) { return (f - 32) * 5.0 / 9.0 + 273.15; }
 
 void readRange(Obj& o, const std::string& key, Range& r, Real scale, Real offset = 0) {
@@ -424,6 +424,9 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
             dw.integer("source", s.downwashSource, true);
             dw.num("gradient", s.downwashGradient);
             dw.num("at_zero_lift_deg", s.downwashAtZeroLift, kDeg);
+            dw.boolean("wake_blanking", s.wakeBlanking);
+            dw.num("wake_spread", s.wakeSpread);
+            dw.num("wake_q_ratio", s.wakeDynamicPressureRatio);
         }
         if (o.has("slipstream")) {
             Obj ss = o.child("slipstream");
@@ -435,6 +438,12 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.boolean("trimmable_stabilizer", s.trimmableStabilizer);
         o.num("thickness_ratio", s.thicknessRatio);
         o.num("korn_factor", s.kornFactor);
+        o.num("mach_clmax_knee", s.machClMaxKnee);
+        o.num("mach_clmax_factor", s.machClMaxFactor);
+        o.num("mach_ac_shift", s.machAcShift);
+        o.num("mach_cm0_shift", s.machCm0Shift);
+        o.num("mach_control_exponent", s.machControlExponent);
+        o.num("mach_control_floor", s.machControlFloor);
         o.each("panels", [&](Obj& po, std::size_t) {
             PanelDef p;
             po.vec3("root_quarter_chord_m", p.rootQuarterChord, 1, true);
@@ -506,10 +515,13 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("rated_power_kw", e.ratedPower, 1000, true);
         o.num("rated_rpm", e.ratedRpm, 1, true);
         o.num("displacement_l", e.displacement, 1e-3, true);
+        o.num("compression_ratio", e.compressionRatio);
         o.num("volumetric_efficiency", e.volumetricEfficiency);
+        o.num("volumetric_efficiency_speed_loss", e.volumetricEfficiencySpeedLoss);
         o.num("friction_mep_rated_kpa", e.frictionMepAtRated, 1000);
         o.num("friction_mep_zero_kpa", e.frictionMepAtZero, 1000);
         o.num("idle_manifold_ratio", e.idleManifoldRatio);
+        o.num("idle_rpm", e.idleRpm);
         o.num("intake_loss_ratio", e.intakeLossRatio);
         o.num("engine_inertia_kgm2", e.engineInertia);
         o.num("starter_torque_nm", e.starterTorque);
@@ -523,8 +535,8 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("p_factor_gain", e.pFactorGain);
         o.num("slipstream_swirl_factor", e.slipstreamSwirlFactor);
         o.num("alternator_min_rpm", e.alternatorMinRpm);
-        o.num("oil_pump_psi_per_rpm", e.oilPumpPressurePerRpm, 6894.757);
-        o.num("oil_relief_psi", e.oilReliefPressure, 6894.757);
+        o.num("oil_pump_psi_per_rpm", e.oilPumpPressurePerRpm, kPsi);
+        o.num("oil_relief_psi", e.oilReliefPressure, kPsi);
         o.num("oil_viscosity_temperature_scale_k", e.oilViscosityTemperatureScale);
         {
             Obj pr = o.child("propeller", true);
@@ -569,9 +581,19 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("idle_fuel_flow_kg_per_h", e.idleFuelFlow, 1.0 / 3600);
         o.num("itt_idle_k", e.ittIdle);
         o.num("itt_takeoff_k", e.ittTakeoff);
-        o.num("oil_pressure_idle_psi", e.oilPressureIdle, 6894.757);
-        o.num("oil_pressure_max_psi", e.oilPressureMax, 6894.757);
+        o.num("oil_pressure_idle_psi", e.oilPressureIdle, kPsi);
+        o.num("oil_pressure_max_psi", e.oilPressureMax, kPsi);
         o.integer("fuel_feed", e.fuelFeed);
+        o.num("fan_diameter_m", e.fanDiameter);
+        o.num("windmill_drag_area_m2", e.windmillDragArea);
+        if (o.has("ratings")) {
+            Obj rt = o.child("ratings");
+            rt.num("max_continuous", e.maxContinuousFraction);
+            rt.num("max_climb", e.maxClimbFraction);
+            rt.num("max_cruise", e.maxCruiseFraction);
+            rt.num("takeoff_time_s", e.takeoffRatingTime);
+            rt.num("takeoff_time_engine_out_s", e.takeoffRatingTimeEngineOut);
+        }
         if (o.has("thrust_reverser")) {
             Obj rv = o.child("thrust_reverser");
             e.reverser.present = true;
@@ -619,6 +641,15 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         e.num("battery_resistance_ohm", d.electrical.batteryResistance);
         e.num("alternator_voltage_v", d.electrical.alternatorVoltage);
         e.num("alternator_max_current_a", d.electrical.alternatorMaxCurrent);
+        e.num("bus_minimum_v", d.electrical.busMinimumVoltage);
+        e.each("generators", [&](Obj& o, std::size_t) {
+            GeneratorDef g;
+            o.str("name", g.name);
+            o.integer("engine", g.engine, true);
+            o.num("max_current_a", g.maxCurrent, 1, true);
+            o.num("cut_in_n2", g.cutInN2);
+            d.electrical.generators.push_back(g);
+        });
         e.each("loads", [&](Obj& o, std::size_t) {
             ElectricalLoadDef l;
             o.str("name", l.name, true);
@@ -629,6 +660,37 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
             o.boolean("avionics_bus", l.onAvionicsBus);
             d.electrical.loads.push_back(l);
         });
+    }
+    if (r.has("hydraulics")) {
+        Obj h = r.child("hydraulics");
+        d.hydraulics.present = true;
+        h.each("systems", [&](Obj& o, std::size_t) {
+            HydraulicSystemDef sys;
+            std::vector<Real> eng;
+            o.str("name", sys.name);
+            o.numbers("engines", eng);
+            for (Real e : eng) sys.engines.push_back(static_cast<int>(e));
+            if (o.has("electric_pump")) {
+                Obj ep = o.child("electric_pump");
+                ep.num("current_a", sys.electricPump.current, 1, true);
+                ep.boolean("generator_only", sys.electricPump.generatorOnly);
+            }
+            o.num("nominal_pressure_psi", sys.nominalPressure, 6894.757);
+            o.num("rise_time_s", sys.riseTime);
+            d.hydraulics.systems.push_back(sys);
+        }, true);
+        auto users = [&](const char* key, std::vector<int>& out) {
+            std::vector<Real> v;
+            h.numbers(key, v);
+            for (Real x : v) out.push_back(static_cast<int>(x));
+        };
+        users("gear", d.hydraulics.gear);
+        users("flaps", d.hydraulics.flaps);
+        users("speedbrake", d.hydraulics.speedbrake);
+        users("steering", d.hydraulics.steering);
+        users("brakes", d.hydraulics.brakes);
+        h.integer("brake_accumulator_applications", d.hydraulics.brakeAccumulatorApplications);
+        h.num("free_fall_rate_fraction", d.hydraulics.freeFallRateFraction);
     }
     r.each("gear", [&](Obj& o, std::size_t) {
         GearDef g;
@@ -652,10 +714,20 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("max_steer_deg", g.maxSteerAngle, kDeg);
         o.num("tiller_steer_deg", g.tillerSteerAngle, kDeg);
         o.num("steer_rate_deg_per_s", g.steerRate, kDeg);
+        o.num("castor_deg", g.castorAngle, kDeg);
+        o.num("castor_trail_m", g.castorTrail);
+        o.num("steer_linkage_nm_per_rad", g.steerLinkageStiffness);
+        o.num("steer_linkage_breakout_nm", g.steerLinkageBreakout);
         o.num("cornering_stiffness_n_per_rad", g.corneringStiffness);
+        o.num("cornering_load_sensitivity", g.corneringLoadSensitivity);
+        o.num("static_load_n", g.staticLoad);
         o.num("relaxation_length_m", g.relaxationLength);
         o.num("longitudinal_stiffness_n_per_m", g.longitudinalStiffness);
-        o.num("tyre_pressure_psi", g.tyrePressure, 6894.757);
+        o.num("tyre_pressure_psi", g.tyrePressure, kPsi);
+        o.num("wheel_inertia_kgm2", g.wheelInertia);
+        o.num("brake_torque_nm", g.brakeTorque);
+        o.num("sliding_friction_ratio", g.slidingFrictionRatio);
+        o.num("anti_skid_efficiency", g.antiSkidEfficiency);
         d.gear.push_back(g);
     });
     r.each("contacts", [&](Obj& o, std::size_t) {

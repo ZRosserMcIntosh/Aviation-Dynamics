@@ -46,12 +46,26 @@ inline constexpr int kMaxContacts = 16;
 // Pilot (or assist) control positions, sampled every step. Persistent
 // cockpit switches (master, magnetos, fuel valves, flap lever, parking brake)
 // are changed through the cockpit-control API instead.
+// Turbofan thrust-rating selection (the FADEC's N1 limit). Auto: take-off on
+// the ground and for the definition's take-off time after lift-off (re-armed
+// by a go-around: levers to the stop with the gear or flaps out), then
+// maximum continuous with an engine out, maximum climb while climbing and
+// maximum cruise once level for a minute. The others force one rating.
+enum class ThrustMode { Auto = 0, Takeoff = 1, MaxContinuous = 2, Climb = 3, Cruise = 4 };
+
 struct PilotInput {
     Real pitch = 0;        // -1..1, + stick aft (nose up)
     Real roll = 0;         // -1..1, + roll right
     Real yaw = 0;          // -1..1, + right pedal
     Real tiller = 0;       // -1..1, + steer right (nose-wheel tiller, where fitted)
-    Real throttle = 0;     // 0..1
+    Real throttle = 0;     // 0..1, every engine
+    // Split levers (asymmetric thrust, differential taxi): with
+    // `splitThrottles` set, engine i follows throttles[i] and `throttle` is
+    // ignored; code that sets only `throttle` drives every engine as before.
+    std::array<Real, kMaxEngines> throttles{};
+    bool splitThrottles = false;
+    Real engineThrottle(int engine) const { return splitThrottles ? throttles[static_cast<std::size_t>(engine)] : throttle; }
+    ThrustMode thrustMode = ThrustMode::Auto;  // turbofans: the rating that caps N1
     Real mixture = 1;      // 0 (idle cut-off) .. 1 (full rich)
     Real brakeLeft = 0, brakeRight = 0;  // 0..1 toe brakes
     Real trimRate = 0;     // -1..1, + nose-up trim wheel movement
@@ -69,7 +83,9 @@ struct DynamicState {
     RigidBodyState body;
     std::array<Real, kMaxEngines> shaftOmega{};
     std::array<Real, kMaxGear> tyreLateral{};       // bristle deflection (m)
-    std::array<Real, kMaxGear> tyreLongitudinal{};
+    std::array<Real, kMaxGear> tyreLongitudinal{};  // bristle deflection (m), driven by the slip velocity v - r omega
+    std::array<Real, kMaxGear> wheelOmega{};        // wheel spin (rad/s, + rolling forward)
+    std::array<Real, kMaxGear> wheelSteer{};        // castoring wheel's heading (rad; unused for rigidly steered legs)
 };
 
 enum class FlightEventType {
@@ -98,8 +114,16 @@ struct GearTelemetry {
     bool contact = false;
     Real compression = 0;
     Real normalForce = 0;
-    Real steerAngle = 0;
+    Real steerAngle = 0;         // the wheel's heading (a castoring wheel's own, else the command)
     int surfaceId = 0;
+    Real wheelOmega = 0;         // rad/s
+    Real rollingSpeed = 0;       // m/s, contact point along the wheel heading
+    Real slipRatio = 0;          // (v_long - r omega) / max(|v_long|, 1), + when braking
+    Real longitudinalForce = 0;  // N on the airframe along the wheel heading (- braking)
+    Real lateralForce = 0;       // N along n x f: to the wheel's left
+    Real peakFriction = 0;       // mu_peak used (wet-aware)
+    Real brakeTorque = 0;        // N m applied (after anti-skid modulation)
+    bool held = false;           // the wheel is stopped and held by the brakes / rolling threshold
 };
 
 struct EngineTelemetry {
@@ -132,8 +156,16 @@ struct AircraftTelemetry {
     AirSample air;
     std::array<EngineTelemetry, kMaxEngines> engines{};
     std::array<TurbofanState, kMaxEngines> turbofans{};
+    std::array<Real, kMaxEngines> throttles{};  // lever position each engine followed this step
     Real gearPosition = 1;                   // 0 up and locked .. 1 down and locked
     Real speedbrake = 0;                     // 0 retracted .. 1 fully deployed
+    // Hydraulics: pressure fraction of each system (1 = nominal), what each
+    // actuator has (1 without hydraulics), the free-fall release, and the
+    // brake accumulator's remaining applications (-1 without hydraulics).
+    std::array<Real, 4> hydraulicPressure{};
+    Real gearPower = 1, flapPower = 1, speedbrakePower = 1, steeringPower = 1, brakePower = 1;
+    bool gearEmergency = false;
+    int brakeAccumulator = -1;
     std::array<GearTelemetry, kMaxGear> gear{};
     ControlDeflections controls;
 };
@@ -213,6 +245,9 @@ public:
     int turbofanCount() const { return static_cast<int>(turbofans_.size()); }
     const TurbofanEngine& turbofan(int i) const { return turbofans_[i]; }
     const TurbofanState& turbofanState(int i) const { return turboState_[i]; }
+    // The FADEC rating in force (ThrustMode::Auto's schedule, or the forced one).
+    ThrustRating activeThrustRating() const { return activeRating_; }
+    Real takeoffRatingTime() const { return takeoffRatingTimer_; }
     // Trim/spawn: turbofans lit and held at the commanded fan speed (no spool lag).
     void setTurbofansSteady(bool on) { turbofanSteady_ = on; }
     Real gearPosition() const { return gearPos_; }
@@ -225,6 +260,10 @@ public:
     Real reverserPosition(int i) const { return reverserPos_[static_cast<std::size_t>(i)]; }
     int reverserPhase(int i) const { return reverserPhase_[static_cast<std::size_t>(i)]; }
     bool groundSpoilersActive() const { return groundSpoilers_; }
+    // Hydraulics (HydraulicsDef): system pressure fraction, actuator supply.
+    int hydraulicSystemCount() const { return static_cast<int>(def_.hydraulics.systems.size()); }
+    Real hydraulicPressure(int i) const { return hydPressure_[static_cast<std::size_t>(i)]; }
+    int brakeAccumulatorApplications() const { return brakeAccumulator_; }
 
     // ---- Loading -------------------------------------------------------------
     void setStationMass(int station, Real kg);
@@ -255,6 +294,7 @@ public:
         RigidBodyState body;   // position = velocity, velocity = accel, attitude = qdot, omega = alpha
         std::array<Real, kMaxEngines> shaftAccel{};
         std::array<Real, kMaxGear> tyreLateralRate{}, tyreLongitudinalRate{};
+        std::array<Real, kMaxGear> wheelAlpha{}, wheelSteerRate{};
         Vec3 forceBody;        // total non-gravitational force
         Vec3 momentBody;
     };
@@ -286,8 +326,20 @@ private:
         std::array<PistonEngineInputs, kMaxEngines> engineIn{};
         std::array<TurbofanInputs, kMaxEngines> turboIn{};
         Real brakeLeft = 0, brakeRight = 0;
-        std::array<Real, kMaxGear> steer{};  // wheel steering angle (rad)
+        std::array<Real, kMaxGear> steer{};  // wheel steering command (rad)
+        std::array<Real, kMaxGear> brakeModulation{};  // anti-skid: fraction of the pedal's torque let through
     };
+    // Per-leg constants derived from the definition (see prepareGear()).
+    struct GearRuntime {
+        Real staticLoad = 1;       // N_ref
+        Real corneringC1 = 0;      // C_alpha = c1 N (1 - c2 N / N_ref)
+        Real inertia = 1;          // wheel spin inertia (kg m^2)
+        Real brakeTorque = 0;      // N m at full pedal
+        Real spinDamping = 0;      // N s/m, bristle damping on the slip velocity while the wheel turns
+        Real heldDamping = 0;      // N s/m, while the wheel is held (the airframe's fore-aft mode)
+    };
+    void prepareGear();
+    Real corneringStiffness(std::size_t leg, Real normalForce) const;
 
     void rebuildCockpit();
     void syncCockpitPositions();
@@ -298,6 +350,14 @@ private:
     SensorInputs sensorInputs() const;
     bool loadPowered(const std::string& name, bool fallback) const;
     void updateTelemetry();
+    // Pressure available to an actuator fed by `systems` (1 when the list is
+    // empty or no hydraulics are fitted), and the rate factor it moves at.
+    Real hydraulicSupply(const std::vector<int>& systems) const;
+    static Real actuatorRate(Real supply) { return clamp((supply - 0.2) / 0.8, 0.0, 1.0); }
+    void stepHydraulics(Real dt, const PilotInput& in);
+    // Pressure a system's pumps deliver now (0..1); adds any electric pump's current.
+    Real hydraulicSource(std::size_t system, Real* electricCurrent) const;
+    void settleHydraulics();
 
     AircraftDefinition def_;
     LocalFrame frame_;
@@ -317,6 +377,7 @@ private:
     std::vector<Real> stationMass_;
     Context ctx_;
     Real time_ = 0;
+    Real stepDt_ = 1.0 / 240;  // the current step (the wheels' Coulomb stop looks one step ahead)
     bool faulted_ = false;
 
     // Controls & switches.
@@ -338,8 +399,27 @@ private:
     std::array<int, kMaxEngines> reverserPhase_{};
     bool reverserDone_ = false;  // used on this ground run: not again until airborne
     Real airborneTime_ = 0;      // s off the ground since the last stop (a landing roll follows)
+    // FADEC rating schedule (ThrustMode::Auto).
+    ThrustRating activeRating_ = ThrustRating::Takeoff;
+    ThrustRating autoRating_ = ThrustRating::Takeoff;
+    Real takeoffRatingTimer_ = 0;  // s airborne on the take-off rating since lift-off or a go-around
+    Real levelTime_ = 0;           // s without a climb (switches climb -> cruise rating)
+    bool leversLow_ = true;        // levers were below the go-around position
     bool machOverWas_ = false;
     std::array<Real, kMaxGear> steerAngle_{};  // steering actuator position (rad)
+    std::array<Real, kMaxEngines> lever_{};    // throttle each engine followed this step
+    // Hydraulics.
+    std::array<Real, 4> hydPressure_{};        // pressure fraction per system
+    std::array<bool, 4> hydPumpOn_{};          // electric pump switches
+    bool gearEmergency_ = false;               // free-fall release pulled
+    int brakeAccumulator_ = -1;                // applications left (-1: not hydraulic)
+    bool brakeWasApplied_ = false, brakeHeld_ = false;  // an application backed by the accumulator
+    Real hydPumpCurrent_ = 0;                  // A, electric hydraulic pumps running
+    Real gearSupply_ = 1, flapSupply_ = 1, speedbrakeSupply_ = 1, steeringSupply_ = 1, brakeSupply_ = 1;
+    bool batteryDepletedWas_ = false;
+    std::array<bool, kMaxGenerators> genOnlineWas_{};
+    std::array<GearRuntime, kMaxGear> gearRt_{};
+    std::array<Real, kMaxGear> antiSkid_{};    // anti-skid modulation state per leg (1 = brakes as pedalled)
 
     // Derived/lagged.
     std::array<Real, 8> downwashLag_{};
@@ -359,7 +439,7 @@ private:
     bool wasOnGround_ = false, stallWarningWas_ = false, overspeedWas_ = false, overGWas_ = false;
     bool flapOverspeedWas_ = false;
     std::array<bool, kMaxEngines> runningWas_{};
-    bool altOnlineWas_ = false, starvingWas_ = false, stallVane_ = false;
+    bool starvingWas_ = false, stallVane_ = false;
     Real lastSinkRate_ = 0;
 
     std::vector<CockpitControl> cockpit_;

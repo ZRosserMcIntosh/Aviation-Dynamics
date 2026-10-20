@@ -84,9 +84,27 @@ costs about 30 µs natively (`avdemo bench`).
   also covers magnetos and the starter, lumped EGT/CHT/oil temperatures, and
   oil pressure from a pump, relief valve and temperature-dependent viscosity.
 - **Ground.** Struts are springs with damping and a preload. Tyres use a
-  bristle model with rolling resistance. The model includes
-  differential brakes, nose-wheel steering, and hard points for wingtips, tail
-  and propeller that report contact events. Steering follows the rudder
+  relaxation-length bristle model in both directions with one friction
+  ellipse on the resultant: past the peak the tyre slides at
+  `sliding_friction_ratio` of the peak friction with the force along the
+  sliding velocity. The cornering stiffness follows the load,
+  C_alpha = c1 N (1 − c2 N/N_ref). Each wheel's spin is part of the RK4
+  state (I_w ω̇ = r F_x − T_brake − T_roll): the longitudinal bristle sees the
+  slip velocity v − rω, the brakes are a torque capacity (`brake_torque_nm`,
+  so a lightly loaded wheel locks), wheels spin up at touchdown with the aft
+  force that pitches the nose down, and a Coulomb stop holds a parked wheel
+  (a wheel that would stop within the step is held while the brakes, or the
+  rolling threshold, can hold the tread force). Anti-skid
+  (`anti_skid_efficiency`) is a sampled slip-ratio controller that modulates
+  the pedal's torque to hold that fraction of the peak force. The model
+  includes differential brakes, nose-wheel steering, and hard points for
+  wingtips, tail and propeller that report contact events. A castoring nose
+  wheel (`castor_trail_m`, `castor_deg`) has its heading as a state that
+  relaxes, over about a trail plus a relaxation length of rolling, to the
+  balance of the pedal linkage spring (`steer_linkage_nm_per_rad`, yielding at
+  `steer_linkage_breakout_nm`) against the tyre's aligning moment on the
+  trail: it lines up with its velocity when free and follows the pedals
+  through the linkage range. Steering follows the rudder
   pedals and, where a gear leg has one, a tiller (`tiller_steer_deg`); the two
   commands add, limited to the larger authority. A powered steering actuator
   has a slew-rate limit (`steer_rate_deg_per_s`); without one the wheel
@@ -117,9 +135,10 @@ costs about 30 µs natively (`avdemo bench`).
 | System | Model |
 |---|---|
 | Fuel | Tanks with position, unusable quantity, sender. Selector and shutoff valve. Line volume between valve and engine, so the engine runs on for seconds after starvation. Leaks. |
-| Electrical | Battery open-circuit voltage against state of charge, internal resistance that rises at low charge, alternator field logic and current limit. Named loads with breakers and minimum voltage. |
+| Electrical | Lead-acid battery on its loaded plateau with a surface charge, internal resistance that rises at low charge, CC/CV charge taper; one alternator or declared per-engine generators in parallel (own switch, failure and cut-in speed), a definition-level bus minimum voltage. Named loads with breakers and minimum voltage; the fuel-pump breaker carries the pump's current only while it runs. |
+| Hydraulics | Optional: systems pressurised by engine-driven pumps and/or an electric pump needing generator power; gear, flaps, speedbrake, steering and brakes name their systems and move at a rate scaled by the pressure; brake accumulator; gear free-fall release. |
 | Vacuum | Engine-driven pump with a regulated suction against rpm. The gyro rotors belong to the instruments that use them. |
-| Flaps and trim | Electric flap motor with a rate, detents and a load. Trim position with a rate. |
+| Flaps and trim | Electric flap motor with a rate, detents and a load (or hydraulic, see above). Trim position with a rate. |
 
 ## Instruments
 
@@ -135,7 +154,7 @@ An aircraft is one JSON file with these sections:
 - `mass` (empty mass, CG, inertia and stations), `reference`;
 - `surfaces`, `fuselages`, `drag_items`;
 - `engines` (engine, propeller and oil system);
-- `fuel`, `electrical`, `vacuum`;
+- `fuel`, `electrical` (with optional `generators`), `hydraulics` (optional), `vacuum`;
 - `gear`, `contacts`, `controls`;
 - `pitot_static`, `stall_warning`, `panel`, `limits`.
 

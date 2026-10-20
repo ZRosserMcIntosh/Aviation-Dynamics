@@ -39,7 +39,8 @@ against the POH revision of a specific airplane.
 | Vertical tail | estimated | — |
 | Drag build-up | calibrated | Roskam component areas scaled to POH cruise (124 KTAS at 75%, 8000 ft) and maximum speed (126 KTAS, sea level) |
 | Engine rating, displacement | published | 180 bhp at 2700 rpm, 361 in³ |
-| Engine friction, efficiency, oil pump | estimated / calibrated | fmep from Heywood; indicated efficiency calibrated to rated power |
+| Engine friction, efficiency, oil pump | calibrated / estimated | Mechanical fmep 130 kPa at 2,700 rpm so that friction plus the full-throttle pumping loss is the 13.2 % of rated power Lycoming's altitude curve (Gagg–Farrar) implies; volumetric efficiency 0.89 from the published take-off fuel flow, which with the rated power fixes the indicated efficiency (0.33); oil pump estimated |
+| Engine induction (compression ratio, throttle and idle orifices, VE with speed) | published / calibrated | Compression ratio 8.5 published. Idle orifice sized for 0.29 × ambient at 650 rpm (ground idle 704 rpm at 8.3 inHg: the idle stop); throttle bore for a 3 % drop at rated rpm; port-flow loss 0.08 calibrated to the rise of Lycoming's full-throttle torque below rated rpm |
 | Propeller | published / calibrated | 76 in diameter and 60 in geometric pitch published (pitch_m 1.524). Chord distribution calibrated to the POH static rpm; blade thickness estimated (drives tip compressibility) |
 | Fuel | published | Two 28 gal tanks, 26.5 gal usable each, arm 48 in, LEFT/BOTH/RIGHT selector and shutoff |
 | Fuel line volume | estimated | Sets the run-on time after a tank runs dry |

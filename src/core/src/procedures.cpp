@@ -63,13 +63,22 @@ std::vector<ProcedureRunner::Step> quickStartPistonSingle(const Aircraft& ac) {
     v.push_back({"Release starter, set 1000 rpm", [](Aircraft&, PilotInput& in) {
                      in.starterHeld = false;
                      in.mixture = 1.0;
-                     in.throttle = 0.12;
+                     in.throttle = 0.14;  // about 1,000 rpm with the butterfly throttle schedule (idle ~700 at the stop)
                  },
                  [](const Aircraft&, Real t) { return t > 1.0; }, 5, ""});
-    v.push_back({"Alternator ON", set("electrical.alternator", 1),
+    // The after-start items are done holding 1,000 rpm (the alternator cuts
+    // in above the ~700 rpm idle, POH: "1000 rpm or less" after start).
+    auto setAt1000 = [](const char* id, int pos) {
+        return [id = std::string(id), pos](Aircraft& a, PilotInput& in) {
+            a.setCockpitControl(id, pos);
+            in.mixture = 1.0;
+            in.throttle = 0.14;
+        };
+    };
+    v.push_back({"Alternator ON", setAt1000("electrical.alternator", 1),
                  [](const Aircraft& a, Real t) { return t > 0.5 && a.electrical().alternatorOnline(); }, 5,
                  "Alternator did not come online"});
-    v.push_back({"Avionics master ON", set("electrical.avionics", 1), nullptr, 5, ""});
+    v.push_back({"Avionics master ON", setAt1000("electrical.avionics", 1), nullptr, 5, ""});
     return v;
 }
 

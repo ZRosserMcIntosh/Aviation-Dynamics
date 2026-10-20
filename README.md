@@ -45,31 +45,38 @@ moment, and they have a yaw damper.
 | Propulsion | Blade-element propeller with swirl and tip compressibility; piston engine (manifold pressure, mixture, magnetos, starter, temperatures, oil pressure). Two-spool turbofans with spool lag, Mattingly thrust lapse, TSFC against Mach, windmilling and relight | `tests/test_components.cpp`, `tests/test_jet.cpp` |
 | Jet systems | Retractable gear, speedbrakes, automatic ground spoilers, cascade thrust reversers, stick pusher, rudder limiter, a series yaw damper. AHRS heading, V-speeds from the trimmed stall speed | `tests/test_jet.cpp`, `tests/test_jetgen.cpp` |
 | Systems | Load sheet (ramp, take-off, landing and zero-fuel weights, CG envelope, placards); fuel tanks, selector and shutoff, with line volume, starvation and leaks; battery, alternator and bus with named loads and breakers; engine-driven vacuum | `tests/test_systems_scenarios.cpp` |
-| Ground | Spring-damper struts, bristle tyres, brakes, nose-wheel steering by pedals or a rate-limited tiller, hard-point contacts. Wet runways (14 CFR 25.109), standing water and hydroplaning. The region's airports each at their own elevation; world tiles with terrain, surfaces and buildings (wingtip strikes) | `tests/test_flight.cpp`, `tests/test_world.cpp` |
+| Ground | Spring-damper struts, combined-slip bristle tyres (one friction ellipse, sliding friction past the peak, cornering stiffness with load), wheel spin with torque-limited brakes that lock a light wheel, anti-skid where fitted, touchdown spin-up, a castoring nose wheel through a bungee linkage or steering by pedals or a rate-limited tiller, hard-point contacts. Wet runways (14 CFR 25.109), standing water and hydroplaning. The region's airports each at their own elevation; world tiles with terrain, surfaces and buildings (wingtip strikes) | `tests/test_ground_handling.cpp`, `tests/test_flight.cpp`, `tests/test_world.cpp` |
 | Instruments | Pitot-static (IAS/CAS/EAS/TAS, position error, blockages, icing and pitot heat), VSI lag, vacuum gyros, turn coordinator and ball. A wet compass with airframe deviation and a swung correction card. Engine and system gauges, annunciators, transponder | `tests/test_instruments.cpp` |
 | Navigation | VOR/LOC/GS receivers with radio horizon; the real ILSs at Congonhas, Guarulhos, Viracopos, Galeão and Brasília. 1,150 Brazilian airports (OurAirports runways). A GPS navigator: route legs, sequencing, Garmin-style CDI scaling, a 3° vertical path from the FAF, and generated approaches to any runway ([navigation.md](docs/architecture/navigation.md)) | `tests/test_destinations.cpp` |
 | Blind landings | An instrument-only approach pilot (`scenarios::ApproachPilot`) flies the ILS or GPS approach with an autoland flare, decrab and rollout. All seven aircraft land in zero visibility within CAT III touchdown limits, calm and in a light crosswind | `tests/test_blind_landing.cpp`, [blind-landings.md](docs/validation/blind-landings.md) |
 | Assists | Easy, Sport and Simulation, plus an auto-trim that holds straight and level. They act only through the pilot's controls; the physics is the same in all three ([ADR 0004](docs/decisions/0004-assistance-is-not-physics.md)) | `tests/test_systems_scenarios.cpp`, `tests/test_jet.cpp` |
 | Browser | WebAssembly build (wasi-sdk, no exceptions or RTTI) with a C ABI. Streams the airflow, wake and body data the 3D site draws (streamlines, smoke, wind tunnel). Node smoke test, a self-contained 2D cockpit page, flight replay | `web/`, `web/smoke_test.mjs` |
 
-Everything in this table is tested: 186 test cases, on Linux (gcc, clang,
+Everything in this table is tested: <!-- validation:begin tests -->231<!-- validation:end --> test cases, on Linux (gcc, clang,
 sanitizers), macOS, Windows and WASM in CI. How far each area is validated,
-and its main gap, is in the [fidelity matrix](docs/fidelity-matrix.md).
+and its main gap, is in the [fidelity matrix](docs/fidelity-matrix.md); the
+comparisons with published data, with their sources and every row that is
+outside its band, are in [docs/validation](docs/validation/c172s-validation.md)
+and are regenerated from the test output so they cannot drift.
 
 ## Build and run
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/tests/avd_tests             # 186 test cases
+./build/tests/avd_tests             # <!-- validation:begin tests -->231<!-- validation:end --> test cases
 ./build/tests/avd_tests "blind"     # a filter: the blind landings
-./build/avdemo validate             # the POH comparison table
+./build/avdemo validate [--json f]  # the comparison tables against published data (172S POH, G650ER)
+./build/tools/avdtrace --record     # record the golden traces (tests/golden/README.md)
 ./build/avdemo flight               # SBMT circuit: quick start, take-off, stall, pattern, landing
 ./build/avdemo instruments [csv]    # truth against display through a scripted flight
 ./build/avdemo starvation | shutdown | cockpit | bench
 ```
 
-Options: `AVD_BUILD_TESTS`, `AVD_BUILD_TOOLS`, `AVD_WARNINGS_AS_ERRORS`.
+Options: `AVD_BUILD_TESTS`, `AVD_BUILD_TOOLS`, `AVD_WARNINGS_AS_ERRORS`, `AVD_FUZZ`
+(libFuzzer target for the JSON parser and the aircraft loader, clang only),
+`AVD_FUZZ_DRIVER` (the same target as a stand-alone mutation driver for any
+compiler, e.g. under the gcc sanitizers).
 
 The browser build needs [wasi-sdk](https://github.com/WebAssembly/wasi-sdk);
 version 25 is tested.
@@ -95,9 +102,12 @@ node tools/jetgen/check.mjs                    # cruise, stall speeds, final app
 src/core/      avd_core: the engine-independent flight core (namespace avd)
 src/scenarios/ trim, test and approach pilots, airports, approaches, the São Paulo region
 tools/avdemo/  headless demos and the validation report
+tools/avdtrace/ golden-trace recorder and checker (tests/golden)
+tools/fuzz/    libFuzzer / stand-alone fuzz target for the JSON parser and the aircraft loader
+tools/update_validation_docs.py  rewrites the generated validation tables in the docs from the test output
 tools/jetgen/  the generated jets: generator, calibration, checks
 tools/navdata/ Brazil's airports from OurAirports
-tests/         dependency-free test harness and suites
+tests/         dependency-free test harness and suites; tests/golden holds the recorded traces
 data/          aircraft definitions (JSON, with provenance) and world data
 web/           C ABI, WASM build, JS loader, smoke test, 2D cockpit
 docs/          architecture, decisions (ADRs), aircraft, validation, fidelity matrix, roadmap

@@ -33,6 +33,24 @@
  ],
  "provenance": [
   {
+   "field": "turbofans[*].fan_diameter_m, turbofans[*].windmill_drag_area_m2",
+   "kind": "estimated",
+   "source": "ENG",
+   "note": "BR725 fan diameter 50 in (1.27 m, manufacturer). Windmilling drag area 0.12 x the fan disc (1.267 m^2) = 0.152 m^2 of CdA, after Torenbeek App. G (windmilling high-bypass turbofan ~0.1 q x inlet area); about 0.55 kN at 150 KTAS at sea level."
+  },
+  {
+   "field": "electrical.generators, electrical.bus_minimum_v",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Two engine-driven starter-generators in parallel (the G650ER's two 40 kVA generators, here 300 A each on a 28 V DC bus), each on line from 45 % N2; bus minimum 18 V (24 V system)."
+  },
+  {
+   "field": "hydraulics",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Two 3,000 psi systems, each with an engine-driven pump (A: left, B: right), A also with an electric pump that needs generator power; gear, flaps, spoilers, nose-wheel steering and brakes on either system; brake accumulator good for 6 applications; free-fall gear extension at 35 % of the normal rate. Layout after the G650's two-system arrangement, numbers estimated."
+  },
+  {
    "field": "controls.yaw_damper",
    "kind": "estimated",
    "source": "EST",
@@ -129,6 +147,18 @@
    "note": "Typical of large business jets (G650 figures not public): mains ~190 psi (hydroplaning ~124 kt), nose ~160 psi."
   },
   {
+   "field": "gear[*].static_load_n, gear[*].wheel_inertia_kgm2",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Static loads at MTOW from the geometry (nose 36.8 kN, each main bogie 211.5 kN); the cornering stiffness is the value at that load and follows the usual load sensitivity above and below it. Spin inertia of a twin-wheel main bogie with its brake rotors ~50 kg m^2, the twin nose wheels ~5.5 kg m^2."
+  },
+  {
+   "field": "gear[*].brake_torque_nm, gear[*].anti_skid_efficiency",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Carbon brakes as a torque capacity of 59 kN m per main bogie at full pedal (the former force-coefficient model, 0.5 x load, at the static load): ~0.45 g at MTOW with the wing unloaded, the usual certification maximum, and more than the tyres hold while the wing still carries weight, where the anti-skid limits them. Digital anti-skid at 88 % efficiency (the fraction of the peak braking force held; modern systems 0.85-0.92)."
+  },
+  {
    "field": "gear.nose.steering",
    "kind": "estimated",
    "source": "EST",
@@ -141,6 +171,12 @@
    "note": "Three spoiler panels per side ahead of the outboard flap (photographs), 14 % chord, 40 deg at full speedbrake; their drag (~1.6 m^2 CdA fully out) and lift loss (~25 % of the wing's) match the lumped speedbrake estimate they replace."
   },
   {
+   "field": "turbofans[*].ratings",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "FADEC thrust ratings as fractions of the sea-level static take-off thrust: maximum continuous 0.92, maximum climb 0.88, maximum cruise 0.84 (typical of modern business-jet turbofans: MCT 0.90-0.93, MCL 0.85-0.90, MCR 0.80-0.87), take-off limited to 5 min (10 min with an engine out). Modelled as turbine-temperature limits: each rating holds a fixed fraction of the temperature-limited thrust (Mattingly's temperature branch continued below the throttle ratio), so the fractions apply at sea level and the ratings converge on the flat-rated line at altitude, where the take-off rating itself is far below its temperature limit (at FL410 the maximum-cruise rating allows 97 % of the lapse-law thrust). The lapse coefficient's earlier calibration (Mach 0.85 to FL510 at mid weight) therefore stands."
+  },
+  {
    "field": "turbofans[*].thrust_reverser",
    "kind": "estimated",
    "source": "EST",
@@ -151,6 +187,30 @@
    "kind": "estimated",
    "source": "EST",
    "note": "Ground spoilers: every panel to full on main-wheel contact with the throttles at idle above 30 kt ground speed (a landing or a rejected take-off); stowed when the throttles come up or below 15 kt."
+  },
+  {
+   "field": "surfaces[*].mach_clmax_knee, mach_clmax_factor",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Buffet boundary: the section's clmax falls as 1 - 5 (Mn - 0.5)^2 above a normal Mach number of 0.5 (Mn = M cos(sweep); simple sweep theory as the Korn drag rise), floor 0.35. Shape after the CL-buffet-onset curves of supercritical transport wings (Obert, Aerodynamic Design of Transport Aircraft, ch. 20): the trimmed 1-g CLmax falls from 1.27 at low speed to 0.90 at M0.85 (71 %), a 1.3-g buffet margin at CL ~0.7, in the range of the class at FL410 mid weight. No G650 buffet-onset data published."
+  },
+  {
+   "field": "surfaces[0].mach_ac_shift, mach_cm0_shift",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Mach tuck: through the drag rise (Mcrit = Korn Mdd - 0.1077 to Mdd + 0.05) the rear-loaded supercritical section's aft loading grows (cm0 shift -0.06, the order of the cm(M) trend of NASA SC(2) sections, Harris NASA TP-2969), and from about Mdd the section's force point moves aft from c/4 toward c/2 at M1 (thin-airfoil limits; Hilton, High-Speed Aerodynamics, 1951; Raymer 12.4.2). Stabiliser trimmed at FL410 M0.80 and the speed raised, the 1-g pitching moment reverses from nose up to nose down in the mid-0.8s and is a push at M0.92; the elevator per g about triples toward Mmo (figures in tests/test_transonic.cpp). No G650 trim-vs-Mach data published."
+  },
+  {
+   "field": "surfaces[*].mach_control_exponent, mach_control_floor",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Hinged-control effectiveness x max(0.2, 1 - (M/Mdd0)^10), Mdd0 the zero-lift Korn Mdd of the surface (0.95 for the tailplane): the shock standing ahead of the hinge line unloads the flap. Elevator pitching power at M0.92 is 29 % of its M0.5 value, 91 % at M0.80 (Hilton 1951 on control effectiveness through the transonic range). No G650 data."
+  },
+  {
+   "field": "surfaces[1].downwash.wake_blanking, wake_spread, wake_q_ratio",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "T-tail deep stall: the stalled wing's separated wake leaves the mid-chord at (alpha - downwash) with half-thickness c/2 sin(alpha - eps) plus 0.16 per metre aft (a turbulent wake's ~9 deg half-angle), as strong as the wing's separated fraction; inside it the tail (6 m above the wing plane, ~12 m behind the mid-chord) sees 20 % of the dynamic pressure at the core (the ~55 % velocity deficit a few chords behind a stalled wing; Taylor & Ray, AIAA 65-737: the tail's pitching contribution nearly lost in the wake) and the downwash of the wing at its CLmax rather than one falling with the collapsing lift. The tail is in the wake from alpha ~25 to ~40 deg. Without the stick pusher, full aft stick at idle settles into a deep stall near 40 deg of alpha (1 g, ~7,000 fpm) with the elevator's pitching power below 15 % of its unstalled value; the pusher keeps the airplane out of it. The airframe still pitches down on its own once the stick goes forward (no swept-wing post-stall pitch-up in the regularised lifting line), so the model does not lock in."
   }
  ],
  "mass": {
@@ -249,6 +309,12 @@
    "lifting_line": true,
    "thickness_ratio": 0.11,
    "korn_factor": 0.95,
+   "mach_clmax_knee": 0.4,
+   "mach_clmax_factor": 2.0,
+   "mach_ac_shift": 0.25,
+   "mach_cm0_shift": -0.06,
+   "mach_control_exponent": 10,
+   "mach_control_floor": 0.2,
    "panels": [
     {
      "root_quarter_chord_m": [
@@ -392,10 +458,18 @@
    "span_efficiency": 0.85,
    "trimmable_stabilizer": true,
    "downwash": {
-    "source": 0
+    "source": 0,
+    "wake_blanking": true,
+    "wake_spread": 0.16,
+    "wake_q_ratio": 0.2
    },
    "thickness_ratio": 0.1,
    "korn_factor": 0.92,
+   "mach_clmax_knee": 0.4,
+   "mach_clmax_factor": 2.0,
+   "mach_ac_shift": 0.25,
+   "mach_control_exponent": 10,
+   "mach_control_floor": 0.2,
    "panels": [
     {
      "root_quarter_chord_m": [
@@ -569,6 +643,15 @@
    "itt_takeoff_k": 1170,
    "oil_pressure_idle_psi": 40,
    "oil_pressure_max_psi": 70,
+   "fan_diameter_m": 1.27,
+   "windmill_drag_area_m2": 0.152,
+   "ratings": {
+    "max_continuous": 0.92,
+    "max_climb": 0.88,
+    "max_cruise": 0.84,
+    "takeoff_time_s": 300,
+    "takeoff_time_engine_out_s": 600
+   },
    "thrust_reverser": {
     "effectiveness": 0.4,
     "transit_time_s": 2.0,
@@ -604,6 +687,15 @@
    "oil_pressure_idle_psi": 40,
    "oil_pressure_max_psi": 70,
    "fuel_feed": 0,
+   "fan_diameter_m": 1.27,
+   "windmill_drag_area_m2": 0.152,
+   "ratings": {
+    "max_continuous": 0.92,
+    "max_climb": 0.88,
+    "max_cruise": 0.84,
+    "takeoff_time_s": 300,
+    "takeoff_time_engine_out_s": 600
+   },
    "thrust_reverser": {
     "effectiveness": 0.4,
     "transit_time_s": 2.0,
@@ -659,6 +751,11 @@
   "battery_resistance_ohm": 0.02,
   "alternator_voltage_v": 28.0,
   "alternator_max_current_a": 600,
+  "bus_minimum_v": 18,
+  "generators": [
+   {"name": "GEN 1", "engine": 0, "max_current_a": 300, "cut_in_n2": 0.45},
+   {"name": "GEN 2", "engine": 1, "max_current_a": 300, "cut_in_n2": 0.45}
+  ],
   "loads": [
    {
     "name": "avionics",
@@ -742,6 +839,19 @@
    }
   ]
  },
+ "hydraulics": {
+  "systems": [
+   {"name": "A", "engines": [0], "electric_pump": {"current_a": 60, "generator_only": true}, "nominal_pressure_psi": 3000, "rise_time_s": 2.0},
+   {"name": "B", "engines": [1], "nominal_pressure_psi": 3000, "rise_time_s": 2.0}
+  ],
+  "gear": [0, 1],
+  "flaps": [0, 1],
+  "speedbrake": [0, 1],
+  "steering": [0, 1],
+  "brakes": [0, 1],
+  "brake_accumulator_applications": 6,
+  "free_fall_rate_fraction": 0.35
+ },
  "gear": [
   {
    "name": "nose",
@@ -763,6 +873,8 @@
    "max_steer_deg": 10,
    "tiller_steer_deg": 80,
    "steer_rate_deg_per_s": 20,
+   "static_load_n": 36800,
+   "wheel_inertia_kgm2": 5.5,
    "cornering_stiffness_n_per_rad": 120000,
    "relaxation_length_m": 0.5,
    "longitudinal_stiffness_n_per_m": 500000
@@ -784,7 +896,11 @@
    "wheel_radius_m": 0.56,
    "rolling_resistance": 0.02,
    "brake_coefficient": 0.5,
+   "brake_torque_nm": 59000,
+   "anti_skid_efficiency": 0.88,
    "brake_group": "left",
+   "static_load_n": 211500,
+   "wheel_inertia_kgm2": 50,
    "cornering_stiffness_n_per_rad": 400000,
    "relaxation_length_m": 0.8,
    "longitudinal_stiffness_n_per_m": 1500000
@@ -806,7 +922,11 @@
    "wheel_radius_m": 0.56,
    "rolling_resistance": 0.02,
    "brake_coefficient": 0.5,
+   "brake_torque_nm": 59000,
+   "anti_skid_efficiency": 0.88,
    "brake_group": "right",
+   "static_load_n": 211500,
+   "wheel_inertia_kgm2": 50,
    "cornering_stiffness_n_per_rad": 400000,
    "relaxation_length_m": 0.8,
    "longitudinal_stiffness_n_per_m": 1500000

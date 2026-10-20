@@ -58,7 +58,7 @@ const GpsIndication& GpsNavigator::update(const Vec3& pos, Real altitudeMsl, Rea
         if (!route_[static_cast<std::size_t>(active_)].flyover) {
             const Real turn = std::abs(wrapPi(track(b, route_[static_cast<std::size_t>(active_ + 1)].position) - t));
             const Real v = std::max(groundSpeed, 30.0);
-            const Real r = v * v / (9.80665 * std::tan(0.4363));
+            const Real r = v * v / (kStandardGravity * std::tan(0.4363));
             anticipate = std::min(r * std::tan(0.5 * std::min(turn, 2.2)), 5000.0);
         }
         if (along < len - anticipate) break;

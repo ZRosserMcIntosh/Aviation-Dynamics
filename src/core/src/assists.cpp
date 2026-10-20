@@ -40,7 +40,7 @@ Real wingStallMargin(const Aircraft& ac) {
     const AeroOutputs& a = ac.aero();
     Real margin = 1;
     for (int i = ac.aeroModel().firstStrip(0); i < ac.aeroModel().endStrip(0); ++i)
-        if (a.strips[i].q > 0) margin = std::min(margin, a.strips[i].stallAlpha - a.strips[i].alpha);
+        if (a.strips[i].q > 0 && ac.aeroModel().stripIsPrimary(i)) margin = std::min(margin, a.strips[i].stallAlpha - a.strips[i].alpha);
     return margin;
 }
 
@@ -75,7 +75,7 @@ PilotInput FlightAssist::apply(const PilotInput& raw, const Aircraft& ac, Real d
     r_.yawOnTiller = onTiller_;
 
     const bool airborne = !t.onGround && t.trueAirspeed > 15;
-    const Real qRef = 0.5 * 1.225 * 50 * 50;
+    const Real qRef = 0.5 * isa::kSeaLevelDensity * 50 * 50;
     const Real qScale = clamp(qRef / std::max(t.dynamicPressure, 200.0), 0.3, 3.0);
 
     if (c_.autoMixture && ac.engineCount() > 0) {

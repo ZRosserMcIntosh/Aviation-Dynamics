@@ -74,6 +74,85 @@ TEST_CASE("turbofan: Mattingly thrust lapse, spool lag and fuel flow") {
     CHECK(s.n1 < 0.05);
 }
 
+TEST_CASE("turbofan: FADEC ratings cap N1 (fractions at sea level, converging at altitude) and the automatic schedule") {
+    const AircraftDefinition& d = jet();
+    const TurbofanDef& td = d.turbofans[0];
+    const TurbofanEngine e(td);
+    const Real p0 = isa::kSeaLevelPressure, T0 = isa::kSeaLevelTemperature;
+    // Sea level static: the definition's fractions, and N1 limits in order.
+    const Real to = e.ratingThrust(ThrustRating::Takeoff, p0, T0, 0);
+    CHECK_NEAR(to, td.staticThrust, 1);
+    CHECK_NEAR(e.ratingThrust(ThrustRating::MaxContinuous, p0, T0, 0) / to, td.maxContinuousFraction, 1e-6);
+    CHECK_NEAR(e.ratingThrust(ThrustRating::MaxClimb, p0, T0, 0) / to, td.maxClimbFraction, 1e-6);
+    CHECK_NEAR(e.ratingThrust(ThrustRating::MaxCruise, p0, T0, 0) / to, td.maxCruiseFraction, 1e-6);
+    const Real n1Clb = e.ratingN1(ThrustRating::MaxClimb, p0, T0, 0);
+    CHECK(n1Clb < 1 && n1Clb > e.ratingN1(ThrustRating::MaxCruise, p0, T0, 0));
+    CHECK_NEAR(e.thrustFraction(n1Clb), td.maxClimbFraction, 1e-6);
+    // At FL410 / Mach 0.85 the take-off rating sits far below its temperature
+    // limit and the lower ratings converge on it (never above it).
+    const StandardAtmosphere atm;
+    const auto a = atm.at(ftToM(41000));
+    const Real toHigh = e.ratingThrust(ThrustRating::Takeoff, a.pressure, a.temperature, 0.85);
+    const Real crzHigh = e.ratingThrust(ThrustRating::MaxCruise, a.pressure, a.temperature, 0.85);
+    CHECK(crzHigh <= toHigh + 1e-9);
+    CHECK(crzHigh / toHigh > 0.95);
+    CHECK(e.ratingThrust(ThrustRating::MaxClimb, a.pressure, a.temperature, 0.85) >= crzHigh);
+    // The fuel control: the lever commands N1 below the limit, the limit above it.
+    TurbofanInputs in;
+    in.rating = ThrustRating::MaxClimb;
+    in.throttle = 0.5;
+    CHECK_NEAR(e.commandedN1(in), e.commandedN1(0.5), 1e-12);
+    in.throttle = 1;
+    CHECK_NEAR(e.commandedN1(in), n1Clb, 1e-12);
+    // The aircraft's automatic schedule: take-off thrust from lift-off for
+    // the rating's time, then the climb rating caps N1 at its limit for the
+    // flight condition reached. A forced rating applies at once.
+    SimpleWeather atmo;
+    const FlatGround ground(1e7);
+    auto limitN1 = [&](const Aircraft& ac, ThrustRating r) {
+        const AirState air = atmo.atmosphere().at(ac.altitudeMsl());
+        return ac.turbofan(0).ratingN1(r, air.pressure, air.temperature, length(ac.state().body.velocity) / air.speedOfSound);
+    };
+    auto climb = [&](Aircraft& ac, const TrimResult& tr, ThrustMode mode, Real seconds) {
+        PilotInput in1 = tr.input;
+        in1.thrustMode = mode;
+        for (Real t = 0; t < seconds; t += kDt) {
+            in1.pitch = tr.input.pitch + clamp(2.0 * (tr.theta - ac.telemetry().pitch) - 0.5 * ac.telemetry().omega.y, -0.3, 0.3);
+            ac.step(kDt, in1, ground, atmo);
+        }
+    };
+    TrimRequest req;
+    req.altitude = ftToM(10000);
+    req.tas = tasFromCas(ktToMs(250), atmo.atmosphere().at(ftToM(10000)));
+    req.throttle = 1;
+    req.solveFlightPath = true;
+    {
+        Aircraft ac(d);
+        const TrimResult tr = trim(ac, req, atmo);
+        CHECK(tr.converged);
+        CHECK(ac.activeThrustRating() == ThrustRating::Takeoff);
+        climb(ac, tr, ThrustMode::Auto, td.takeoffRatingTime - 5);
+        CHECK(ac.activeThrustRating() == ThrustRating::Takeoff);
+        CHECK_NEAR(ac.turbofanState(0).n1, 1.0, 1e-6);
+        climb(ac, tr, ThrustMode::Auto, 25);
+        CHECK(ac.activeThrustRating() == ThrustRating::MaxClimb);
+        CHECK(ac.turbofanState(0).n1 <= limitN1(ac, ThrustRating::MaxClimb) + 1e-3);
+    }
+    {
+        // Forced climb rating at 10,000 ft: well below take-off N1.
+        Aircraft ac(d);
+        const TrimResult tr = trim(ac, req, atmo);
+        climb(ac, tr, ThrustMode::Climb, 15);
+        CHECK(ac.activeThrustRating() == ThrustRating::MaxClimb);
+        CHECK(ac.turbofanState(0).n1 < 0.97);
+        CHECK_NEAR(ac.turbofanState(0).n1, limitN1(ac, ThrustRating::MaxClimb), 2e-3);
+        CHECK(ac.turbofanState(0).thrustFraction < 0.95);  // about 0.91 of take-off at 250 KIAS, 10,000 ft
+        climb(ac, tr, ThrustMode::Cruise, 15);
+        CHECK(ac.activeThrustRating() == ThrustRating::MaxCruise);
+        CHECK(ac.turbofanState(0).n1 < limitN1(ac, ThrustRating::MaxClimb));
+    }
+}
+
 TEST_CASE("top g: definition loads; cruise at Mach 0.85 is available at FL450 with sensible fuel burn") {
     Aircraft ac(jet());
     CHECK(ac.turbofanCount() == 2);
@@ -272,8 +351,23 @@ TEST_CASE("top g: a double flame-out at cruise windmills below idle, drops the g
     CHECK(both);
 }
 
-TEST_CASE("top g: the stick pusher keeps a full-aft-stick idle stall out of the T-tail deep stall") {
-    Aircraft ac(jet());
+namespace {
+
+// An idle, 1-g deceleration at 15,000 ft to the stall warning, then the stick
+// held fully back for `holdSeconds`, then fully forward for `pushSeconds`.
+struct AftStickStall {
+    Real warnIas = 0;        // KIAS at the first stall warning
+    Real maxAlpha = 0;       // rad, over the whole run
+    Real alphaHeldMin = 1e9; // rad, least alpha over the last 20 s of the hold
+    Real alphaPushMin = 1e9; // rad, least alpha while pushing
+    Real alphaEnd = 0;       // rad, at the end of the push
+    Real tailImmersion = 0;  // greatest wake immersion of the horizontal tail
+    Real sinkHeld = 0;       // m/s, mean vertical speed over the last 20 s of the hold (+ up)
+    Real recoverySeconds = -1;  // after the push began, until alpha < 15 deg (-1: never)
+    bool pushed = false;     // the stick pusher fired
+};
+AftStickStall aftStickStall(const AircraftDefinition& def, Real holdSeconds, Real pushSeconds) {
+    Aircraft ac(def);
     SimpleWeather atm;
     FlatGround ground(0);
     const TrimResult tr = trimAt(ac, 15000, ktToMs(200) * 1.27);
@@ -281,13 +375,13 @@ TEST_CASE("top g: the stick pusher keeps a full-aft-stick idle stall out of the 
     PilotInput in;
     in.throttle = 0;
     const Real h0 = ac.telemetry().altitudeMsl;
-    Real maxAlpha = 0, warnIas = 0;
-    bool pushed = false;
+    AftStickStall r;
     int pullStart = -1;
-    for (int i = 0; pullStart < 0 ? i < 240 * 240 : i < pullStart + 240 * 45; ++i) {
+    const int hold = static_cast<int>(holdSeconds * 240), push = static_cast<int>(pushSeconds * 240);
+    for (int i = 0; pullStart < 0 ? i < 240 * 240 : i < pullStart + hold + push; ++i) {
         const AircraftTelemetry& t = ac.telemetry();
-        if (warnIas > 0 && pullStart < 0) pullStart = i;
-        if (warnIas == 0) {
+        if (r.warnIas > 0 && pullStart < 0) pullStart = i;
+        if (r.warnIas == 0) {
             // Idle, held level: a slow 1-g deceleration to the warning, the
             // pilot trimming the stick force away as the speed falls.
             const Real thetaCmd = t.alpha + clamp(0.01 * (h0 - t.altitudeMsl), -0.08, 0.08);
@@ -295,19 +389,156 @@ TEST_CASE("top g: the stick pusher keeps a full-aft-stick idle stall out of the 
             in.trimRate = clamp(4 * in.pitch, -1.0, 1.0);
         } else {
             in.trimRate = 0;
-            in.pitch = 1;  // then held fully back
+            in.pitch = i < pullStart + hold ? 1.0 : -1.0;  // held fully back, then fully forward
         }
-        // Wings held level with the ailerons.
-        in.roll = clamp(-2.0 * t.roll - 0.5 * t.omega.x, -1.0, 1.0);
         ac.step(kDt, in, ground, atm);
-        maxAlpha = std::max(maxAlpha, ac.telemetry().alpha);
-        pushed = pushed || ac.telemetry().stickPusher;
-        if (warnIas == 0 && ac.telemetry().stallWarning) warnIas = msToKt(ac.instruments().readings().indicatedAirspeed);
+        // A longitudinal rig: roll, yaw and sideslip taken out after every
+        // step (as a pitch rig would), since a stalled swept wing left to
+        // itself rolls off into a spin within a second, and the question here
+        // is the pitch balance, not the lateral departure.
+        {
+            DynamicState s = ac.state();
+            const Quat q = s.body.attitude;
+            const Quat level = Quat::fromEuler(0, q.pitch(), q.yaw());
+            Vec3 vb = q.inverseRotate(s.body.velocity);
+            vb.y = 0;
+            s.body.velocity = level.rotate(vb);
+            s.body.attitude = level;
+            s.body.omega.x = s.body.omega.z = 0;
+            ac.setState(s);
+        }
+        const Real alpha = ac.telemetry().alpha;
+        r.maxAlpha = std::max(r.maxAlpha, alpha);
+        r.pushed = r.pushed || ac.telemetry().stickPusher;
+        if (r.warnIas == 0 && ac.telemetry().stallWarning) r.warnIas = msToKt(ac.instruments().readings().indicatedAirspeed);
+        if (pullStart >= 0 && i >= pullStart + hold - 240 * 20 && i < pullStart + hold) {
+            r.alphaHeldMin = std::min(r.alphaHeldMin, alpha);
+            r.sinkHeld += ac.telemetry().verticalSpeed / (240.0 * 20);
+        }
+        if (pullStart >= 0 && i >= pullStart + hold) {
+            r.alphaPushMin = std::min(r.alphaPushMin, alpha);
+            if (r.recoverySeconds < 0 && alpha < degToRad(15)) r.recoverySeconds = (i - pullStart - hold) * kDt;
+        }
+        r.alphaEnd = alpha;
+        for (int s = 1; s < ac.aeroModel().surfaceCount(); ++s)
+            if (ac.aeroModel().downwashSource(s) == 0) r.tailImmersion = std::max(r.tailImmersion, ac.aero().surfaces[static_cast<std::size_t>(s)].wakeImmersion);
     }
-    std::printf("    warning at %.0f KIAS, max alpha %.1f deg\n", warnIas, radToDeg(maxAlpha));
-    CHECK(pushed);
-    CHECK(maxAlpha < degToRad(25));
-    CHECK(warnIas > 112 && warnIas < 125);  // a few knots above the ~112 KIAS clean stall
+    return r;
+}
+
+}  // namespace
+
+TEST_CASE("top g: the stick pusher keeps a full-aft-stick idle stall out of the T-tail deep stall") {
+    const AftStickStall r = aftStickStall(jet(), 45, 15);
+    std::printf("    warning at %.0f KIAS, max alpha %.1f deg, tail immersion %.2f\n", r.warnIas, radToDeg(r.maxAlpha), r.tailImmersion);
+    CHECK(r.pushed);
+    CHECK(r.maxAlpha < degToRad(25));
+    CHECK(r.warnIas > 112 && r.warnIas < 125);  // a few knots above the ~112 KIAS clean stall
+    CHECK(r.tailImmersion < 0.3);               // the tail never went into the wake
+    CHECK(r.alphaEnd < degToRad(12));           // and the airplane is flying again
+}
+
+TEST_CASE("top g: without the pusher, full aft stick at idle puts the T-tail into a sustained deep stall with the elevator's power gone") {
+    // The same airplane with the pusher removed (the AoA computer's warning
+    // stays). Past the stall the wing's separated wake rises over the tail:
+    // the tail loses its dynamic pressure and the downwash no longer falls
+    // with the wing's lift. The angle of attack settles near 40 deg at about
+    // 1 g in a 7,000 fpm descent, the tail in the wake, and the elevator's
+    // pitching power there is a small fraction of its unstalled value.
+    //
+    // What the model does not give is the lock-in itself: with the stick
+    // put fully forward the airframe (stalled wing with its centre of
+    // pressure aft, fuselage) pitches down on its own and the wing unstalls
+    // in a few seconds. A locked-in deep stall needs the swept wing's
+    // post-stall nose-up (tips gone, inboard still lifting), which the
+    // regularised lifting line's post-stall solution does not produce; see
+    // docs/fidelity-matrix.md. The recovery time is printed, not asserted.
+    AircraftDefinition noPusher = jet();
+    noPusher.stallWarning.pusherMargin = 0;
+    const AftStickStall r = aftStickStall(noPusher, 45, 15);
+    std::printf("    no pusher: max alpha %.1f deg, held >= %.1f deg at %.0f fpm, tail immersion %.2f; forward stick: alpha < 15 deg after %.1f s\n",
+                radToDeg(r.maxAlpha), radToDeg(r.alphaHeldMin), r.sinkHeld * 196.85, r.tailImmersion, r.recoverySeconds);
+    CHECK(!r.pushed);
+    CHECK(r.maxAlpha > degToRad(30));
+    CHECK(r.alphaHeldMin > degToRad(30));          // sustained, not a passing peak
+    CHECK(r.sinkHeld < -ftToM(5000) / 60);         // a deep-stall descent
+    CHECK(r.tailImmersion > 0.7);                  // the tail in the wake
+    // The elevator's pitching power in that state against the unstalled
+    // airplane's, bare aero model at the same speed: Cm(full forward) less
+    // Cm(full aft).
+    Aircraft ac(noPusher);
+    const AeroModel& m = ac.aeroModel();
+    AeroOutputs out;
+    m.prepare(out);
+    AeroInputs in;
+    in.cg = ac.massProperties().cg;
+    const StandardAtmosphere atm;
+    const auto air = atm.at(ftToM(14000));
+    in.density = air.density;
+    in.speedOfSound = air.speedOfSound;
+    auto power = [&](Real alphaDeg) {
+        const Real v = 60, a = degToRad(alphaDeg);
+        in.velocityBody = {v * std::cos(a), 0, v * std::sin(a)};
+        Real cm[2];
+        for (int k = 0; k < 2; ++k) {
+            in.controls.elevator = k == 0 ? -1.0 : 1.0;
+            for (int it = 0; it < 4; ++it) m.evaluate(in, out);
+            cm[k] = out.moment.y;
+        }
+        return cm[1] - cm[0];
+    };
+    const Real unstalled = power(8), deep = power(radToDeg(r.alphaHeldMin) + 0.5);
+    std::printf("    elevator pitching power in the deep stall: %.0f %% of the unstalled airplane's\n", 100 * deep / unstalled);
+    CHECK(unstalled > 0);
+    CHECK(deep / unstalled < 0.25);  // ~18 %: the wake's q ratio on a stalled tail
+}
+
+TEST_CASE("tail in the stalled wing's wake: the Top G's T-tail at 30 deg alpha, not the single's low tail") {
+    // The bare aero model at a post-stall angle of attack: the wing fully
+    // separated, the wake centreline from the mid-chord at (alpha - eps)
+    // reaches a T-tail 6 m above the wing 12 m aft; a low tail under the wing
+    // stays beneath the band. Then the tail's nose-down pitching power.
+    auto immersion = [](const AircraftDefinition& d, Real alphaDeg, Real* tailMoment) {
+        Aircraft ac(d);
+        const AeroModel& m = ac.aeroModel();
+        AeroOutputs out;
+        m.prepare(out);
+        AeroInputs in;
+        in.cg = ac.massProperties().cg;
+        const Real v = 60, a = degToRad(alphaDeg);
+        in.velocityBody = {v * std::cos(a), 0, v * std::sin(a)};
+        for (int k = 0; k < 4; ++k) m.evaluate(in, out);
+        int tail = -1;
+        for (int s = 1; s < m.surfaceCount(); ++s)
+            if (m.downwashSource(s) == 0) tail = s;
+        CHECK(tail > 0);
+        if (tailMoment) {
+            // The tail's own moment about the CG from its strips' lift (q per strip).
+            Real sum = 0;
+            for (int i = m.firstStrip(tail); i < m.endStrip(tail); ++i) {
+                const StripTelemetry& st = out.strips[static_cast<std::size_t>(i)];
+                const AeroModel::StripGeometry g = m.stripGeometry(i);
+                sum += st.q * g.area * st.cl * (g.position.x - in.cg.x);  // lift up (-z) at x: nose-down moment when aft
+            }
+            *tailMoment = sum;
+        }
+        return tail >= 0 ? out.surfaces[static_cast<std::size_t>(tail)].wakeImmersion : 0.0;
+    };
+    const AircraftDefinition single = loadReference("tupi_t180");
+    Real mJet30 = 0, mSingle30 = 0, mJet10 = 0, mSingle10 = 0;
+    const Real jet10 = immersion(jet(), 10, &mJet10), jet30 = immersion(jet(), 30, &mJet30);
+    const Real single10 = immersion(single, 10, &mSingle10), single30 = immersion(single, 30, &mSingle30);
+    std::printf("    tail immersion: Top G 10/30 deg %.2f/%.2f, single %.2f/%.2f\n", jet10, jet30, single10, single30);
+    CHECK(jet10 < 0.05);
+    CHECK(jet30 > 0.7);
+    CHECK(single10 < 0.05);
+    CHECK(single30 < 0.3);
+    // Pre-stall, both tails lift up at positive alpha and are aft of the CG:
+    // nose down (negative moment arm sign: x aft is smaller).
+    CHECK(mJet10 < 0 && mSingle10 < 0);
+    // Post-stall the single's tail pitches it down harder than at 10 deg; the
+    // T-tail, in the wake, has lost most of its power per unit of q.
+    CHECK(mSingle30 < mSingle10);
 }
 
 TEST_CASE("top g: Q/E steer the nose wheel by tiller below 5 kt, by pedals above") {
@@ -429,7 +660,7 @@ TEST_CASE("top g: an engine starved with its fuel switch at RUN winds down inste
     CHECK(!e.running);
     CHECK(!e.starting);                 // the no-light-off start was aborted
     CHECK(e.n2 < 0.3);                  // run down to the starter's speed at most
-    CHECK(e.thrust == 0);
+    CHECK(e.thrust <= 0 && e.thrust > -20);  // unlit: no thrust, only the windmilling drag of whatever air moves past
     CHECK(e.itt < atm.atmosphere().at(0).temperature + 60);
     // Fuel back, and the battery recharged (as ground power would): the starter
     // waits until the fuel switch is cycled, then starts it.

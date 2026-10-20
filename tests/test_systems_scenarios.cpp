@@ -33,6 +33,11 @@ const AircraftDefinition& tillerRef() {
         AircraftDefinition t = ref();
         t.gear[0].tillerSteerAngle = degToRad(70);
         t.gear[0].steerRate = degToRad(20);
+        // A powered (tiller) steering holds the wheel: no castoring linkage.
+        t.gear[0].castorTrail = 0;
+        t.gear[0].castorAngle = 0;
+        t.gear[0].steerLinkageStiffness = 0;
+        t.gear[0].steerLinkageBreakout = 0;
         return t;
     }();
     return d;
@@ -101,7 +106,10 @@ TEST_CASE("ground: nose-wheel steering follows its geometry; differential brakin
         ac.placeOnGround(0, 0, 0, g, atm);
         ac.setCockpitControl("brakes.parking", 0);
         PilotInput in;
-        in.throttle = 0.15;
+        // About 1,500 rpm: the butterfly throttle schedule (area 1 - cos of
+        // the plate angle) gives thrust below the rolling resistance until
+        // ~20 % lever, as a real 172 does; 25 % reaches walking pace in a few seconds.
+        in.throttle = 0.25;
         for (int i = 0; i < 4 * 240; ++i) ac.step(kDefaultDt, in, g, atm);
         in.yaw = yaw;
         in.brakeRight = brakeRight;
@@ -144,7 +152,7 @@ TEST_CASE("ground: a tiller steers far beyond the pedals through a rate-limited 
         Aircraft ac(tillerRef());
         readyToTaxi(ac, g, atm);
         PilotInput in;
-        in.throttle = 0.1;
+        in.throttle = 0.25;  // ~1,500 rpm: enough to taxi against the rolling resistance (see the steering test)
         Real r = 0;
         for (int i = 0; i < 14 * 240; ++i) {
             if (i > 8 * 240) {

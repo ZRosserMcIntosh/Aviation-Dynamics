@@ -61,7 +61,7 @@ void InstrumentRecorder::record(const Aircraft& ac) {
          << deg(t.omegaBody.y) << ',' << deg(t.omegaBody.z) << ',' << deg(c.turnRate) << ',' << c.turnCoordinatorFlag
          << ',' << deg(t.slipAngle) << ',' << deg(c.slipBall) << ',' << t.staticPressureMeasured << ','
          << t.totalPressureMeasured << ',' << t.attitudeGyroSpin << ',' << t.headingGyroSpin << ',' << t.turnGyroSpin
-         << ',' << c.tachometerRpm << ',' << c.oilPressure / 6894.757 << ',' << f(c.oilTemperature) << ','
+         << ',' << c.tachometerRpm << ',' << paToPsi(c.oilPressure) << ',' << f(c.oilTemperature) << ','
          << f(c.egt) << ',' << m3ToGal(c.fuelFlow / ac.definition().fuel.density) * 3600 << ','
          << m3ToGal(c.fuelGauge[0]) << ',' << m3ToGal(c.fuelGauge[1]) << ',' << c.ammeter << ',' << c.voltmeter << ','
          << paToInHg(c.suction) << ',' << c.annunciators << ',' << c.stallHorn << ','

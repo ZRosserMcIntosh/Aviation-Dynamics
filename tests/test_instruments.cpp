@@ -147,12 +147,17 @@ TEST_CASE("ground: cold and dark panel reads what an unpowered airplane shows") 
 TEST_CASE("ground: master on lights the annunciators and powers the gauges") {
     Ground gr;
     gr.ac.setCockpitControl("electrical.battery", 1);
-    gr.run(40);  // fuel senders are damped (5 s time constant)
+    gr.run(2);
     const CockpitState& c = gr.ac.instruments().state();
     CHECK(c.annunciators & kAnnOilPressure);  // engine stopped: no oil pressure
     CHECK(c.annunciators & kAnnLowVacuum);
-    CHECK(!(c.annunciators & kAnnVolts));     // full battery > 24.5 V
+    // A charged battery off the charger still carries its surface charge:
+    // above 24.5 V at first (it sags onto the ~24.4 V plateau within a minute
+    // under the panel's load, when the LOW VOLTS lamp does come on with the
+    // engine stopped, as the POH notes).
+    CHECK(!(c.annunciators & kAnnVolts));
     CHECK(!(c.annunciators & (kAnnLowFuelLeft | kAnnLowFuelRight)));
+    gr.run(38);  // fuel senders are damped (5 s time constant)
     // Fuel gauges settle on the usable quantity (100.3 L per tank).
     CHECK_NEAR(c.fuelGauge[0] * 1000, (0.106 - 0.00568) * 1000, 1.0);
     CHECK(c.ammeter < -0.5);                  // battery discharging into the loads
@@ -171,7 +176,7 @@ TEST_CASE("ground: engine start develops oil pressure, suction and charging; gyr
     }
     CHECK(run.status() == ProcedureRunner::Status::Done);
     PilotInput idle;
-    idle.throttle = 0.12;
+    idle.throttle = 0.14;  // about 1,000 rpm after start (POH: "1000 rpm or less"); the idle stop itself is ~700 rpm
     gr.run(15, idle);
     const CockpitState& c = gr.ac.instruments().state();
     CHECK(c.oilPressure > 20 * 6894.757);     // POH: 20 psi minimum at idle
@@ -482,9 +487,14 @@ TEST_CASE("failure: alternator failure -- battery discharges, VOLTS annunciator 
         f.ac.setCockpitControl(std::string("electrical.load.") + l, 1);
     f.fly(5);
     CHECK(f.cs().ammeter < -15);                // everything on the battery
-    CHECK(!(f.cs().annunciators & kAnnVolts));  // a fresh battery still holds > 24.5 V
-    f.fly(15 * 60);
-    CHECK(f.cs().annunciators & kAnnVolts);     // bus below 24.5 V as it discharges
+    // ~30 A through the battery's 0.03 ohm pulls the bus 0.9 V below its
+    // ~24.4 V loaded plateau as soon as the surface charge is stripped: the
+    // VOLTS lamp is on within a minute at this load (within ~2 min at the
+    // panel's normal 7 A; see tests/test_engine_out.cpp).
+    f.fly(60);
+    CHECK(f.cs().annunciators & kAnnVolts);
+    f.fly(14 * 60);
+    CHECK(f.cs().annunciators & kAnnVolts);     // and stays on as it discharges
     CHECK(f.ac.electrical().batteryCharge() < 0.6);
 }
 
