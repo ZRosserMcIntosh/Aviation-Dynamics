@@ -652,10 +652,20 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("max_steer_deg", g.maxSteerAngle, kDeg);
         o.num("tiller_steer_deg", g.tillerSteerAngle, kDeg);
         o.num("steer_rate_deg_per_s", g.steerRate, kDeg);
+        o.num("castor_deg", g.castorAngle, kDeg);
+        o.num("castor_trail_m", g.castorTrail);
+        o.num("steer_linkage_nm_per_rad", g.steerLinkageStiffness);
+        o.num("steer_linkage_breakout_nm", g.steerLinkageBreakout);
         o.num("cornering_stiffness_n_per_rad", g.corneringStiffness);
+        o.num("cornering_load_sensitivity", g.corneringLoadSensitivity);
+        o.num("static_load_n", g.staticLoad);
         o.num("relaxation_length_m", g.relaxationLength);
         o.num("longitudinal_stiffness_n_per_m", g.longitudinalStiffness);
         o.num("tyre_pressure_psi", g.tyrePressure, 6894.757);
+        o.num("wheel_inertia_kgm2", g.wheelInertia);
+        o.num("brake_torque_nm", g.brakeTorque);
+        o.num("sliding_friction_ratio", g.slidingFrictionRatio);
+        o.num("anti_skid_efficiency", g.antiSkidEfficiency);
         d.gear.push_back(g);
     });
     r.each("contacts", [&](Obj& o, std::size_t) {

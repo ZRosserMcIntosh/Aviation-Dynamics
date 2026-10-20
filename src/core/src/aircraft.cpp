@@ -34,6 +34,11 @@ Real spinSign(const PistonEngineDef& e) { return e.clockwiseFromBehind ? 1.0 : -
 
 Real saturate(Real v, Real limit) { return clamp(v, -limit, limit); }
 
+// Tyre friction past the peak: the force falls from mu_peak to mu_slide as the
+// bristle demand grows from 1 to 1 + kSlideWidth times the peak force, and its
+// direction turns from the bristle's to the sliding velocity's.
+constexpr Real kSlideWidth = 0.5;
+
 // "engine<N>.ignition" -> N-1, or -1 (no exceptions on malformed ids).
 int engineIndexFromId(const std::string& id) {
     if (id.rfind("engine", 0) != 0) return -1;
@@ -76,8 +81,62 @@ Aircraft::Aircraft(const AircraftDefinition& def, const LocalFrame& frame)
     for (std::size_t i = 0; i < def_.stations.size(); ++i) stationMass_[i] = def_.stations[i].initial;
     magnetos_.fill(Magnetos::Off);
     refreshMass();
+    prepareGear();
+    antiSkid_.fill(1.0);
     rebuildCockpit();
     setColdAndDark();
+}
+
+// Per-leg tyre and wheel constants from the definition.
+void Aircraft::prepareGear() {
+    // Static load estimate: the legs ahead of the CG and those behind it share
+    // the weight by the moment balance, evenly within each group, at MTOW.
+    const Real W = (def_.maxTakeoffMass > 0 ? def_.maxTakeoffMass : mass_.mass) * kStandardGravity;
+    const Real xcg = mass_.cg.x;
+    Real xf = 0, xa = 0;
+    int nf = 0, na = 0;
+    for (const GearDef& g : def_.gear) {
+        if (g.attach.x > xcg) { xf += g.attach.x; ++nf; }
+        else { xa += g.attach.x; ++na; }
+    }
+    Real shareFront = 0.5;
+    if (nf > 0 && na > 0) {
+        xf /= nf;
+        xa /= na;
+        shareFront = clamp((xcg - xa) / (xf - xa), 0.05, 0.95);
+    }
+    for (std::size_t i = 0; i < def_.gear.size(); ++i) {
+        const GearDef& g = def_.gear[i];
+        GearRuntime& r = gearRt_[i];
+        const Real legs = static_cast<Real>(def_.gear.size());
+        const Real est = nf > 0 && na > 0 ? W * (g.attach.x > xcg ? shareFront / nf : (1 - shareFront) / na) : W / legs;
+        r.staticLoad = g.staticLoad > 0 ? g.staticLoad : std::max(est, 1.0);
+        r.corneringC1 = g.corneringStiffness / (r.staticLoad * (1 - g.corneringLoadSensitivity));
+        // Wheel and tyre spin inertia: about 1.4 % of the mass the leg carries
+        // (a C172 6.00-6 wheel and tyre ~6 kg; a 15 t bogie ~2 x 100 kg), as a
+        // ring at 0.6 of the radius squared.
+        r.inertia = g.wheelInertia > 0 ? g.wheelInertia : 0.6 * 0.014 * (r.staticLoad / kStandardGravity) * sq(g.wheelRadius);
+        // RK4 stability of the wheel/bristle mode (natural frequency
+        // r sqrt(kx / I_w), damping ratio ~0.3 from spinDamping plus the
+        // relaxation): the classic RK4 region reaches |dt lambda| ~2.8 near the
+        // imaginary axis, so keep dt omega_n <= 2 at the coarsest step this
+        // model runs at, 1/120 s in placeOnGround() (1 at the 1/240 s flight
+        // step). The floor only acts on a wheel lighter than that.
+        r.inertia = std::max(r.inertia, g.longitudinalStiffness * sq(g.wheelRadius) / sq(2.0 * 120));
+        r.brakeTorque = g.brakeTorque > 0 ? g.brakeTorque : g.maxBrakeForceCoefficient * r.staticLoad * g.wheelRadius;
+        r.spinDamping = 0.6 * std::sqrt(g.longitudinalStiffness * r.inertia) / g.wheelRadius;
+        r.heldDamping = 0.05 * g.longitudinalStiffness;
+    }
+}
+
+Real Aircraft::corneringStiffness(std::size_t leg, Real normalForce) const {
+    // C_alpha = c1 N (1 - c2 N / N_ref), held at its maximum (N = N_ref / 2 c2)
+    // for heavier loads so an overloaded tyre never loses all its grip.
+    const GearDef& g = def_.gear[leg];
+    const GearRuntime& r = gearRt_[leg];
+    const Real c2 = g.corneringLoadSensitivity;
+    const Real n = c2 > 0 ? std::min(normalForce, r.staticLoad / (2 * c2)) : normalForce;
+    return std::max(r.corneringC1 * n * (1 - c2 * n / r.staticLoad), 1.0);
 }
 
 // ------------------------------------------------------------------ mass ----
@@ -246,6 +305,7 @@ void Aircraft::setFlightState(const RigidBodyState& s) {
     s_ = DynamicState{};
     s_.body = s;
     s_.body.attitude.normalize();
+    antiSkid_.fill(1.0);
     pusher_ = false;
     for (int i = 0; i < engineCount(); ++i) s_.shaftOmega[i] = engineState_[i].omega;
     faulted_ = false;
@@ -340,6 +400,9 @@ void Aircraft::placeOnGround(Real north, Real east, Real heading, const GroundQu
     s_.body.position = {north + cgOffsetNed.x, east + cgOffsetNed.y, groundDown - lowest - 0.01};
     s_.tyreLateral.fill(0);
     s_.tyreLongitudinal.fill(0);
+    s_.wheelOmega.fill(0);
+    s_.wheelSteer.fill(0);
+    antiSkid_.fill(1.0);
     // Settle on the gear with brakes set and controls neutral.
     const bool pb = parkingBrake_;
     parkingBrake_ = true;
@@ -465,6 +528,7 @@ void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, con
     }
     c.brakeLeft = parkingBrake_ ? 1.0 : clamp(in.brakeLeft, 0.0, 1.0);
     c.brakeRight = parkingBrake_ ? 1.0 : clamp(in.brakeRight, 0.0, 1.0);
+    for (std::size_t i = 0; i < def_.gear.size(); ++i) c.brakeModulation[i] = antiSkid_[i];
 
     for (int i = 0; i < engineCount(); ++i) {
         PistonEngineInputs& e = c.engineIn[i];
@@ -618,12 +682,26 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
     moment += aeroOut_.moment;
 
     // ---- Landing gear ----
+    // Each leg: an oleo (spring, two-sided damper, bottoming), a tyre with
+    // lateral and longitudinal bristle states (relaxation-length model,
+    // Pacejka "Tyre and Vehicle Dynamics" ch. 7), its wheel's spin and, for a
+    // castoring leg, the wheel's own heading. Friction: a single ellipse
+    // (circle) on the resultant bristle force at mu_peak N, falling to
+    // mu_slide N as the tyre slides, the force then along the sliding velocity.
     for (std::size_t i = 0; i < def_.gear.size(); ++i) {
         const GearDef& g = def_.gear[i];
+        const GearRuntime& gr = gearRt_[i];
         const GroundPlane& gp = c.gearGround[i];
+        const bool castoring = g.castorTrail > 0;
         GearTelemetry gt;
+        gt.wheelOmega = s.wheelOmega[i];
+        gt.steerAngle = castoring ? s.wheelSteer[i] : c.steer[i];
+        // Off the ground: the bristles relax, the wheel spins down on its
+        // bearings (~20 s), a castoring wheel's centring cam lines it up.
         d.tyreLateralRate[i] = -s.tyreLateral[i] * 20;
         d.tyreLongitudinalRate[i] = -s.tyreLongitudinal[i] * 20;
+        d.wheelAlpha[i] = -s.wheelOmega[i] * 0.05;
+        d.wheelSteerRate[i] = castoring ? (c.steer[i] - s.wheelSteer[i]) * 5 : 0.0;
         const bool legDown = !def_.controls.gear.retractable || gearPos_ > 0.98;
         if (gp.valid && legDown) {
             const Vec3 rb = g.attach - cg;
@@ -640,22 +718,121 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
                 Real fs = g.preload + g.stiffness * x + (xdot > 0 ? g.dampingCompression : g.dampingRebound) * xdot;
                 if (x > g.maxCompression) fs += 20 * g.stiffness * (x - g.maxCompression);
                 const Real N = std::max(fs, 0.0);
-                const Real steer = c.steer[i];
+                const Real steer = gt.steerAngle;
                 Vec3 f = q.rotate({std::cos(steer), std::sin(steer), 0});
                 f = normalized(f - n * dot(f, n));
-                const Vec3 l = cross(n, f);
+                const Vec3 l = cross(n, f);  // the wheel's left (n up, f forward)
                 const Real vLong = dot(vPt, f), vLat = dot(vPt, l);
-                const Real mu = wetTyreFriction(gp.surface, vLong, g.tyrePressure);
-                const Real brake = g.brakeGroup == 0 ? c.brakeLeft : (g.brakeGroup == 1 ? c.brakeRight : 0.0);
-                const Real limLong = std::min(N * (g.rollingResistance * gp.surface.rollingResistance +
-                                                   brake * g.maxBrakeForceCoefficient),
-                                              mu * N);
+                const Real vGround = std::hypot(vLong, vLat);
+                // Peak friction at the contact point's ground speed (the wet
+                // curve is in ground speed), and the sliding value.
+                const Real muPeak = wetTyreFriction(gp.surface, vGround, g.tyrePressure);
+                const Real muSlide = g.slidingFrictionRatio * muPeak;
                 const Real kx = g.longitudinalStiffness;
-                const Real fLong = -saturate(kx * s.tyreLongitudinal[i] + 0.05 * kx * vLong, limLong);
-                const Real ky = g.corneringStiffness / g.relaxationLength;
-                const Real fLat = -saturate(ky * s.tyreLateral[i] + 0.02 * ky * vLat, mu * N);
-                d.tyreLongitudinalRate[i] = vLong;
+                const Real ky = corneringStiffness(i, N) / g.relaxationLength;
+                // Wheel spin: the longitudinal bristle sees the slip velocity.
+                const Real r = g.wheelRadius;
+                const Real omega = s.wheelOmega[i];
+                const Real vSlip = vLong - r * omega;
+                const Real brakeCmd = g.brakeGroup == 0 ? c.brakeLeft : (g.brakeGroup == 1 ? c.brakeRight : 0.0);
+                const Real tBrake = brakeCmd * c.brakeModulation[i] * gr.brakeTorque;
+                const Real tRoll = g.rollingResistance * gp.surface.rollingResistance * N * r;
+                const Real tHold = tBrake + tRoll;  // what stops the wheel turning
+                const Real omegaLock = 0.1 / r;     // below 0.1 m/s of rim speed the wheel can be held
+                const Real fyRaw = -(ky * s.tyreLateral[i] + 0.02 * ky * vLat);
+                // Friction ellipse on the resultant bristle demand; past the
+                // peak the tyre slides: mu falls toward mu_slide and the force
+                // turns from the bristle's direction to oppose the sliding velocity.
+                auto combine = [&](Real fxRaw, Real& fx, Real& fy) {
+                    fx = fxRaw;
+                    fy = fyRaw;
+                    const Real fMax = muPeak * N;
+                    const Real mag = std::hypot(fx, fy);
+                    if (fMax <= 1e-6 || mag <= 1e-9) {
+                        if (fMax <= 1e-6) fx = fy = 0;
+                        return;
+                    }
+                    const Real demand = mag / fMax;
+                    if (demand <= 1) return;
+                    const Real sl = std::min((demand - 1) / kSlideWidth, 1.0);
+                    const Real muEff = muPeak - sl * (muPeak - muSlide);
+                    const Real vs = std::max(std::hypot(vSlip, vLat), 0.1);
+                    Real dx = (1 - sl) * fx / mag - sl * vSlip / vs;
+                    Real dy = (1 - sl) * fy / mag - sl * vLat / vs;
+                    Real dn = std::hypot(dx, dy);
+                    if (dn < 1e-6) { dx = fx / mag; dy = fy / mag; dn = 1; }
+                    fx = muEff * N * dx / dn;
+                    fy = muEff * N * dy / dn;
+                };
+                Real fLong = 0, fLat = 0;
+                combine(-(kx * s.tyreLongitudinal[i] + gr.spinDamping * vSlip), fLong, fLat);
+                // I_w omega_dot = -r F_x - (T_brake + T_roll) sign(omega): the
+                // ground's force on the tread turns the wheel, the brake and the
+                // rolling resistance oppose its turning. A wheel at rest stays
+                // held while the tread force is within what the brakes (or, with
+                // them off, the rolling threshold) can hold; the bristle is then
+                // the airframe's spring to the ground, with the heavier damping
+                // that mode needs (the wheel's own fast mode is absent then).
+                const Real tDrive = -r * fLong;
+                const Real sgn = std::abs(omega) >= omegaLock ? sign(omega) : sign(tDrive);
+                const Real alphaFree = (tDrive - tHold * sgn) / gr.inertia;
+                // Coulomb stop: the wheel is held when it is as good as stopped,
+                // or would stop within this step (a braked wheel loses tens of
+                // rad/s per step; left to the stages it would overshoot into
+                // reverse and chatter), and the tread force is within what the
+                // brakes (or the rolling threshold) hold.
+                const bool stopping = omega * alphaFree < 0 && std::abs(omega) <= std::abs(alphaFree) * stepDt_;
+                const bool held = (std::abs(omega) < omegaLock || stopping) && std::abs(tDrive) <= tHold;
+                if (held) {
+                    // The sliding law still applies to a locked, skidding tyre;
+                    // at rest the tread force is what the brakes hold.
+                    combine(-(kx * s.tyreLongitudinal[i] + gr.heldDamping * vSlip), fLong, fLat);
+                    fLong = saturate(fLong, tHold / r);
+                    d.wheelAlpha[i] = -omega * 100;
+                } else {
+                    d.wheelAlpha[i] = alphaFree;
+                }
+                d.tyreLongitudinalRate[i] = vSlip - std::abs(vLong) * s.tyreLongitudinal[i] / g.relaxationLength;
                 d.tyreLateralRate[i] = vLat - std::abs(vLong) * s.tyreLateral[i] / g.relaxationLength;
+                // Castoring wheel: its heading relaxes (over about a trail plus
+                // a relaxation length of rolling, at least 5/s so the pedals
+                // move it at rest) toward the quasi-static balance of the
+                // linkage spring (yielding at its breakout) against the tyre's
+                // aligning moment on the trail, between the hard stops.
+                if (castoring) {
+                    const Vec3 f0 = normalized(q.rotate({1, 0, 0}) - n * dot(q.rotate({1, 0, 0}), n));
+                    const Vec3 l0 = cross(n, f0);
+                    // (l0 = n x f0 points to the wheel's left; steer is + to the right.)
+                    const Real deltaV = std::atan2(-dot(vPt, l0), std::max(dot(vPt, f0), 0.2));
+                    const Real cmd = c.steer[i];
+                    // The aligning moment needs rolling: a wheel at rest has no
+                    // direction to line up with (the pedals then just turn it).
+                    const Real rolling = clamp(vGround / 0.5, 0.0, 1.0);
+                    const Real tyreGain = g.castorTrail * ky * g.relaxationLength * rolling;  // trail x C_alpha
+                    const Real tyreMax = g.castorTrail * muPeak * N * rolling;
+                    const Real ks = g.steerLinkageStiffness, breakout = g.steerLinkageBreakout;
+                    auto torque = [&](Real delta) {
+                        Real m = saturate(tyreGain * (deltaV - delta), tyreMax);
+                        if (ks > 0) {
+                            const Real ms = ks * (cmd - delta);
+                            m += breakout > 0 ? saturate(ms, breakout) : ms;
+                        }
+                        return m;  // + turns the wheel right; non-increasing in delta
+                    };
+                    const Real dMax = g.maxSteerAngle + g.castorAngle;
+                    Real lo = -dMax, hi = dMax, deltaEq;
+                    if (torque(lo) <= 0) deltaEq = lo;
+                    else if (torque(hi) >= 0) deltaEq = hi;
+                    else {
+                        for (int it = 0; it < 24; ++it) {
+                            const Real mid = 0.5 * (lo + hi);
+                            (torque(mid) > 0 ? lo : hi) = mid;
+                        }
+                        deltaEq = 0.5 * (lo + hi);
+                    }
+                    const Real rate = clamp(vGround / (g.castorTrail + g.relaxationLength), 5.0, 60.0);
+                    d.wheelSteerRate[i] = rate * (deltaEq - s.wheelSteer[i]);
+                }
                 const Vec3 fNed = n * N + f * fLong + l * fLat;
                 const Vec3 fB = q.inverseRotate(fNed);
                 force += fB;
@@ -663,8 +840,14 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
                 gt.contact = N > 0;
                 gt.compression = x;
                 gt.normalForce = N;
-                gt.steerAngle = steer;
                 gt.surfaceId = gp.surface.id;
+                gt.rollingSpeed = vLong;
+                gt.slipRatio = vSlip / std::max(std::abs(vLong), 1.0);
+                gt.longitudinalForce = fLong;
+                gt.lateralForce = fLat;
+                gt.peakFriction = muPeak;
+                gt.brakeTorque = tBrake;
+                gt.held = held;
             }
         }
         if (record) gearTel_[i] = gt;
@@ -723,6 +906,8 @@ DynamicState advance(const DynamicState& s, const Aircraft::Derivatives& d, Real
     for (int i = 0; i < kMaxGear; ++i) {
         r.tyreLateral[i] += d.tyreLateralRate[i] * h;
         r.tyreLongitudinal[i] += d.tyreLongitudinalRate[i] * h;
+        r.wheelOmega[i] += d.wheelAlpha[i] * h;
+        r.wheelSteer[i] += d.wheelSteerRate[i] * h;
     }
     return r;
 }
@@ -747,6 +932,7 @@ Real Aircraft::trimForElevator(Real e) const {
 
 void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, const AtmosphereField& atm) {
     if (!(dt > 0) || faulted_) return;
+    stepDt_ = dt;
     buildContext(in, ground, atm, dt);
     Context& c = ctx_;
 
@@ -867,6 +1053,9 @@ void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, co
                               k4.tyreLateralRate[i]) * h6;
         s1.tyreLongitudinal[i] += (k1.tyreLongitudinalRate[i] + 2 * k2.tyreLongitudinalRate[i] +
                                    2 * k3.tyreLongitudinalRate[i] + k4.tyreLongitudinalRate[i]) * h6;
+        s1.wheelOmega[i] += (k1.wheelAlpha[i] + 2 * k2.wheelAlpha[i] + 2 * k3.wheelAlpha[i] + k4.wheelAlpha[i]) * h6;
+        s1.wheelSteer[i] += (k1.wheelSteerRate[i] + 2 * k2.wheelSteerRate[i] + 2 * k3.wheelSteerRate[i] +
+                             k4.wheelSteerRate[i]) * h6;
     }
     s_ = s1;
     postStep(dt, c, s0);
@@ -885,19 +1074,49 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
     for (bool& t : contactTouched_) t = false;
     const Derivatives fin = derive(s_, c, true);
 
-    // Tyre bristles cannot exceed their friction limits.
+    // Tyre bristles cannot exceed their friction limits: the same ellipse as
+    // the force, wet-aware, allowed out to the fully sliding demand. A wheel
+    // the brakes hold is exactly stopped. Then the anti-skid controllers.
     for (std::size_t i = 0; i < def_.gear.size(); ++i) {
         const GearDef& g = def_.gear[i];
+        const GearRuntime& gr = gearRt_[i];
         const GearTelemetry& gt = gearTel_[i];
-        if (!gt.contact) continue;
-        const Real mu = c.gearGround[i].surface.friction;
-        const Real ky = g.corneringStiffness / g.relaxationLength;
-        s_.tyreLateral[i] = saturate(s_.tyreLateral[i], mu * gt.normalForce / ky);
-        const Real brake = g.brakeGroup == 0 ? c.brakeLeft : (g.brakeGroup == 1 ? c.brakeRight : 0.0);
-        const Real lim = std::min(gt.normalForce * (g.rollingResistance * c.gearGround[i].surface.rollingResistance +
-                                                    brake * g.maxBrakeForceCoefficient),
-                                  mu * gt.normalForce);
-        s_.tyreLongitudinal[i] = saturate(s_.tyreLongitudinal[i], lim / g.longitudinalStiffness);
+        if (!gt.contact) {
+            antiSkid_[i] = 1;
+            continue;
+        }
+        const Real kx = g.longitudinalStiffness;
+        const Real ky = corneringStiffness(i, gt.normalForce) / g.relaxationLength;
+        const Real fx = kx * s_.tyreLongitudinal[i], fy = ky * s_.tyreLateral[i];
+        const Real lim = (1 + kSlideWidth) * gt.peakFriction * gt.normalForce;
+        const Real mag = std::hypot(fx, fy);
+        if (mag > lim && mag > 0) {
+            const Real k = lim / mag;
+            s_.tyreLongitudinal[i] *= k;
+            s_.tyreLateral[i] *= k;
+        }
+        if (gt.held) s_.wheelOmega[i] = 0;
+        // Anti-skid (a sampled slip-ratio controller, one update per step): it
+        // holds the braking slip at the efficiency's fraction of the peak slip
+        // (on the rising side of the curve the force is that fraction of the
+        // peak force) by integrating the slip error into the torque let
+        // through, and dumps the pressure quickly in a deep skid. It is given
+        // the tyre's current peak slip (an ideal adaptive system); the
+        // efficiency says how far short of the peak it works.
+        if (g.antiSkidEfficiency > 0) {
+            Real& m = antiSkid_[i];
+            const Real brakeCmd = g.brakeGroup == 0 ? c.brakeLeft : (g.brakeGroup == 1 ? c.brakeRight : 0.0);
+            if (brakeCmd < 0.02 || std::abs(gt.rollingSpeed) < 1.5) {
+                m = 1;
+            } else {
+                const Real slipStiffness = kx * g.relaxationLength + gr.spinDamping * std::abs(gt.rollingSpeed);
+                const Real kappaPeak = std::max(gt.peakFriction * gt.normalForce / slipStiffness, 0.005);
+                const Real target = g.antiSkidEfficiency * kappaPeak;
+                m += (target - gt.slipRatio) / target * dt / 0.08;
+                if (gt.slipRatio > 1.2 * target) m -= dt / 0.03;
+                m = clamp(m, 0.0, 1.0);
+            }
+        }
     }
 
     // Fuel burn -> mass, CG, inertia.

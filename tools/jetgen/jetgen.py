@@ -333,6 +333,12 @@ def build(key, spec, top):
         for k in ('stiffness_n_per_m', 'preload_n', 'damping_compression_ns_per_m', 'damping_rebound_ns_per_m',
                   'cornering_stiffness_n_per_rad', 'longitudinal_stiffness_n_per_m'):
             g[k] = round(g[k] * kmass)
+        # Brake torque with the load and the wheel radius, the wheel's spin
+        # inertia with the load and the radius squared (same anti-skid).
+        if 'brake_torque_nm' in g:
+            g['brake_torque_nm'] = round(g['brake_torque_nm'] * kmass * kw)
+        if 'wheel_inertia_kgm2' in g:
+            g['wheel_inertia_kgm2'] = round(g['wheel_inertia_kgm2'] * kmass * kw * kw, 3)
         g['max_compression_m'] = round(g['max_compression_m'] * max(sR, 0.6), 3)
     # The nose tyre at the mains' cornering stiffness per newton of static load
     # (the Top G's nose tyre is stiffer per newton). Mass-scaled like the rest,
@@ -344,6 +350,10 @@ def build(key, spec, top):
     f_nose = (x_mid - xm) / (xn - xm)
     per_newton = mains[0]['cornering_stiffness_n_per_rad'] / (mtow * 9.80665 * (1 - f_nose) / len(mains))
     nose['cornering_stiffness_n_per_rad'] = round(per_newton * mtow * 9.80665 * f_nose)
+    # The static loads the tyre laws refer to, at MTOW and that CG.
+    nose['static_load_n'] = round(mtow * 9.80665 * f_nose)
+    for m in mains:
+        m['static_load_n'] = round(mtow * 9.80665 * (1 - f_nose) / len(mains))
     # Contacts.
     tip_y = s['span'] / 2
     for c in d['contacts']:

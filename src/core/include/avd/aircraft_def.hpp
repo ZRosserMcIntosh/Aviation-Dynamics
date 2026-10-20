@@ -329,7 +329,7 @@ struct GearDef {
     Real maxCompression = 0.25;       // m; beyond this the stiffness rises 20x (bottoming)
     Real wheelRadius = 0.2;
     Real rollingResistance = 0.02;    // coefficient on a paved surface
-    Real maxBrakeForceCoefficient = 0;  // brake force capacity / normal load (0 = no brake)
+    Real maxBrakeForceCoefficient = 0;  // brake force / static load; sets brakeTorque when that is 0 (0 = no brake)
     int brakeGroup = -1;              // 0 = left, 1 = right
     Real maxSteerAngle = 0;           // rad, by the rudder pedals
     // Tiller (nose-wheel steering handwheel on transport aircraft): wheel angle
@@ -339,11 +339,35 @@ struct GearDef {
     // Slew-rate limit of a powered steering actuator (0 = direct mechanical
     // linkage, the wheel follows the command at once).
     Real steerRate = 0;               // rad/s
+    // Castoring (swivelling) wheel: the wheel's heading is its own state,
+    // turned by the tyre's side force acting on the mechanical trail of the
+    // swivel axis toward the direction it rolls in, and held toward the pedal
+    // command by the steering linkage (a spring that yields at a breakout
+    // torque: the C172's steering bungees). castorAngle is the free swivel
+    // range beyond the pedal steering (hard stops at +-(maxSteer + castor)).
+    // castorTrail = 0 means a rigidly steered wheel (hydraulic steering).
     Real castorAngle = 0;             // rad, free castoring range beyond pedal steering
-    Real corneringStiffness = 4e4;    // N/rad
+    Real castorTrail = 0;             // m, mechanical trail of the swivel axis (0 = rigid steering)
+    Real steerLinkageStiffness = 0;   // N m/rad, pedal linkage spring (0 with a trail = free castor, no linkage)
+    Real steerLinkageBreakout = 0;    // N m, torque at which the linkage yields (0 = never: the spring alone)
+    // Tyre: cornering stiffness at the leg's static load N_ref, with the usual
+    // load sensitivity C_alpha = c1 N (1 - c2 N / N_ref) (Pacejka's pKy form;
+    // the stiffness peaks at N_ref / (2 c2)). c1 follows from the value at N_ref.
+    Real corneringStiffness = 4e4;    // N/rad at the static load
+    Real corneringLoadSensitivity = 0.25;  // c2 (0 = constant stiffness)
+    Real staticLoad = 0;              // N, design static load N_ref (0 = from the geometry at MTOW)
     Real relaxationLength = 0.3;      // m
     Real longitudinalStiffness = 2e5; // N/m (bristle model for braking/stiction)
     Real tyrePressure = 0;            // Pa, inflation (wet-runway friction, hydroplaning); 0 = unknown
+    // Wheel spin: I_w omega_dot = r F_x - T_brake - T_rolling. The brakes are a
+    // torque capacity (full pedal), so a lightly loaded wheel locks; a locked
+    // or skidding tyre slides at slidingFrictionRatio x the peak friction.
+    Real wheelInertia = 0;            // kg m^2 about the axle (0 = estimated from the static load and radius)
+    Real brakeTorque = 0;             // N m at full pedal (0 = maxBrakeForceCoefficient x static load x radius)
+    Real slidingFrictionRatio = 0.75; // mu_slide / mu_peak
+    // Anti-skid: 0 = none (the wheel can lock); otherwise the fraction of the
+    // peak braking force the system holds by modulating the brake torque.
+    Real antiSkidEfficiency = 0;
 };
 
 // Hard points that should never touch the ground (tail, wingtips, prop tip,

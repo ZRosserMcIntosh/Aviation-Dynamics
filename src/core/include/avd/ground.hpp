@@ -42,8 +42,9 @@ inline constexpr SurfaceProperties kGrass{0.4, 2.5, 0, 2};
 //   hydroplaning speed V_P = 9 sqrt(p) kt (Horne, NASA TN D-2056) and 0.05
 //   at and above it, where the tyre rides on the water (estimated shape);
 // - wet unpaved surfaces: 60% of dry (estimated).
-// Anti-skid efficiency is not applied here: the brake and tyre models stop
-// short of the peak by themselves.
+// This is the peak; the tyre model (avd/aircraft.hpp) slides at a fraction of
+// it once a wheel locks or skids, and a leg's anti-skid holds its efficiency's
+// fraction of it.
 Real wetTyreFriction(const SurfaceProperties& s, Real speed, Real tyrePressure);
 // Dynamic hydroplaning speed (m/s) for a tyre pressure (Pa).
 Real hydroplaningSpeed(Real tyrePressure);
