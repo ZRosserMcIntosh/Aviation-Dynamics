@@ -10,7 +10,7 @@ OUT=${1:-"$HERE/dist"}
 : "${WASI_SDK:?set WASI_SDK to the wasi-sdk directory}"
 mkdir -p "$OUT"
 EXPORTS=""
-for f in avd_text avd_load avd_error_text avd_set_weather avd_reset avd_set_input avd_set_assist \
+for f in avd_text avd_load avd_error_text avd_set_weather avd_reset avd_set_input avd_set_throttle avd_set_assist \
          avd_quick_start avd_procedure_status avd_advance avd_events avd_cockpit_count avd_cockpit_text \
          avd_cockpit_cycle avd_runway avd_state avd_cockpit avd_markings avd_altimeter_adjust avd_dg_adjust \
          avd_dg_sync avd_heading_bug avd_obs_adjust avd_nav_tune avd_nav_swap avd_com_tune avd_com_swap avd_squawk \

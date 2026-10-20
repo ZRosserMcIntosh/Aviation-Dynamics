@@ -47,7 +47,10 @@ export default async function createAvdModule(wasmBytes) {
   A.markings = () => Array.from(new Float64Array(memory.buffer, ex.avd_markings(), 96));
   A.compassCard = () => Array.from(new Float64Array(memory.buffer, ex.avd_compass_card(), 12));
   A.flow = () => new Float64Array(memory.buffer, ex.avd_flow(), 16 + 64 * 20 + 4 * 14);
-  A.jet = () => new Float64Array(memory.buffer, ex.avd_jet(), 64);
+  A.jet = () => new Float64Array(memory.buffer, ex.avd_jet(), 96);
+  // One engine's throttle lever (0-based; -1: every lever). Split levers hold
+  // until the next avd_set_input, which sets them all again.
+  A.setThrottle = (engine, v) => ex.avd_set_throttle(engine, v);
   A.runway = () => Array.from(new Float64Array(memory.buffer, ex.avd_runway(), 6));
   A.windGrid = (hx, hy, hz, nx, ny, nz) => new Float64Array(memory.buffer, ex.avd_wind_grid(hx, hy, hz, nx, ny, nz), 3 * nx * ny * nz);
   // The wake's vortex segments: { n, gmax, ground, seg } with 9 numbers a

@@ -146,6 +146,19 @@ B.avd_quick_start();
 for (let i = 0; i < 100 * 4; ++i) { B.avd_set_input(0, 0, 0, 0, 1, 0, 0, 0, 0); B.avd_advance(0.25); }
 j = B.jet();
 check(j[13] === 1 && j[21] === 1 && B.procedure().status === 2, `jet Quick Start: both engines running (N2 ${j[9].toFixed(0)} / ${j[17].toFixed(0)} %)`);
+// Systems through the ABI: both generators on line, both hydraulic systems
+// pressurised, every actuator powered, the accumulator full; one lever
+// retarded splits the throttles (and avd_set_input joins them again).
+check(j[60] === 1 && j[61] === 1 && j[62] > 2500 && j[63] > 2500 && j[64] > 0.99 && j[68] === 1 && j[69] === 6 && j[71] === 1,
+  `jet systems: GEN ${j[60]}/${j[61]}, HYD A ${j[62].toFixed(0)} / B ${j[63].toFixed(0)} psi, accumulator ${j[69]}`);
+B.setThrottle(1, 0.6);
+for (let i = 0; i < 16; ++i) B.avd_advance(0.25);
+j = B.jet();
+check(j[58] === 0 && j[59] === 0.6 && j[16] > j[8] + 10 && j[74 + 4] > j[74] + 10,
+  `split throttles: levers ${j[58]} / ${j[59]}, N1 indicated ${j[8].toFixed(0)} / ${j[16].toFixed(0)} %, truth ${j[74].toFixed(0)} / ${j[78].toFixed(0)} %`);
+B.avd_set_input(0, 0, 0, 0, 1, 0, 0, 0, 0);
+B.avd_advance(0.25);
+check(B.jet()[59] === 0, 'avd_set_input joins the levers again');
 // Load sheet: a planned load (full tanks, full cabin) applies at the next spawn.
 B.avd_set_tank(0, 1e6); B.avd_set_tank(1, 1e6); B.avd_set_station(1, 2200);
 const plan = B.loadsheet(true);
