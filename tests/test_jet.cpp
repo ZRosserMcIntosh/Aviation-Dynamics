@@ -166,7 +166,13 @@ TEST_CASE("top g: definition loads; cruise at Mach 0.85 is available at FL450 wi
 }
 
 TEST_CASE("top g: approach speeds and stall margin are near the published class values") {
-    // 1-g minimum speed with landing flap (Vref ~ 1.23 Vs1g ~ 110-120 KIAS at mid weights).
+    // 1-g minimum speed with landing flap (Vref ~ 1.23 Vs1g ~ 110-120 KIAS at
+    // mid weights), taken here at the first strip past its stall angle: the
+    // onset of separation, on the unflapped wing just outboard of the flap
+    // (y ~12 m), 104 KIAS with the swept wing's stall progression (tip clmax
+    // -14 %; 100 KIAS with the uniform polar). The trimmed lift keeps rising
+    // past it, the tips gone and the inboard wing carrying more: the 1-g
+    // CLmax with landing flap (the Vref rows) is unchanged by it.
     const StandardAtmosphere atm;
     Real minKias = 0;
     for (Real k = 140; k > 70; k -= 2) {
@@ -178,7 +184,7 @@ TEST_CASE("top g: approach speeds and stall margin are near the published class 
         if (!tr.converged || stalled) break;
         minKias = k;
     }
-    CHECK(minKias > 82 && minKias < 102);
+    CHECK(minKias > 82 && minKias < 106);
     // Trimmed on the approach with an ordinary pitch attitude and elevator inside its travel.
     Aircraft ac(jet());
     const TrimResult tr = trimAt(ac, 2000, ktToMs(125) * std::sqrt(1.225 / atm.at(ftToM(2000)).density), 3, true);
@@ -446,18 +452,29 @@ TEST_CASE("top g: without the pusher, full aft stick at idle puts the T-tail int
     // 1 g in a 7,000 fpm descent, the tail in the wake, and the elevator's
     // pitching power there is a small fraction of its unstalled value.
     //
-    // What the model does not give is the lock-in itself: with the stick
-    // put fully forward the airframe (stalled wing with its centre of
-    // pressure aft, fuselage) pitches down on its own and the wing unstalls
-    // in a few seconds. A locked-in deep stall needs the swept wing's
-    // post-stall nose-up (tips gone, inboard still lifting), which the
-    // regularised lifting line's post-stall solution does not produce; see
-    // docs/fidelity-matrix.md. The recovery time is printed, not asserted.
+    // The swept wing's stall progression (sweep_stall_gradient: tips stall
+    // first and carry less when separated, roots last and more) gives the
+    // pitch-up through the stall: the wing-body moment at 20 deg is nose-up
+    // by ~0.09 against the uniform polar's. The full-aft trim sits at
+    // 39-40 deg, where the wake band is leaving the tail. What the model
+    // still does not give is the lock-in: with the stick put fully forward
+    // the airplane pitches down from that trim and the wing unstalls in a
+    // few seconds. Between 27 and 35 deg, the tail fully in the wake, the
+    // fully stalled wing's own moment is about zero (its post-stall loading
+    // is near-uniform; the linear redistribution moves it inboard by a few
+    // per cent only), the fuselage's +0.2 is balanced by the blanketed
+    // tail's -0.13 (-0.17 to -0.23 with the stabiliser trimmed nose-up as
+    // here, which unstalls the tailplane in the wake), so the full-forward
+    // Cm there is 0 to -0.1 and the pitch rate from the push carries the
+    // airplane through to 25 deg where the tail is clear. A locked-in deep
+    // stall needs the inboard load retention past that (Furlong & McHugh),
+    // the nacelle and aft-fuselage wakes over the T-tail, or a lower wake-core
+    // q; see docs/fidelity-matrix.md. The recovery is printed, not asserted.
     AircraftDefinition noPusher = jet();
     noPusher.stallWarning.pusherMargin = 0;
     const AftStickStall r = aftStickStall(noPusher, 45, 15);
-    std::printf("    no pusher: max alpha %.1f deg, held >= %.1f deg at %.0f fpm, tail immersion %.2f; forward stick: alpha < 15 deg after %.1f s\n",
-                radToDeg(r.maxAlpha), radToDeg(r.alphaHeldMin), r.sinkHeld * 196.85, r.tailImmersion, r.recoverySeconds);
+    std::printf("    no pusher: max alpha %.1f deg, held >= %.1f deg at %.0f fpm, tail immersion %.2f; forward stick: least alpha %.1f deg, alpha < 15 deg after %.1f s\n",
+                radToDeg(r.maxAlpha), radToDeg(r.alphaHeldMin), r.sinkHeld * 196.85, r.tailImmersion, radToDeg(r.alphaPushMin), r.recoverySeconds);
     CHECK(!r.pushed);
     CHECK(r.maxAlpha > degToRad(30));
     CHECK(r.alphaHeldMin > degToRad(30));          // sustained, not a passing peak
@@ -491,6 +508,71 @@ TEST_CASE("top g: without the pusher, full aft stick at idle puts the T-tail int
     std::printf("    elevator pitching power in the deep stall: %.0f %% of the unstalled airplane's\n", 100 * deep / unstalled);
     CHECK(unstalled > 0);
     CHECK(deep / unstalled < 0.25);  // ~18 %: the wake's q ratio on a stalled tail
+}
+
+TEST_CASE("top g: the swept wing's stall progression pitches the wing-body up through the stall and leaves the attached range untouched") {
+    // The bare aero model, tail detached (wing and fuselage), 60 m/s at
+    // 14,000 ft, elevator 0: the Top G as defined (sweep_stall_gradient
+    // 0.5: tip clmax -14 %, root +11 % at its 27/33 deg sweeps) against the
+    // same airplane with the uniform polar. Below the stall no strip is at
+    // its limit and the two are bit-identical. Through the stall the tips
+    // (aft, on a swept wing) let go first and carry less when separated:
+    // at 20 deg the wing-body moment is nose-up by ~0.09 against the uniform
+    // polar's (the swept-wing pitch-up, DATCOM 4.1.3.4). Once the whole wing
+    // is separated (30 deg) the two are within a few hundredths: the
+    // redistribution is of the stall, not a post-stall moment of its own.
+    auto wingBodyCm = [](const AircraftDefinition& def, Real alphaDeg) {
+        Aircraft ac(def);
+        AeroModel& m = ac.aeroModel();
+        for (int s = 1; s < m.surfaceCount(); ++s) m.setSurfaceAttached(s, 0, false);
+        AeroOutputs out;
+        m.prepare(out);
+        AeroInputs in;
+        in.cg = ac.massProperties().cg;
+        const StandardAtmosphere atm;
+        const auto air = atm.at(ftToM(14000));
+        in.density = air.density;
+        in.speedOfSound = air.speedOfSound;
+        const Real v = 60, a = degToRad(alphaDeg);
+        in.velocityBody = {v * std::cos(a), 0, v * std::sin(a)};
+        for (int it = 0; it < 6; ++it) m.evaluate(in, out);
+        return out.moment.y / (0.5 * in.density * v * v * def.referenceArea * def.referenceChord);
+    };
+    AircraftDefinition uniform = jet();
+    CHECK(jet().surfaces[0].sweepStallGradient > 0.3);
+    uniform.surfaces[0].sweepStallGradient = 0;
+    const Real cm10 = wingBodyCm(jet(), 10), cm10u = wingBodyCm(uniform, 10);
+    const Real cm20 = wingBodyCm(jet(), 20), cm20u = wingBodyCm(uniform, 20);
+    const Real cm30 = wingBodyCm(jet(), 30), cm30u = wingBodyCm(uniform, 30);
+    std::printf("    wing-body Cm with / without the stall progression: 10 deg %.4f / %.4f, 20 deg %.3f / %.3f, 30 deg %.3f / %.3f\n", cm10, cm10u, cm20, cm20u, cm30, cm30u);
+    CHECK(cm10 == cm10u);                  // attached: bit-identical
+    CHECK(cm20 - cm20u > 0.04);            // the pitch-up through the stall
+    CHECK(std::abs(cm30 - cm30u) < 0.06);  // fully separated: no moment of its own
+}
+
+TEST_CASE("sweep stall progression: an unswept wing is untouched at any gradient") {
+    // The factor is k sin(sweep) (eta - 1/2): the single's straight wing has
+    // sin(sweep) exactly 0 on every strip, so the field changes nothing
+    // (bit-identical) at any gradient, attached or stalled.
+    const AircraftDefinition base = loadReference("tupi_t180");
+    AircraftDefinition graded = base;
+    graded.surfaces[0].sweepStallGradient = 1.5;
+    Aircraft a(base), b(graded);
+    AeroOutputs oa, ob;
+    a.aeroModel().prepare(oa);
+    b.aeroModel().prepare(ob);
+    AeroInputs in;
+    in.cg = a.massProperties().cg;
+    for (Real alphaDeg : {4.0, 14.0, 20.0, 35.0}) {
+        const Real v = 35, al = degToRad(alphaDeg);
+        in.velocityBody = {v * std::cos(al), 0, v * std::sin(al)};
+        for (int it = 0; it < 4; ++it) {
+            a.aeroModel().evaluate(in, oa);
+            b.aeroModel().evaluate(in, ob);
+        }
+        CHECK(oa.force.z == ob.force.z);
+        CHECK(oa.moment.y == ob.moment.y);
+    }
 }
 
 TEST_CASE("tail in the stalled wing's wake: the Top G's T-tail at 30 deg alpha, not the single's low tail") {

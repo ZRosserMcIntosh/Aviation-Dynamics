@@ -161,8 +161,8 @@ AeroModel::AeroModel(const AircraftDefinition& def) : fuselages_(def.fuselages),
         Real sweepArea = 0, spanSum = 0;
         bool anyVertical = false, anyMirrored = false;
         for (const PanelDef& p : def.surfaces[s].panels) {
-            addPanel(static_cast<int>(s), p, +1);
-            if (p.mirrored) addPanel(static_cast<int>(s), p, -1);
+            addPanel(static_cast<int>(s), p, +1, spanSum);
+            if (p.mirrored) addPanel(static_cast<int>(s), p, -1, spanSum);
             const Real area = 0.5 * (p.rootChord + p.tipChord) * (p.vertical ? p.span : p.span / std::cos(p.dihedral)) * (p.mirrored ? 2 : 1);
             sweepArea += p.sweep * area;
             spanSum += p.span;
@@ -187,6 +187,16 @@ AeroModel::AeroModel(const AircraftDefinition& def) : fuselages_(def.fuselages),
         S.aspectRatio = S.area > 0 ? sq(S.span) / S.area * (anyVertical && !anyMirrored ? 1.55 : 1.0) : 0;
         S.liftSlope = liftCurveSlope3D(S.aspectRatio, S.sweep, S.def.section.liftSlope);
         S.meanChord = S.span > 0 ? S.area / S.span : 0;
+        // Sweep stall progression: the section's lift limits scaled along the
+        // span by 1 - k sin(sweep) (eta - 1/2), on the strips of the surface's
+        // main plane (a winglet's boundary layer is its own).
+        if (S.def.sweepStallGradient != 0 && spanSum > 0)
+            for (int i = S.firstStrip; i < S.endStrip; ++i) {
+                Strip& st = strips_[static_cast<std::size_t>(i)];
+                if (dot(st.normalAxis, S.meanNormal) <= 0.7071) continue;
+                const Real sinSweep = std::sqrt(std::max(1 - st.cosSweep * st.cosSweep, 0.0));
+                st.stallLimitFactor = clamp(1 - S.def.sweepStallGradient * sinSweep * (st.spanFromRoot / spanSum - 0.5), 0.3, 3.0);
+            }
     }
     for (std::size_t si = 0; si < surfaces_.size(); ++si) {
         Surface& S = surfaces_[si];
@@ -231,7 +241,7 @@ AeroModel::AeroModel(const AircraftDefinition& def) : fuselages_(def.fuselages),
     }
 }
 
-void AeroModel::addPanel(int si, const PanelDef& p, int side) {
+void AeroModel::addPanel(int si, const PanelDef& p, int side, Real spanOffset) {
     const Real ys = side;  // mirror sign
     Vec3 tipOffset;
     Vec3 chord0{1, 0, 0}, normal0;
@@ -256,6 +266,7 @@ void AeroModel::addPanel(int si, const PanelDef& p, int side) {
         s.side = side;
         s.position = root + tipOffset * t;
         s.chord = lerp(p.rootChord, p.tipChord, t);
+        s.spanFromRoot = spanOffset + t * p.span;
         // Area on the panel's true span (a canted winglet's height counts, not
         // its lateral projection); vertical panels' span is their height.
         s.area = s.chord * (p.vertical ? p.span : p.span / std::cos(p.dihedral)) / p.strips;
@@ -680,6 +691,10 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             if (S.def.trimmableStabilizer) alpha -= in.controls.stabilizer / cs;  // leading edge down: nose up
             SectionPolar sp = S.def.section;
             sp.zeroLiftAlpha /= cs;
+            // The span station's lift limits (sweep stall progression), then
+            // the sweep mapping.
+            sp.clMax *= st.stallLimitFactor;
+            sp.clMin *= st.stallLimitFactor;
             sp.clMax /= cs;
             sp.clMin /= cs;
             sp.clAtCdMin /= cs;
@@ -708,7 +723,13 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             // spread spanwise over half a chord on a lifting-line surface.
             const std::array<Real, 6> ctl = ll ? out.llControl[static_cast<std::size_t>(&st - strips_.data())] : controlEffects(st, in.controls);
             const Real dAlpha0 = ctl[0] * ctlEff, dClMax = ctl[1] * an * ctlEff, dCm = ctl[2] * ctlEff, dCd = ctl[3], extension = ctl[4], spoiled = ctl[5];
-            e.sec = evaluateSection(sp, alpha, an, dAlpha0, dClMax, cdMax);
+            // The separated section's normal force (Viterna's CDmax sets the
+            // post-stall level) follows the same span factor: the inboard
+            // separation of a swept wing is drained outboard (thin, a low base
+            // pressure), the outboard is where the dead air piles up and the
+            // tip relieves it. Never above the 2-D flat plate.
+            const Real cdMaxStrip = std::min(S.def.section.flatPlateCd, cdMax * st.stallLimitFactor);
+            e.sec = evaluateSection(sp, alpha, an, dAlpha0, dClMax, cdMaxStrip);
             e.sec.cm += dCm;
             e.sec.cd += dCd;
             if (spoiled > 0) {

@@ -152,6 +152,22 @@ struct LiftingSurfaceDef {
     // together, ground images) instead of independent strips with the
     // Helmbold slope: tip stall, swept-wing pitch-up, winglets, roll damping.
     bool liftingLine = false;
+    // Stall progression along a swept span. The boundary layer of a swept-back
+    // wing drifts outboard: the outboard sections run in a thickened boundary
+    // layer and stall below the section's clmax, the inboard ones in a thinned
+    // layer and stall above it, and past the stall the inboard sections keep
+    // carrying high loads while the separated outboard flow is drained toward
+    // the tips (Harper & Maki, NACA TN 2947; Furlong & McHugh, NACA Rep.
+    // 1339). The section's lift limits (clmax, clmin) and its separated
+    // normal force (Viterna's CDmax, the post-stall level) are scaled by
+    // 1 - k sin(sweep) (eta - 1/2) with eta the spanwise station (0 root, 1
+    // tip) and the local sweep, so both are redistributed about the
+    // mid-semispan: tips first and weaker (lift lost aft on a swept wing: the
+    // pitch-up past the stall, DATCOM 4.1.3.4), roots last and stronger
+    // (lift kept forward into the deep stall). k = 0 (default) leaves the
+    // polar uniform; canted panels (winglets) are untouched; an unswept wing
+    // is untouched at any k.
+    Real sweepStallGradient = 0;      // k, per unit eta per unit sin(sweep)
     bool trimmableStabilizer = false;  // its incidence follows the stabiliser trim
 };
 

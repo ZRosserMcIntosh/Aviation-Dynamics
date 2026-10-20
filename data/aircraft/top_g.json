@@ -108,7 +108,7 @@
    "field": "surfaces",
    "kind": "estimated",
    "source": "EST",
-   "note": "Planform matching the published area and span (30.36 m including the winglets); quarter-chord sweep 27/33 deg; supercritical section polar, clmax 1.8 at flight Reynolds numbers (~2e7). Span loading by the nonlinear lifting line: with 6 deg of washout (incidence 0 / -0.7 / -6 deg root / kink / tip) the clean wing reaches CLmax ~1.24, near the published ~112 KIAS clean stall at mid weight. Winglets estimated from photographs: canted 75 deg, ~1.6 m tall, 40 deg sweep, chords 1.8 / 0.6 m, toed out 3 deg. Single-slotted Fowler flaps to ~70 % semi-span (meeting the ailerons), 25 % chord, extending the chord 12 % at full deflection, dclmax/dcl 0.9 (landing CLmax ~2.08; 1-g stall ~100 KIAS at mid weight). Tailplane incidence -0.8 deg (stabiliser neutral) for a ~1.7 deg cruise attitude."
+   "note": "Planform matching the published area and span (30.36 m including the winglets); quarter-chord sweep 27/33 deg; supercritical section polar, clmax 1.8 at flight Reynolds numbers (~2e7). Span loading by the nonlinear lifting line: with 6 deg of washout (incidence 0 / -0.7 / -6 deg root / kink / tip) the clean wing reaches CLmax ~1.22 (1.28 before the sweep stall progression below), near the published ~112 KIAS clean stall at mid weight. Winglets estimated from photographs: canted 75 deg, ~1.6 m tall, 40 deg sweep, chords 1.8 / 0.6 m, toed out 3 deg. Single-slotted Fowler flaps to ~70 % semi-span (meeting the ailerons), 25 % chord, extending the chord 12 % at full deflection, dclmax/dcl 0.9 (landing CLmax ~2.08; 1-g stall ~100 KIAS at mid weight). Tailplane incidence -0.8 deg (stabiliser neutral) for a ~1.7 deg cruise attitude."
   },
   {
    "field": "controls.stabilizer_trim",
@@ -199,6 +199,12 @@
    "kind": "estimated",
    "source": "EST",
    "note": "Buffet boundary: the section's clmax falls as 1 - 5 (Mn - 0.5)^2 above a normal Mach number of 0.5 (Mn = M cos(sweep); simple sweep theory as the Korn drag rise), floor 0.35. Shape after the CL-buffet-onset curves of supercritical transport wings (Obert, Aerodynamic Design of Transport Aircraft, ch. 20): the trimmed 1-g CLmax falls from 1.27 at low speed to 0.90 at M0.85 (71 %), a 1.3-g buffet margin at CL ~0.7, in the range of the class at FL410 mid weight. No G650 buffet-onset data published."
+  },
+  {
+   "field": "surfaces[0].sweep_stall_gradient",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Swept-wing stall progression: the boundary layer drifts outboard along the swept span, so the outboard sections stall below the section's clmax and the inboard above it, and past the stall the inboard sections keep carrying high loads while the separated outboard flow drains toward the tips (Harper & Maki, NACA TN 2947; Furlong & McHugh, NACA Rep. 1339). The section's lift limits and its separated normal force (Viterna's CDmax) are scaled by 1 - 0.5 sin(sweep) (eta - 1/2): tips -14 %, roots +11 % at the 27/33 deg sweeps, the order of the section-clmax spread reported for 30-45 deg sweeps. Effect: the stall begins outboard of mid-semispan (the 6 deg of washout no longer holds the tips through it), the wing-body moment at 20 deg is nose-up by ~0.09 against the uniform polar's (the pitch-up past the stall, DATCOM 4.1.3.4; AR 7.7 at 33 deg is on the pitch-up side of the Shortal-Maggin boundary), the clean trimmed CLmax falls from 1.28 to 1.22 (the clean 1-g stall ~114 KIAS at mid weight), the landing CLmax and Vref are unchanged (2.00, 121 KIAS at MLW), the AoA computer's warning (least strip margin, now the tip's) moves from 120 to 124 KIAS. Below the stall nothing changes. It does not lock the T-tail deep stall in (tests/test_jet.cpp, docs/fidelity-matrix.md). No G650 stall-progression or post-stall data published."
   },
   {
    "field": "surfaces[0].mach_ac_shift, mach_cm0_shift",
@@ -313,6 +319,7 @@
    },
    "span_efficiency": 0.88,
    "lifting_line": true,
+   "sweep_stall_gradient": 0.5,
    "thickness_ratio": 0.11,
    "korn_factor": 0.95,
    "mach_clmax_knee": 0.4,

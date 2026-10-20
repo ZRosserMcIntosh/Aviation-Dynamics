@@ -214,6 +214,8 @@ private:
         int neighbourA = -1, neighbourB = -1;  // strips sharing the A / B edge (same surface)
         Real area, chord;
         Real width;             // length along spanAxis
+        Real spanFromRoot = 0;  // distance along the planform from the surface's root (m)
+        Real stallLimitFactor = 1;  // span factor on the section's clmax/clmin and post-stall CDmax (sweep stall progression)
         bool attached = true;
         int controlCount = 0;
         std::array<StripControl, 3> controls{};
@@ -236,7 +238,7 @@ private:
         std::vector<Real> controlSmoothing;
     };
 
-    void addPanel(int surfaceIndex, const PanelDef& panel, int side);
+    void addPanel(int surfaceIndex, const PanelDef& panel, int side, Real spanOffset);
     Real controlDeflection(const StripControl& c, const ControlDeflections& d) const;
     std::array<Real, 6> controlEffects(const Strip& st, const ControlDeflections& d) const;
 public:
