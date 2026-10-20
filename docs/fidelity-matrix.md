@@ -56,7 +56,7 @@ Generated from the test output (`tests/test_validation.cpp`, rows in
 sources and the discussion of every row outside its band are in
 [validation/c172s-validation.md](validation/c172s-validation.md) and
 [validation/top-g-validation.md](validation/top-g-validation.md). The
-whole suite has <!-- validation:begin tests -->231<!-- validation:end --> test cases.
+whole suite has <!-- validation:begin tests -->238<!-- validation:end --> test cases.
 
 ### Tupi T-180 against the Cessna 172S POH
 
@@ -112,9 +112,9 @@ whole suite has <!-- validation:begin tests -->231<!-- validation:end --> test c
 | Time to climb, sea level to FL410, maximum take-off weight<br><small>46.5 t at brake release; 250/300 KIAS, Mach 0.80; maximum-climb rating; rate of climb at FL410 595 fpm, at sea level 5083 fpm</small> | about 22 min | 18.1 min | -17.9 % | ±25 % | within | representative, estimated (G650ER class: FL410 as the initial cruise altitude in about 20-25 min from a departure near MTOW) |
 | Thrust needed for Mach 0.90 at FL410, mid weight (fraction of the maximum-cruise rating)<br><small>33.7 t; the rating allows 18.1 kN per engine here; fuel flow 2117 kg/h, pitch 1.4 deg</small> | available (high-speed cruise Mach 0.90) | 93.9 % | — | 0–98 % | within | Gulfstream G650ER published high-speed cruise Mach 0.90 |
 | Fuel flow at Mach 0.85, FL450, mid weight<br><small>83 % of the maximum-cruise rating (14.5 kN per engine)</small> | about 2,600-3,400 lb/h (class figures) | 1,456 kg/h | — | 998–1,724 kg/h | within | published long-range cruise burn of the class |
-| Vref (1.23 Vs1g, landing flap) at 27.5 t<br><small>sea level ISA; trimmed CLmax, flaps 39; the square-root-of-weight law, not an independent published point</small> | about 103 KIAS (published 121 kt at MLW scaled by sqrt(W)) | 103 KIAS | — | 100–110 KIAS | within | derived: brokers' MLW Vref (about 121 kt at 37.9 t) x sqrt(27.5 / 37.9) = 103 KIAS; +-5 kt |
-| Vref (1.23 Vs1g, landing flap) at the maximum landing weight, 37.9 t<br><small>sea level ISA; trimmed CLmax, flaps 39</small> | 110-125 KIAS (representative; published values 110-121 kt) | 122 KIAS | — | 110–125 KIAS | within | representative, estimated (G650ER class) |
-| Landing distance from 50 ft, maximum landing weight (37.9 t)<br><small>Vref 122 KIAS (122 at 50 ft), touchdown 463 m past the 50 ft point at 380 fpm; full wheel braking from touchdown, ground spoilers, no reverse credit, dry runway</small> | 3,000 ft (914 m), SL, ISA, MLW | 791 m | -13.4 % | ±15 % | within | Gulfstream G650ER specification sheet (landing distance, SL, ISA, MLW); brokers quote 2,450-3,000 ft |
+| Vref (1.23 Vs1g, landing flap) at 27.5 t<br><small>sea level ISA; trimmed CLmax, flaps 39; the square-root-of-weight law, not an independent published point</small> | about 103 KIAS (published 121 kt at MLW scaled by sqrt(W)) | 102 KIAS | — | 100–110 KIAS | within | derived: brokers' MLW Vref (about 121 kt at 37.9 t) x sqrt(27.5 / 37.9) = 103 KIAS; +-5 kt |
+| Vref (1.23 Vs1g, landing flap) at the maximum landing weight, 37.9 t<br><small>sea level ISA; trimmed CLmax, flaps 39</small> | 110-125 KIAS (representative; published values 110-121 kt) | 121 KIAS | — | 110–125 KIAS | within | representative, estimated (G650ER class) |
+| Landing distance from 50 ft, maximum landing weight (37.9 t)<br><small>Vref 121 KIAS (121 at 50 ft), touchdown 456 m past the 50 ft point at 599 fpm; full wheel braking from touchdown, ground spoilers, no reverse credit, dry runway</small> | 3,000 ft (914 m), SL, ISA, MLW | 781 m | -14.6 % | ±15 % | within | Gulfstream G650ER specification sheet (landing distance, SL, ISA, MLW); brokers quote 2,450-3,000 ft |
 <!-- validation:end -->
 
 <!-- validation:begin summary aircraft=top_g -->
