@@ -75,7 +75,9 @@ struct DynamicState {
     RigidBodyState body;
     std::array<Real, kMaxEngines> shaftOmega{};
     std::array<Real, kMaxGear> tyreLateral{};       // bristle deflection (m)
-    std::array<Real, kMaxGear> tyreLongitudinal{};
+    std::array<Real, kMaxGear> tyreLongitudinal{};  // bristle deflection (m), driven by the slip velocity v - r omega
+    std::array<Real, kMaxGear> wheelOmega{};        // wheel spin (rad/s, + rolling forward)
+    std::array<Real, kMaxGear> wheelSteer{};        // castoring wheel's heading (rad; unused for rigidly steered legs)
 };
 
 enum class FlightEventType {
@@ -104,8 +106,16 @@ struct GearTelemetry {
     bool contact = false;
     Real compression = 0;
     Real normalForce = 0;
-    Real steerAngle = 0;
+    Real steerAngle = 0;         // the wheel's heading (a castoring wheel's own, else the command)
     int surfaceId = 0;
+    Real wheelOmega = 0;         // rad/s
+    Real rollingSpeed = 0;       // m/s, contact point along the wheel heading
+    Real slipRatio = 0;          // (v_long - r omega) / max(|v_long|, 1), + when braking
+    Real longitudinalForce = 0;  // N on the airframe along the wheel heading (- braking)
+    Real lateralForce = 0;       // N along n x f: to the wheel's left
+    Real peakFriction = 0;       // mu_peak used (wet-aware)
+    Real brakeTorque = 0;        // N m applied (after anti-skid modulation)
+    bool held = false;           // the wheel is stopped and held by the brakes / rolling threshold
 };
 
 struct EngineTelemetry {
@@ -273,6 +283,7 @@ public:
         RigidBodyState body;   // position = velocity, velocity = accel, attitude = qdot, omega = alpha
         std::array<Real, kMaxEngines> shaftAccel{};
         std::array<Real, kMaxGear> tyreLateralRate{}, tyreLongitudinalRate{};
+        std::array<Real, kMaxGear> wheelAlpha{}, wheelSteerRate{};
         Vec3 forceBody;        // total non-gravitational force
         Vec3 momentBody;
     };
@@ -304,8 +315,20 @@ private:
         std::array<PistonEngineInputs, kMaxEngines> engineIn{};
         std::array<TurbofanInputs, kMaxEngines> turboIn{};
         Real brakeLeft = 0, brakeRight = 0;
-        std::array<Real, kMaxGear> steer{};  // wheel steering angle (rad)
+        std::array<Real, kMaxGear> steer{};  // wheel steering command (rad)
+        std::array<Real, kMaxGear> brakeModulation{};  // anti-skid: fraction of the pedal's torque let through
     };
+    // Per-leg constants derived from the definition (see prepareGear()).
+    struct GearRuntime {
+        Real staticLoad = 1;       // N_ref
+        Real corneringC1 = 0;      // C_alpha = c1 N (1 - c2 N / N_ref)
+        Real inertia = 1;          // wheel spin inertia (kg m^2)
+        Real brakeTorque = 0;      // N m at full pedal
+        Real spinDamping = 0;      // N s/m, bristle damping on the slip velocity while the wheel turns
+        Real heldDamping = 0;      // N s/m, while the wheel is held (the airframe's fore-aft mode)
+    };
+    void prepareGear();
+    Real corneringStiffness(std::size_t leg, Real normalForce) const;
 
     void rebuildCockpit();
     void syncCockpitPositions();
@@ -343,6 +366,7 @@ private:
     std::vector<Real> stationMass_;
     Context ctx_;
     Real time_ = 0;
+    Real stepDt_ = 1.0 / 240;  // the current step (the wheels' Coulomb stop looks one step ahead)
     bool faulted_ = false;
 
     // Controls & switches.
@@ -377,6 +401,8 @@ private:
     Real gearSupply_ = 1, flapSupply_ = 1, speedbrakeSupply_ = 1, steeringSupply_ = 1, brakeSupply_ = 1;
     bool batteryDepletedWas_ = false;
     std::array<bool, kMaxGenerators> genOnlineWas_{};
+    std::array<GearRuntime, kMaxGear> gearRt_{};
+    std::array<Real, kMaxGear> antiSkid_{};    // anti-skid modulation state per leg (1 = brakes as pedalled)
 
     // Derived/lagged.
     std::array<Real, 8> downwashLag_{};

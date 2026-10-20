@@ -147,6 +147,18 @@
    "note": "Typical of large business jets (G650 figures not public): mains ~190 psi (hydroplaning ~124 kt), nose ~160 psi."
   },
   {
+   "field": "gear[*].static_load_n, gear[*].wheel_inertia_kgm2",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Static loads at MTOW from the geometry (nose 36.8 kN, each main bogie 211.5 kN); the cornering stiffness is the value at that load and follows the usual load sensitivity above and below it. Spin inertia of a twin-wheel main bogie with its brake rotors ~50 kg m^2, the twin nose wheels ~5.5 kg m^2."
+  },
+  {
+   "field": "gear[*].brake_torque_nm, gear[*].anti_skid_efficiency",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Carbon brakes as a torque capacity of 59 kN m per main bogie at full pedal (the former force-coefficient model, 0.5 x load, at the static load): ~0.45 g at MTOW with the wing unloaded, the usual certification maximum, and more than the tyres hold while the wing still carries weight, where the anti-skid limits them. Digital anti-skid at 88 % efficiency (the fraction of the peak braking force held; modern systems 0.85-0.92)."
+  },
+  {
    "field": "gear.nose.steering",
    "kind": "estimated",
    "source": "EST",
@@ -803,6 +815,8 @@
    "max_steer_deg": 10,
    "tiller_steer_deg": 80,
    "steer_rate_deg_per_s": 20,
+   "static_load_n": 36800,
+   "wheel_inertia_kgm2": 5.5,
    "cornering_stiffness_n_per_rad": 120000,
    "relaxation_length_m": 0.5,
    "longitudinal_stiffness_n_per_m": 500000
@@ -824,7 +838,11 @@
    "wheel_radius_m": 0.56,
    "rolling_resistance": 0.02,
    "brake_coefficient": 0.5,
+   "brake_torque_nm": 59000,
+   "anti_skid_efficiency": 0.88,
    "brake_group": "left",
+   "static_load_n": 211500,
+   "wheel_inertia_kgm2": 50,
    "cornering_stiffness_n_per_rad": 400000,
    "relaxation_length_m": 0.8,
    "longitudinal_stiffness_n_per_m": 1500000
@@ -846,7 +864,11 @@
    "wheel_radius_m": 0.56,
    "rolling_resistance": 0.02,
    "brake_coefficient": 0.5,
+   "brake_torque_nm": 59000,
+   "anti_skid_efficiency": 0.88,
    "brake_group": "right",
+   "static_load_n": 211500,
+   "wheel_inertia_kgm2": 50,
    "cornering_stiffness_n_per_rad": 400000,
    "relaxation_length_m": 0.8,
    "longitudinal_stiffness_n_per_m": 1500000

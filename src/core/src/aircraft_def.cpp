@@ -348,10 +348,20 @@ std::vector<std::string> AircraftDefinition::validate() const {
         c.range(p + ".maxSteerAngle", g.maxSteerAngle, 0, 1.6);
         c.range(p + ".tillerSteerAngle", g.tillerSteerAngle, 0, 1.6);
         c.nonNegative(p + ".steerRate", g.steerRate);
+        c.range(p + ".castorAngle", g.castorAngle, 0, 1.6);
+        c.range(p + ".castorTrail", g.castorTrail, 0, 1);
+        c.nonNegative(p + ".steerLinkageStiffness", g.steerLinkageStiffness);
+        c.nonNegative(p + ".steerLinkageBreakout", g.steerLinkageBreakout);
         c.positive(p + ".corneringStiffness", g.corneringStiffness);
+        c.range(p + ".corneringLoadSensitivity", g.corneringLoadSensitivity, 0, 0.45);
+        c.nonNegative(p + ".staticLoad", g.staticLoad);
         c.positive(p + ".relaxationLength", g.relaxationLength);
         c.positive(p + ".longitudinalStiffness", g.longitudinalStiffness);
         c.range(p + ".tyrePressure", g.tyrePressure, 0, 3e6);
+        c.nonNegative(p + ".wheelInertia", g.wheelInertia);
+        c.nonNegative(p + ".brakeTorque", g.brakeTorque);
+        c.range(p + ".slidingFrictionRatio", g.slidingFrictionRatio, 0.2, 1);
+        c.range(p + ".antiSkidEfficiency", g.antiSkidEfficiency, 0, 1);
     }
     if (contacts.size() > 16) c.add("contacts", "at most 16 contact points");
     for (std::size_t i = 0; i < contacts.size(); ++i) {

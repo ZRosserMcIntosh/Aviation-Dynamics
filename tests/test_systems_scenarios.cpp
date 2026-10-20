@@ -33,6 +33,11 @@ const AircraftDefinition& tillerRef() {
         AircraftDefinition t = ref();
         t.gear[0].tillerSteerAngle = degToRad(70);
         t.gear[0].steerRate = degToRad(20);
+        // A powered (tiller) steering holds the wheel: no castoring linkage.
+        t.gear[0].castorTrail = 0;
+        t.gear[0].castorAngle = 0;
+        t.gear[0].steerLinkageStiffness = 0;
+        t.gear[0].steerLinkageBreakout = 0;
         return t;
     }();
     return d;
