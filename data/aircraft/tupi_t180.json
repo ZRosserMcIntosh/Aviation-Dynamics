@@ -69,6 +69,7 @@
     {"field": "panel.pitot_probe", "kind": "estimated", "source": "EST", "note": "Heated pitot tube (~12 mm): frontal area, droplet collection efficiency of a small cylinder (~0.8 at 50 m/s, Langmuir-Blodgett class), ice to close the inlet (~3 mm over the tip). Heater 140 W = the pitot_heat load (5 A at 28 V); half reaches the ice. Icing needs a cloud layer with liquid water in the weather."},
     {"field": "panel.avionics", "kind": "estimated", "source": "EST", "note": "Baseline single NAV/COM with VOR/LOC/GS indicator and transponder with encoder; GPS, ADF, DME and autopilot were options and are not installed in this profile."},
     {"field": "electrical.loads", "kind": "estimated", "source": "EST", "note": "Load currents are estimates for a 28 V system; switch set and breakers follow the POH electrical system description."},
+    {"field": "electrical.loads[*].essential", "kind": "estimated", "source": "POH", "note": "No bus controller: after an alternator failure the POH has the pilot shed non-essential equipment by hand (cockpit control electrical.load_shed). Kept through a shed: turn coordinator, engine and fuel gauges, fuel pump, pitot heat; the radios and lights drop (instrument lighting is non-essential)."},
     {"field": "limits", "kind": "published", "source": "POH", "note": "VNE 163, VNO 129, VA 105 (2550 lb), VFE 110 (flaps 10), 85 (flaps > 10); +3.8/-1.52 g flaps up, +3.0 g flaps down."}
   ],
 
@@ -283,16 +284,16 @@
     "alternator_max_current_a": 60,
     "loads": [
       {"name": "avionics", "label": "Circuit Breaker: Avionics (NAV/COM, transponder)", "current_a": 6.0, "minimum_voltage_v": 20, "avionics_bus": true},
-      {"name": "turn_coordinator", "label": "Circuit Breaker: Turn Coordinator", "current_a": 0.5, "minimum_voltage_v": 18},
-      {"name": "engine_gauges", "label": "Circuit Breaker: Instruments (engine and fuel gauges)", "current_a": 0.5, "minimum_voltage_v": 18},
+      {"name": "turn_coordinator", "label": "Circuit Breaker: Turn Coordinator", "current_a": 0.5, "minimum_voltage_v": 18, "essential": true},
+      {"name": "engine_gauges", "label": "Circuit Breaker: Instruments (engine and fuel gauges)", "current_a": 0.5, "minimum_voltage_v": 18, "essential": true},
       {"name": "flaps", "label": "Circuit Breaker: Flap Motor", "current_a": 0.0, "minimum_voltage_v": 18},
-      {"name": "fuel_pump", "label": "Circuit Breaker: Fuel Pump", "current_a": 4.0, "minimum_voltage_v": 18},
+      {"name": "fuel_pump", "label": "Circuit Breaker: Fuel Pump", "current_a": 4.0, "minimum_voltage_v": 18, "essential": true},
       {"name": "beacon", "label": "Beacon Switch", "current_a": 1.5, "minimum_voltage_v": 18, "initially_on": false},
       {"name": "nav_lights", "label": "NAV Lights Switch", "current_a": 2.5, "minimum_voltage_v": 18, "initially_on": false},
       {"name": "strobes", "label": "Strobe Lights Switch", "current_a": 2.0, "minimum_voltage_v": 18, "initially_on": false},
       {"name": "taxi_light", "label": "Taxi Light Switch", "current_a": 3.6, "minimum_voltage_v": 18, "initially_on": false},
       {"name": "landing_light", "label": "Landing Light Switch", "current_a": 3.6, "minimum_voltage_v": 18, "initially_on": false},
-      {"name": "pitot_heat", "label": "Pitot Heat Switch", "current_a": 5.0, "minimum_voltage_v": 18, "initially_on": false},
+      {"name": "pitot_heat", "label": "Pitot Heat Switch", "current_a": 5.0, "minimum_voltage_v": 18, "initially_on": false, "essential": true},
       {"name": "panel_lights", "label": "Panel Lights", "current_a": 1.0, "minimum_voltage_v": 18, "initially_on": false}
     ]
   },

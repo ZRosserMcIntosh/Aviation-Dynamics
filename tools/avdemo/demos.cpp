@@ -44,6 +44,8 @@ const char* eventText(FlightEventType t) {
         case FlightEventType::CockpitControlChanged: return "";
         case FlightEventType::MachOverspeed: return "OVERSPEED (MMO exceeded)";
         case FlightEventType::GearOverspeed: return "gear extended above VLE";
+        case FlightEventType::LoadShed: return "LOAD SHED (essential bus only)";
+        case FlightEventType::LoadRestored: return "load shed reset, all buses powered";
     }
     return "?";
 }

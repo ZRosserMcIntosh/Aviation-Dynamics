@@ -93,6 +93,7 @@ enum class FlightEventType {
     Touchdown, Liftoff, Overspeed, OverG, FlapOverspeed, PropStrike, HardPointContact,
     BatteryDepleted, AlternatorOffline, AlternatorOnline, CockpitControlChanged,
     MachOverspeed, GearOverspeed,
+    LoadShed, LoadRestored,  // non-essential loads shed (bus controller or pilot) / back
 };
 
 struct FlightEvent {
@@ -417,6 +418,7 @@ private:
     Real hydPumpCurrent_ = 0;                  // A, electric hydraulic pumps running
     Real gearSupply_ = 1, flapSupply_ = 1, speedbrakeSupply_ = 1, steeringSupply_ = 1, brakeSupply_ = 1;
     bool batteryDepletedWas_ = false;
+    bool loadShedWas_ = false;
     std::array<bool, kMaxGenerators> genOnlineWas_{};
     std::array<GearRuntime, kMaxGear> gearRt_{};
     std::array<Real, kMaxGear> antiSkid_{};    // anti-skid modulation state per leg (1 = brakes as pedalled)

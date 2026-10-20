@@ -55,6 +55,7 @@ struct SensorInputs {
     Real busVoltage = 0;           // V, main bus
     Real batteryCurrent = 0;       // A, + discharge
     bool alternatorOnline = false;
+    bool loadShed = false;         // non-essential loads shed: essential bus only
     bool turnCoordinatorPowered = false;
     bool attitudeElectricPowered = false;
     bool headingElectricPowered = false;
@@ -143,6 +144,7 @@ struct CockpitState {
     std::array<Real, 4> fuelGauge{};  // m^3 usable indicated
     Real ammeter = 0;              // A (+ charging)
     Real voltmeter = 0;            // V
+    bool loadShed = false;         // LOAD SHED / ESS BUS ONLY: non-essential loads are off
     Real suction = 0;              // Pa
     unsigned annunciators = 0;     // Annunciator bits (lamps lit)
     bool stallHorn = false;

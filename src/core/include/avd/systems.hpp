@@ -78,7 +78,19 @@ struct ElectricalInputs {
 };
 
 // Main-bus electrical system: a lead-acid battery, one or more engine-driven
-// generators in parallel, named loads with breakers and an avionics bus relay.
+// generators in parallel, named loads with breakers, an avionics bus relay
+// and an essential bus with load shedding.
+//
+// Load shed: the loads marked essential form the essential bus. With the
+// definition's `autoLoadShed`, a bus controller sheds the rest once the
+// battery alone has carried the bus for `loadShedDelay` (a G650-class jet
+// after a dual generator loss keeps PFD 1, standby instruments, COM 1/NAV 1,
+// engine indication, boost pumps and probe heat; the galley, lights and the
+// other displays drop), which roughly doubles the battery's endurance; the
+// shed clears when a generator comes back on line. The pilot can shed by
+// hand (`setLoadShed`, cockpit "electrical.load_shed"), which is how a light
+// aircraft's POH has it done after an alternator failure. A shed load draws
+// no current and reads unpowered; its switch position is untouched.
 //
 // Battery (Estimated shape, Published plateau): under load a charged 24 V
 // lead-acid battery sits on a plateau of ~24.4 V (12 x 2.03 V), not at its
@@ -99,6 +111,13 @@ public:
     void setBatterySwitch(bool on) { bat_ = on; }
     void setAlternatorSwitch(bool on);   // every generator
     void setAvionicsSwitch(bool on) { avionics_ = on; }
+    // The pilot's load shed (held until reset, whatever the generators do).
+    void setLoadShed(bool on) { manualShed_ = on; }
+    bool manualLoadShed() const { return manualShed_; }
+    // The bus controller's automatic shed (the definition's autoLoadShed).
+    bool autoLoadShed() const { return autoShed_; }
+    // Non-essential loads shed, by the controller or the pilot.
+    bool loadShed() const { return autoShed_ || manualShed_; }
     void setLoadSwitch(int i, bool on) { loadOn_[i] = on; }
     bool loadSwitch(int i) const { return loadOn_[i]; }
     int loadIndex(const std::string& name) const;
@@ -124,6 +143,8 @@ public:
     bool batteryDepleted() const { return charge_ <= 0; }
     bool alternatorOnline() const;   // any generator on line
     bool loadPowered(int i) const;
+    // Load i is cut by a shed (non-essential while loadShed()).
+    bool loadShedded(int i) const;
     // Bus-powered devices work above the definition's bus minimum (default
     // 18 V on a 24 V system); pass a voltage to ask about another threshold.
     Real busMinimum() const { return def_.busMinimum(); }
@@ -145,6 +166,8 @@ private:
     std::vector<bool> genOn_, genFailed_, genOnline_;
     int pumpLoad_ = -1;
     bool bat_ = false, avionics_ = false;
+    bool manualShed_ = false, autoShed_ = false;
+    Real batteryOnlyTime_ = 0;  // s the battery alone has carried the bus
     Real charge_ = 0;
     Real surface_ = 1;   // surface charge, 0..1 (a fresh battery off the charger: 1)
     Real busVoltage_ = 0, batteryCurrent_ = 0;

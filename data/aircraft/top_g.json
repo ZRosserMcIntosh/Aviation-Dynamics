@@ -45,6 +45,12 @@
    "note": "Two engine-driven starter-generators in parallel (the G650ER's two 40 kVA generators, here 300 A each on a 28 V DC bus), each on line from 45 % N2; bus minimum 18 V (24 V system)."
   },
   {
+   "field": "electrical.auto_load_shed, electrical.load_shed_delay_s, electrical.loads[*].essential",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Essential bus with automatic load shedding: with no generator on line the bus controller sheds the non-essential loads 2 s after the battery alone takes the bus (the G650's essential/emergency buses keep PFD 1, standby instruments, COM 1/NAV 1, engine indication, boost pumps and probe heat after a dual generator loss); the split of the avionics load (10 A essential, 15 A shed) and the load currents are estimates for a 28 V system. Roughly doubles the 40 Ah battery's endurance."
+  },
+  {
    "field": "hydraulics",
    "kind": "estimated",
    "source": "EST",
@@ -752,15 +758,25 @@
   "alternator_voltage_v": 28.0,
   "alternator_max_current_a": 600,
   "bus_minimum_v": 18,
+  "auto_load_shed": true,
+  "load_shed_delay_s": 2.0,
   "generators": [
    {"name": "GEN 1", "engine": 0, "max_current_a": 300, "cut_in_n2": 0.45},
    {"name": "GEN 2", "engine": 1, "max_current_a": 300, "cut_in_n2": 0.45}
   ],
   "loads": [
    {
+    "name": "avionics_ess",
+    "label": "Essential Avionics (PFD 1, COM 1/NAV 1, transponder)",
+    "current_a": 10.0,
+    "minimum_voltage_v": 20,
+    "avionics_bus": true,
+    "essential": true
+   },
+   {
     "name": "avionics",
-    "label": "Avionics (displays, radios, transponder)",
-    "current_a": 25.0,
+    "label": "Avionics (MFD, PFD 2, COM 2/NAV 2, cabin systems)",
+    "current_a": 15.0,
     "minimum_voltage_v": 20,
     "avionics_bus": true
    },
@@ -768,25 +784,29 @@
     "name": "ahrs",
     "label": "Attitude and Heading Reference",
     "current_a": 3.0,
-    "minimum_voltage_v": 18
+    "minimum_voltage_v": 18,
+    "essential": true
    },
    {
     "name": "turn_coordinator",
     "label": "Standby Instruments",
     "current_a": 1.0,
-    "minimum_voltage_v": 18
+    "minimum_voltage_v": 18,
+    "essential": true
    },
    {
     "name": "engine_gauges",
     "label": "Engine Indication",
     "current_a": 2.0,
-    "minimum_voltage_v": 18
+    "minimum_voltage_v": 18,
+    "essential": true
    },
    {
     "name": "fuel_pump",
     "label": "Fuel Boost Pumps",
     "current_a": 8.0,
-    "minimum_voltage_v": 18
+    "minimum_voltage_v": 18,
+    "essential": true
    },
    {
     "name": "beacon",
@@ -828,7 +848,8 @@
     "label": "Probe Heat",
     "current_a": 12.0,
     "minimum_voltage_v": 18,
-    "initially_on": false
+    "initially_on": false,
+    "essential": true
    },
    {
     "name": "panel_lights",
@@ -1244,7 +1265,7 @@
    "adf": false,
    "dme": false,
    "autopilot": false,
-   "electrical_load": "avionics",
+   "electrical_load": "avionics_ess",
    "com_spacing_khz": 25
   }
  }

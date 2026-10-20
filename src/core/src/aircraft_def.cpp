@@ -312,6 +312,15 @@ std::vector<std::string> AircraftDefinition::validate() const {
     }
     if (electrical.busMinimumVoltage >= 0) c.range("electrical.busMinimumVoltage", electrical.busMinimumVoltage, 0, electrical.batteryVoltage);
     else c.finite("electrical.busMinimumVoltage", electrical.busMinimumVoltage);
+    c.nonNegative("electrical.loadShedDelay", electrical.loadShedDelay);
+    if (electrical.autoLoadShed) {
+        // A bus controller that sheds everything, or nothing, is a mistake.
+        std::size_t essential = 0;
+        for (const ElectricalLoadDef& l : electrical.loads) essential += l.essential;
+        if (essential == 0) c.add("electrical.autoLoadShed", "needs at least one essential load to keep");
+        if (!electrical.loads.empty() && essential == electrical.loads.size())
+            c.add("electrical.autoLoadShed", "every load is essential: nothing to shed");
+    }
 
     if (hydraulics.present) {
         if (hydraulics.systems.empty()) c.add("hydraulics.systems", "at least one system required");

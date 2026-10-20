@@ -488,6 +488,7 @@ void InstrumentPanel::updateEngineAndSystems(Real dt, const SensorInputs& in) {
     // Self-powered: ammeter shunt, suction gauge, voltmeter (shows the bus).
     s_.ammeter = -in.batteryCurrent;
     s_.voltmeter = in.busVoltage;
+    s_.loadShed = in.loadShed;
     s_.suction = in.suction;
     // Annunciator lamps, driven by their own switches.
     unsigned ann = 0;

@@ -42,7 +42,7 @@ constexpr int kStateSize = 64;
 // whose avd_abi_version() is not its EXPECTED_ABI, and web/abi_check.mjs
 // checks the README's tables against avd_layout(). The static_asserts at the
 // end of this file tie these numbers to the arrays themselves.
-constexpr int kAbiVersion = 1;
+constexpr int kAbiVersion = 2;
 namespace abi {
 constexpr int state = kStateSize;          // avd_state()
 constexpr int cockpit = 96;                // avd_cockpit(); avd_markings() shares the buffer
@@ -278,6 +278,8 @@ const char* eventText(FlightEventType t) {
         case FlightEventType::BatteryDepleted: return "Battery depleted";
         case FlightEventType::AlternatorOffline: return g && !g->def.turbofans.empty() ? "Generator offline" : "Alternator offline";
         case FlightEventType::AlternatorOnline: return g && !g->def.turbofans.empty() ? "Generator online" : "Alternator online";
+        case FlightEventType::LoadShed: return "LOAD SHED: essential bus only";
+        case FlightEventType::LoadRestored: return "Load shed reset: all buses powered";
         case FlightEventType::CockpitControlChanged: return "";
     }
     return "";
@@ -916,6 +918,9 @@ AVD_EXPORT double* avd_jet() {
     g_jet[71] = g->def.hydraulics.present;
     g_jet[72] = ac.electrical().batteryCharge();
     g_jet[73] = ac.electrical().batteryCurrent();
+    g_jet[82] = cs.loadShed;                        // LOAD SHED / ESS BUS ONLY (controller or pilot)
+    g_jet[83] = ac.electrical().autoLoadShed();     // the bus controller's own shed
+    g_jet[84] = g->def.electrical.autoLoadShed;     // a bus controller is fitted
     g_jet[7] = ff * 3600;
     g_jet[24] = g->def.limits.maxOperatingMach;
     g_jet[25] = msToKt(g->def.limits.neverExceedIas);
@@ -1507,6 +1512,7 @@ AVD_EXPORT double* avd_cockpit() {
     // Pitot icing (truth): ice as a fraction of what closes the inlet, heater warm-up, cloud water (g/m^3).
     o[72] = ip.truth().pitotIce / g->def.panel.pitotProbe.iceToBlockInlet; o[73] = ip.truth().pitotHeat;
     o[74] = g->weather ? g->weather->sample(g->ac->state().body.position, g->ac->altitudeMsl(), 0).liquidWaterContent : 0.0;
+    o[75] = c.loadShed;  // LOAD SHED: non-essential loads off (the pilot's "electrical.load_shed", or the jet's bus controller)
     return o;
 }
 

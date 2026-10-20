@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <vector>
 
 #include "avd/units.hpp"
@@ -342,7 +343,13 @@ TEST_CASE("dual flame-out: generators drop, the battery carries the essentials, 
     CHECK(!ac.electrical().alternatorOnline());
     CHECK(hasEvent(ac.drainEvents(), FlightEventType::AlternatorOffline, 1));
     CHECK(ac.electrical().busVoltage() >= ac.electrical().busMinimum());  // the battery
-    CHECK(ac.electrical().batteryCurrent() > 20);                          // avionics, AHRS, gauges
+    // The bus controller shed the non-essential loads 2 s into battery power:
+    // the essential avionics, AHRS, standby instruments and engine indication
+    // stay (~16 A), the rest of the avionics (15 A) is gone.
+    CHECK(ac.electrical().loadShed());
+    CHECK(ac.instruments().state().loadShed);
+    CHECK_RANGE(ac.electrical().batteryCurrent(), 10, 20);
+    CHECK(ac.instruments().state().avionicsOn);  // PFD 1, COM 1/NAV 1 on the essential bus
     CHECK(ac.hydraulicPressure(0) < 0.05 && ac.hydraulicPressure(1) < 0.05);  // windmilling cores pump nothing; the electric pump needs a generator
     CHECK_NEAR(ac.telemetry().gearPower, 0, 0.05);
     CHECK(ac.instruments().state().engines[0].n1 > 10);  // the indication is alive on the battery
@@ -460,6 +467,184 @@ TEST_CASE("electrical: a battery run flat raises BatteryDepleted once and the bu
     CHECK(ac.electrical().batteryDepleted());
     CHECK_NEAR(ac.electrical().busVoltage(), 0, 0);
     CHECK(ac.instruments().state().annunciators == 0);
+}
+
+static bool anyContains(const std::vector<std::string>& v, const std::string& s) {
+    for (const auto& e : v)
+        if (e.find(s) != std::string::npos) return true;
+    return false;
+}
+
+TEST_CASE("load shed: a dual generator loss sheds the non-essential loads after the delay; a generator back on line restores them") {
+    Aircraft ac(jet());
+    SimpleWeather atm;
+    FlatGround g(0);
+    ac.setEngineRunning(true);
+    ac.placeOnGround(0, 0, 0, g, atm);
+    PilotInput idle;
+    for (const char* l : {"beacon", "nav_lights", "strobes"}) ac.setCockpitControl(std::string("electrical.load.") + l, 1);
+    for (int i = 0; i < 240 * 2; ++i) ac.step(kDt, idle, g, atm);
+    const ElectricalSystem& e = ac.electrical();
+    CHECK(e.alternatorOnline());
+    CHECK(!e.loadShed());
+    const int ess = e.loadIndex("avionics_ess"), rest = e.loadIndex("avionics"), ahrs = e.loadIndex("ahrs");
+    const int standby = e.loadIndex("turn_coordinator"), gauges = e.loadIndex("engine_gauges"), beacon = e.loadIndex("beacon");
+    CHECK(ess >= 0 && rest >= 0 && ahrs >= 0 && standby >= 0 && gauges >= 0 && beacon >= 0);
+    CHECK(e.def().loads[static_cast<std::size_t>(ess)].essential && !e.def().loads[static_cast<std::size_t>(rest)].essential);
+    CHECK(ac.cockpitControl("electrical.load_shed") == 0);
+    ac.drainEvents();
+    ac.electrical().setAlternatorFailed(true);  // both generators
+    for (int i = 0; i < 240; ++i) ac.step(kDt, idle, g, atm);  // 1 s on the battery: inside the controller's 2 s
+    CHECK(!e.alternatorOnline());
+    CHECK(!e.loadShed());
+    CHECK(e.loadPowered(rest) && e.loadPowered(beacon));
+    const Real before = e.batteryCurrent();
+    for (int i = 0; i < 240 * 2; ++i) ac.step(kDt, idle, g, atm);  // 3 s
+    CHECK(e.loadShed());
+    CHECK(e.autoLoadShed());
+    CHECK(!e.manualLoadShed());
+    CHECK(!e.loadPowered(rest) && !e.loadPowered(beacon));
+    CHECK(e.loadPowered(ess) && e.loadPowered(ahrs) && e.loadPowered(standby) && e.loadPowered(gauges));
+    CHECK(e.loadSwitch(rest));  // the breaker is untouched
+    const Real after = e.batteryCurrent();
+    std::printf("    battery current %.1f A before the shed, %.1f A after (essential bus)\n", before, after);
+    CHECK_RANGE(after / before, 0.3, 0.55);  // ~40 A -> ~16 A
+    const CockpitState& cs = ac.instruments().state();
+    CHECK(cs.loadShed);
+    CHECK(cs.avionicsOn);          // PFD 1, COM 1/NAV 1 on the essential avionics
+    CHECK(cs.engines[0].n1 > 10);  // engine indication alive
+    {
+        const auto ev = ac.drainEvents();
+        CHECK(hasEvent(ev, FlightEventType::LoadShed));
+        CHECK(!hasEvent(ev, FlightEventType::LoadRestored));
+        for (const auto& x : ev)
+            if (x.type == FlightEventType::LoadShed) CHECK_NEAR(x.value, 1, 0);  // the controller's
+    }
+    // Generator 2 back: the shed clears at once.
+    ac.electrical().setGeneratorFailed(1, false);
+    for (int i = 0; i < 240; ++i) ac.step(kDt, idle, g, atm);
+    CHECK(e.generatorOnline(1) && !e.generatorOnline(0));
+    CHECK(!e.loadShed());
+    CHECK(e.loadPowered(rest) && e.loadPowered(beacon));
+    CHECK(!cs.loadShed);
+    CHECK(hasEvent(ac.drainEvents(), FlightEventType::LoadRestored));
+    // Both lost again: the delay runs again from the loss.
+    ac.electrical().setGeneratorFailed(1, true);
+    for (int i = 0; i < 240; ++i) ac.step(kDt, idle, g, atm);
+    CHECK(!e.loadShed());
+    for (int i = 0; i < 240 * 2; ++i) ac.step(kDt, idle, g, atm);
+    CHECK(e.loadShed());
+}
+
+TEST_CASE("load shed: the controller stretches the Top G's battery endurance to at least 1.7 x the unshed case") {
+    // The electrical system alone at 1 s steps: in flight at night (beacon,
+    // navigation lights and strobes on, boost pumps running) with and
+    // without the bus controller, to BatteryDepleted.
+    auto endurance = [&](bool controller, Real* firstCurrent, Real* lastCurrent) {
+        ElectricalDef d = jet().electrical;
+        d.autoLoadShed = controller;
+        ElectricalSystem e(d, 0);
+        e.setBatterySwitch(true);
+        e.setAvionicsSwitch(true);
+        for (const char* l : {"beacon", "nav_lights", "strobes"}) e.setLoadSwitch(e.loadIndex(l), true);
+        ElectricalInputs in;
+        in.auxPumpCurrent = 8;  // the boost pumps' breaker current while they run
+        Real t = 0;
+        while (!e.batteryDepleted() && t < 10 * 3600) {
+            e.step(1, in);
+            t += 1;
+            if (t == 1) *firstCurrent = e.batteryCurrent();
+            if (t == 60) *lastCurrent = e.batteryCurrent();
+        }
+        return t;
+    };
+    Real i0 = 0, i1 = 0, j0 = 0, j1 = 0;
+    const Real plain = endurance(false, &i0, &i1), shed = endurance(true, &j0, &j1);
+    std::printf("    battery endurance: %.0f min at %.0f A unshed, %.0f min at %.0f A on the essential bus (x%.2f)\n", plain / 60, i1,
+                shed / 60, j1, shed / plain);
+    CHECK_NEAR(i0, j0, 1e-9);        // the same load until the controller acts
+    CHECK_RANGE(j1 / i1, 0.4, 0.6);  // ~48 A -> ~24 A
+    CHECK_RANGE(plain / 60, 30, 70);  // 40 Ah against ~48 A
+    CHECK(shed >= 1.7 * plain);
+}
+
+TEST_CASE("load shed: the single's pilot sheds by hand; radios and lights drop, the essentials stay, the alternator does not reset it") {
+    Aircraft ac(single());
+    SimpleWeather atm;
+    FlatGround g(0);
+    TestPilot pilot;
+    startTrimmedFlight(ac, {100, 1500, 0}, atm, g, &pilot);
+    for (const char* l : {"beacon", "nav_lights"}) ac.setCockpitControl(std::string("electrical.load.") + l, 1);
+    for (int i = 0; i < 240 * 2; ++i) ac.step(kDefaultDt, pilot.update(ac, kDefaultDt), g, atm);
+    const ElectricalSystem& e = ac.electrical();
+    const CockpitState& cs = ac.instruments().state();
+    CHECK(e.alternatorOnline());
+    CHECK(!e.def().autoLoadShed);
+    const int radios = e.loadIndex("avionics"), tc = e.loadIndex("turn_coordinator"), gauges = e.loadIndex("engine_gauges");
+    const int beacon = e.loadIndex("beacon"), nav = e.loadIndex("nav_lights"), pump = e.loadIndex("fuel_pump"), heat = e.loadIndex("pitot_heat");
+    CHECK(radios >= 0 && tc >= 0 && gauges >= 0 && beacon >= 0 && nav >= 0 && pump >= 0 && heat >= 0);
+    CHECK(e.loadPowered(radios) && e.loadPowered(beacon) && cs.avionicsOn);
+    ac.drainEvents();
+    CHECK(ac.setCockpitControl("electrical.load_shed", 1));
+    for (int i = 0; i < 240; ++i) ac.step(kDefaultDt, pilot.update(ac, kDefaultDt), g, atm);
+    CHECK(ac.cockpitControl("electrical.load_shed") == 1);
+    CHECK(e.loadShed() && e.manualLoadShed() && !e.autoLoadShed());
+    CHECK(!e.loadPowered(radios) && !e.loadPowered(beacon) && !e.loadPowered(nav));
+    CHECK(e.loadPowered(tc) && e.loadPowered(gauges) && e.loadPowered(pump));
+    CHECK(e.loadSwitch(radios) && e.loadSwitch(beacon));  // switches and breakers untouched
+    CHECK(cs.loadShed);
+    CHECK(!cs.avionicsOn);
+    CHECK(!cs.nav1.valid);
+    CHECK(cs.fuelGauge[0] > 0);  // the gauges are essential
+    {
+        const auto ev = ac.drainEvents();
+        CHECK(hasEvent(ev, FlightEventType::LoadShed));
+        for (const auto& x : ev)
+            if (x.type == FlightEventType::LoadShed) CHECK_NEAR(x.value, 0, 0);  // the pilot's
+    }
+    // Pitot heat is essential: switched on during the shed, the probe heats.
+    CHECK_NEAR(ac.instruments().truth().pitotHeat, 0, 1e-9);
+    ac.setCockpitControl("electrical.load.pitot_heat", 1);
+    for (int i = 0; i < 240 * 5; ++i) ac.step(kDefaultDt, pilot.update(ac, kDefaultDt), g, atm);
+    CHECK(e.loadPowered(heat));
+    CHECK(ac.instruments().truth().pitotHeat > 0.05);
+    // The alternator stays on line throughout: a manual shed is the pilot's to reset.
+    CHECK(e.alternatorOnline() && e.loadShed());
+    CHECK(ac.setCockpitControl("electrical.load_shed", 0));
+    for (int i = 0; i < 240; ++i) ac.step(kDefaultDt, pilot.update(ac, kDefaultDt), g, atm);
+    CHECK(!e.loadShed());
+    CHECK(e.loadPowered(radios) && e.loadPowered(beacon) && cs.avionicsOn && !cs.loadShed);
+    CHECK(hasEvent(ac.drainEvents(), FlightEventType::LoadRestored));
+    // No bus controller: an alternator failure leaves everything on the battery.
+    ac.electrical().setAlternatorFailed(true);
+    for (int i = 0; i < 240 * 10; ++i) ac.step(kDefaultDt, pilot.update(ac, kDefaultDt), g, atm);
+    CHECK(!e.alternatorOnline());
+    CHECK(!e.loadShed());
+    CHECK(e.loadPowered(radios) && e.loadPowered(beacon));
+    CHECK(!hasEvent(ac.drainEvents(), FlightEventType::LoadShed));
+}
+
+TEST_CASE("load shed: the definition needs something to shed and something to keep; the reference files carry the fields") {
+    CHECK(jet().validate().empty());
+    CHECK(single().validate().empty());
+    CHECK(jet().electrical.autoLoadShed);
+    CHECK_NEAR(jet().electrical.loadShedDelay, 2.0, 0);
+    CHECK(!single().electrical.autoLoadShed);
+    CHECK_NEAR(single().electrical.loadShedDelay, 2.0, 0);  // the default
+    int essential = 0;
+    for (const ElectricalLoadDef& l : single().electrical.loads) essential += l.essential;
+    CHECK(essential == 4);  // turn coordinator, gauges, fuel pump, pitot heat
+    AircraftDefinition d = jet();
+    for (ElectricalLoadDef& l : d.electrical.loads) l.essential = true;
+    CHECK(anyContains(d.validate(), "electrical.autoLoadShed: every load is essential"));
+    d.electrical.autoLoadShed = false;  // a light aircraft may well have every breaker essential
+    CHECK(d.validate().empty());
+    d = jet();
+    for (ElectricalLoadDef& l : d.electrical.loads) l.essential = false;
+    CHECK(anyContains(d.validate(), "electrical.autoLoadShed: needs at least one essential load"));
+    d = jet();
+    d.electrical.loadShedDelay = -1;
+    CHECK(anyContains(d.validate(), "electrical.loadShedDelay"));
 }
 
 TEST_CASE("indications: sensed N1 lags a slam acceleration and blanks without gauge power") {

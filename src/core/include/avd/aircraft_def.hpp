@@ -384,6 +384,9 @@ struct ElectricalLoadDef {
     Real minimumVoltage = 18;
     bool onAvionicsBus = false;
     bool initiallyOn = true;          // switch position on a fresh airframe
+    // On the essential bus: stays powered through a load shed (automatic on
+    // battery power with `autoLoadShed`, or the pilot's "electrical.load_shed").
+    bool essential = false;
 };
 
 // An engine-driven generator (alternator, starter-generator) on the main bus.
@@ -413,6 +416,12 @@ struct ElectricalDef {
     // 24 V system, 9 V on a 12 V one).
     Real busMinimumVoltage = -1;
     std::vector<ElectricalLoadDef> loads;
+    // Bus controller: with no generator on line and the battery carrying the
+    // bus for `loadShedDelay`, the non-essential loads are shed (they draw
+    // nothing and read unpowered) until a generator comes back on line. A
+    // light aircraft (false) sheds by hand: cockpit control "electrical.load_shed".
+    bool autoLoadShed = false;
+    Real loadShedDelay = 2.0;         // s on the battery alone before the automatic shed
     Real busMinimum() const { return busMinimumVoltage >= 0 ? busMinimumVoltage : 0.75 * batteryVoltage; }
 };
 

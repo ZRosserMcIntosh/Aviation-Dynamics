@@ -46,6 +46,7 @@ against the POH revision of a specific airplane.
 | Fuel line volume | estimated | Sets the run-on time after a tank runs dry |
 | Battery, alternator | published | 24 V 12.75 Ah; 28 V 60 A |
 | Electrical load currents | estimated | Switches and breakers follow the POH electrical description |
+| Essential loads (`essential`) | estimated | No bus controller: the POH has the pilot shed non-essential equipment after an alternator failure (`electrical.load_shed`); turn coordinator, engine and fuel gauges, fuel pump and pitot heat stay, radios and lights drop |
 | Gear | estimated | Track and wheelbase from the POH; stiffness for about 6 cm static deflection; nose steering ±10°; rolling resistance 0.04 (dry asphalt, textbook range 0.03–0.05) |
 | Brake friction coefficient | calibrated | 0.65, so the brakes hold full static power as the POH run-up requires |
 | Static-port position error | calibrated | Fitted to the POH airspeed calibration table, flaps up |
