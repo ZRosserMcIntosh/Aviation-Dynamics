@@ -634,6 +634,8 @@
   "alternator_voltage_v": 28.0,
   "alternator_max_current_a": 1200,
   "bus_minimum_v": 18,
+  "auto_load_shed": true,
+  "load_shed_delay_s": 2.0,
   "generators": [
    {
     "name": "GEN 1",
@@ -650,9 +652,17 @@
   ],
   "loads": [
    {
+    "name": "avionics_ess",
+    "label": "Essential Avionics (PFD 1, COM 1/NAV 1, transponder)",
+    "current_a": 16.0,
+    "minimum_voltage_v": 20,
+    "avionics_bus": true,
+    "essential": true
+   },
+   {
     "name": "avionics",
-    "label": "Avionics (displays, radios, transponder)",
-    "current_a": 40.0,
+    "label": "Avionics (MFD, PFD 2, COM 2/NAV 2, cabin systems)",
+    "current_a": 24.0,
     "minimum_voltage_v": 20,
     "avionics_bus": true
    },
@@ -660,25 +670,29 @@
     "name": "ahrs",
     "label": "Attitude and Heading Reference",
     "current_a": 4.8,
-    "minimum_voltage_v": 18
+    "minimum_voltage_v": 18,
+    "essential": true
    },
    {
     "name": "turn_coordinator",
     "label": "Standby Instruments",
     "current_a": 1.6,
-    "minimum_voltage_v": 18
+    "minimum_voltage_v": 18,
+    "essential": true
    },
    {
     "name": "engine_gauges",
     "label": "Engine Indication",
     "current_a": 3.2,
-    "minimum_voltage_v": 18
+    "minimum_voltage_v": 18,
+    "essential": true
    },
    {
     "name": "fuel_pump",
     "label": "Fuel Boost Pumps",
     "current_a": 12.8,
-    "minimum_voltage_v": 18
+    "minimum_voltage_v": 18,
+    "essential": true
    },
    {
     "name": "beacon",
@@ -720,7 +734,8 @@
     "label": "Probe Heat",
     "current_a": 19.2,
     "minimum_voltage_v": 18,
-    "initially_on": false
+    "initially_on": false,
+    "essential": true
    },
    {
     "name": "panel_lights",
@@ -1187,7 +1202,7 @@
    "adf": false,
    "dme": false,
    "autopilot": false,
-   "electrical_load": "avionics",
+   "electrical_load": "avionics_ess",
    "com_spacing_khz": 25
   }
  },
