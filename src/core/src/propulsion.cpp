@@ -386,6 +386,15 @@ TurbofanEngine::TurbofanEngine(const TurbofanDef& def) : def_(def) {
     tauUp_ = 0.5 * (lo + hi);
 }
 
+Real TurbofanEngine::fanDiameter() const {
+    return def_.fanDiameter > 0 ? def_.fanDiameter : 2 * def_.reverser.cowlRadius;
+}
+
+Real TurbofanEngine::windmillDragArea() const {
+    if (def_.windmillDragArea >= 0) return def_.windmillDragArea;
+    return 0.12 * kPi * sq(0.5 * fanDiameter());
+}
+
 Real TurbofanEngine::availableThrust(Real pressure, Real temperature, Real mach) const {
     const Real m = std::max(mach, 0.0);
     const Real k = 1 + 0.2 * m * m;
@@ -427,8 +436,10 @@ void TurbofanEngine::evaluate(TurbofanState& s, const TurbofanInputs& in) const 
         s.itt = def_.ittIdle + (def_.ittTakeoff - def_.ittIdle) * tf + 0.7 * (in.ambientTemperature - isa::kSeaLevelTemperature);
         if (s.starting) s.itt += 150 * std::max(0.0, 1 - std::abs(s.n2 - 0.35) / 0.2);  // light-off peak
     } else {
+        // Unlit: the windmilling fan and core are a drag along the thrust
+        // line, D = q CdA with q = 1/2 gamma p M^2 (no density input needed).
         s.thrustFraction = 0;
-        s.thrust = 0;  // windmilling drag neglected (Estimated)
+        s.thrust = -0.7 * in.ambientPressure * sq(std::max(in.mach, 0.0)) * windmillDragArea();
         s.fuelFlow = 0;
     }
     s.oilPressure = s.n2 < 0.05 ? 0.0

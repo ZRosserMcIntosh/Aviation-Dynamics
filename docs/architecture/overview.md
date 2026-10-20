@@ -117,9 +117,10 @@ costs about 30 µs natively (`avdemo bench`).
 | System | Model |
 |---|---|
 | Fuel | Tanks with position, unusable quantity, sender. Selector and shutoff valve. Line volume between valve and engine, so the engine runs on for seconds after starvation. Leaks. |
-| Electrical | Battery open-circuit voltage against state of charge, internal resistance that rises at low charge, alternator field logic and current limit. Named loads with breakers and minimum voltage. |
+| Electrical | Lead-acid battery on its loaded plateau with a surface charge, internal resistance that rises at low charge, CC/CV charge taper; one alternator or declared per-engine generators in parallel (own switch, failure and cut-in speed), a definition-level bus minimum voltage. Named loads with breakers and minimum voltage; the fuel-pump breaker carries the pump's current only while it runs. |
+| Hydraulics | Optional: systems pressurised by engine-driven pumps and/or an electric pump needing generator power; gear, flaps, speedbrake, steering and brakes name their systems and move at a rate scaled by the pressure; brake accumulator; gear free-fall release. |
 | Vacuum | Engine-driven pump with a regulated suction against rpm. The gyro rotors belong to the instruments that use them. |
-| Flaps and trim | Electric flap motor with a rate, detents and a load. Trim position with a rate. |
+| Flaps and trim | Electric flap motor with a rate, detents and a load (or hydraulic, see above). Trim position with a rate. |
 
 ## Instruments
 
@@ -135,7 +136,7 @@ An aircraft is one JSON file with these sections:
 - `mass` (empty mass, CG, inertia and stations), `reference`;
 - `surfaces`, `fuselages`, `drag_items`;
 - `engines` (engine, propeller and oil system);
-- `fuel`, `electrical`, `vacuum`;
+- `fuel`, `electrical` (with optional `generators`), `hydraulics` (optional), `vacuum`;
 - `gear`, `contacts`, `controls`;
 - `pitot_static`, `stall_warning`, `panel`, `limits`.
 

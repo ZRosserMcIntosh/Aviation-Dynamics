@@ -231,6 +231,14 @@ struct TurbofanDef {
     Real oilPressureIdle = 2.4e5;     // Pa
     Real oilPressureMax = 4.1e5;      // Pa
     int fuelFeed = 0;
+    // Fan diameter, m (0: twice the reverser's cowl radius). Sets the default
+    // windmilling drag area.
+    Real fanDiameter = 0;
+    // Unlit engine: the windmilling fan and core are a drag along the thrust
+    // line, D = q CdA. Default (< 0): 0.12 x the fan disc area (Estimated,
+    // Torenbeek App. G: windmilling drag ~0.1 q x inlet area for a high-bypass
+    // turbofan); the engine-out yaw comes from this plus the live engine.
+    Real windmillDragArea = -1;       // m^2
     // Thrust reverser (optional): fan-flow reverser (cascade type), deployed
     // and stowed automatically on the landing roll.
     struct Reverser {
@@ -307,13 +315,70 @@ struct ElectricalLoadDef {
     bool initiallyOn = true;          // switch position on a fresh airframe
 };
 
+// An engine-driven generator (alternator, starter-generator) on the main bus.
+// Declared generators share the bus in parallel (their ratings add); each
+// comes on line when its own engine is fast enough and has its own switch
+// (cockpit control "electrical.generator<N>") and failure. Without a list the
+// definition has one alternator rated `alternatorMaxCurrent`, driven by the
+// first piston engine or by the fastest turbofan core.
+struct GeneratorDef {
+    std::string name;                 // e.g. "GEN 1"
+    int engine = 0;                   // engine (piston or turbofan index) that drives it
+    Real maxCurrent = 300;            // A at the regulated voltage
+    // Turbofan starter-generators: core speed (fraction of take-off N2) from
+    // which the generator holds the bus; a windmilling core (~20 %) does not.
+    Real cutInN2 = 0.45;
+};
+
 struct ElectricalDef {
-    Real batteryVoltage = 24.0;       // open circuit, full
+    Real batteryVoltage = 24.0;       // nominal (12 cells); the loaded plateau is ~1.017 x this
     Real batteryCapacity = 13.0 * 3600;  // A s
     Real batteryResistance = 0.05;    // ohm
-    Real alternatorVoltage = 28.0;
-    Real alternatorMaxCurrent = 60;
+    Real alternatorVoltage = 28.0;    // regulated bus voltage with a generator on line
+    Real alternatorMaxCurrent = 60;   // A, the single alternator when `generators` is empty
+    std::vector<GeneratorDef> generators;
+    // Bus voltage below which bus-powered devices (gauges, annunciators,
+    // actuators, pumps) stop: < 0 means 0.75 x batteryVoltage (18 V on a
+    // 24 V system, 9 V on a 12 V one).
+    Real busMinimumVoltage = -1;
     std::vector<ElectricalLoadDef> loads;
+    Real busMinimum() const { return busMinimumVoltage >= 0 ? busMinimumVoltage : 0.75 * batteryVoltage; }
+};
+
+// ---- Hydraulics (optional; absent = every actuator moves unconditionally) ----
+//
+// Each system is pressurised by engine-driven pumps (full pressure from
+// about 40 % of idle core speed up; a windmilling core gives none) and/or an
+// electric pump on the main bus. Pressure follows its source through a
+// first-order lag. An actuator draws on one or more systems (the best of
+// them): below 20 % pressure it does not move, from there its rate grows
+// linearly to the full rate at full pressure. Brakes keep an accumulator good
+// for a number of applications once every supplying system is down.
+struct HydraulicElectricPumpDef {
+    Real current = 0;                 // A drawn from the bus while running (0 = no electric pump)
+    // The pump contactor is held by generator power (the battery cannot carry
+    // a 3,000 psi pump for long): off with every generator off line.
+    bool generatorOnly = true;
+};
+
+struct HydraulicSystemDef {
+    std::string name = "A";
+    std::vector<int> engines;         // engine-driven pumps: engine indices (piston or turbofan)
+    HydraulicElectricPumpDef electricPump;
+    Real nominalPressure = 2.068e7;   // Pa (3,000 psi), for display
+    Real riseTime = 2.0;              // s, pressure time constant toward its source
+};
+
+struct HydraulicsDef {
+    bool present = false;
+    std::vector<HydraulicSystemDef> systems;
+    // Supplying systems (indices) of each actuator; an empty list means that
+    // actuator is not hydraulic (moves unconditionally, as without the block).
+    std::vector<int> gear, flaps, speedbrake, steering, brakes;
+    int brakeAccumulatorApplications = 6;   // full brake applications with every brake system down
+    // Emergency (free-fall) extension: the gear lowers at this fraction of
+    // its normal rate with the uplocks released, whatever the pressure.
+    Real freeFallRateFraction = 0.35;
 };
 
 // ---- Landing gear and contact --------------------------------------------
@@ -503,6 +568,7 @@ struct AircraftDefinition {
     std::vector<TurbofanDef> turbofans;
     FuelSystemDef fuel;
     ElectricalDef electrical;
+    HydraulicsDef hydraulics;
     std::vector<GearDef> gear;
     std::vector<ContactPointDef> contacts;
     FlightControlsDef controls;

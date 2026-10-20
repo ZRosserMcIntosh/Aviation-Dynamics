@@ -220,6 +220,9 @@ std::vector<std::string> AircraftDefinition::validate() const {
         c.positive(p + ".ittTakeoff", e.ittTakeoff);
         c.nonNegative(p + ".oilPressureIdle", e.oilPressureIdle);
         c.nonNegative(p + ".oilPressureMax", e.oilPressureMax);
+        c.range(p + ".fanDiameter", e.fanDiameter, 0, 5);
+        if (e.windmillDragArea >= 0) c.range(p + ".windmillDragArea", e.windmillDragArea, 0, 5);
+        else c.finite(p + ".windmillDragArea", e.windmillDragArea);
         if (e.reverser.present) {
             c.range(p + ".reverser.effectiveness", e.reverser.effectiveness, 0, 0.8);
             c.positive(p + ".reverser.transitTime", e.reverser.transitTime);
@@ -289,6 +292,42 @@ std::vector<std::string> AircraftDefinition::validate() const {
     for (std::size_t i = 0; i < electrical.loads.size(); ++i) {
         c.nonNegative(idx("electrical.loads", i) + ".current", electrical.loads[i].current);
         c.nonNegative(idx("electrical.loads", i) + ".minimumVoltage", electrical.loads[i].minimumVoltage);
+    }
+    const int engineTotal = static_cast<int>(engines.size() + turbofans.size());
+    if (electrical.generators.size() > 4) c.add("electrical.generators", "at most 4 generators");
+    for (std::size_t i = 0; i < electrical.generators.size(); ++i) {
+        const GeneratorDef& g = electrical.generators[i];
+        const auto p = idx("electrical.generators", i);
+        if (g.engine < 0 || g.engine >= engineTotal) c.add(p + ".engine", "no such engine");
+        c.nonNegative(p + ".maxCurrent", g.maxCurrent);
+        c.range(p + ".cutInN2", g.cutInN2, 0.1, 1);
+    }
+    if (electrical.busMinimumVoltage >= 0) c.range("electrical.busMinimumVoltage", electrical.busMinimumVoltage, 0, electrical.batteryVoltage);
+    else c.finite("electrical.busMinimumVoltage", electrical.busMinimumVoltage);
+
+    if (hydraulics.present) {
+        if (hydraulics.systems.empty()) c.add("hydraulics.systems", "at least one system required");
+        if (hydraulics.systems.size() > 4) c.add("hydraulics.systems", "at most 4 systems");
+        for (std::size_t i = 0; i < hydraulics.systems.size(); ++i) {
+            const HydraulicSystemDef& h = hydraulics.systems[i];
+            const auto p = idx("hydraulics.systems", i);
+            for (int e : h.engines)
+                if (e < 0 || e >= engineTotal) c.add(p + ".engines", "no such engine");
+            c.nonNegative(p + ".electricPump.current", h.electricPump.current);
+            c.positive(p + ".nominalPressure", h.nominalPressure);
+            c.positive(p + ".riseTime", h.riseTime);
+        }
+        auto users = [&](const char* name, const std::vector<int>& v) {
+            for (int k : v)
+                if (k < 0 || k >= static_cast<int>(hydraulics.systems.size())) c.add(std::string("hydraulics.") + name, "no such system");
+        };
+        users("gear", hydraulics.gear);
+        users("flaps", hydraulics.flaps);
+        users("speedbrake", hydraulics.speedbrake);
+        users("steering", hydraulics.steering);
+        users("brakes", hydraulics.brakes);
+        c.range("hydraulics.brakeAccumulatorApplications", hydraulics.brakeAccumulatorApplications, 0, 50);
+        c.range("hydraulics.freeFallRateFraction", hydraulics.freeFallRateFraction, 0.05, 1);
     }
 
     if (gear.size() > 8) c.add("gear", "at most 8 gear legs");

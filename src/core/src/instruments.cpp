@@ -454,6 +454,37 @@ void InstrumentPanel::updateEngineAndSystems(Real dt, const SensorInputs& in) {
         s_.fuelGauge[i] = initialised_ ? firstOrder(s_.fuelGauge[i], p ? usable : 0.0, dt, e.fuelSenderTimeConstant)
                                        : (p ? usable : 0.0);
     }
+    // Per-engine indications: speeds through needles, temperatures, flows and
+    // oil through their senders' lags; blank without gauge power (a piston
+    // engine's mechanical tach excepted).
+    s_.engineCount = std::min(in.engineCount, 4);
+    for (std::size_t i = 0; i < 4; ++i) {
+        const SensorInputs::EngineSense& es = in.engines[i];
+        CockpitState::EngineGauges& g = s_.engines[i];
+        const bool fitted = static_cast<int>(i) < s_.engineCount;
+        const bool speeds = fitted && (p || !es.electric);
+        const bool senders = fitted && p;
+        const Real n1 = speeds ? es.n1 : 0.0, n2 = speeds ? es.n2 : 0.0;
+        const Real oil = senders ? es.oilPressure : 0.0, itt = senders ? es.itt : 0.0;
+        const Real ff = senders ? es.fuelFlow : 0.0, oilT = senders ? es.oilTemperature : 0.0;
+        if (!initialised_) {
+            n1Needle_[i].reset(n1);
+            n2Needle_[i].reset(n2);
+            engineOilNeedle_[i].reset(oil);
+            g.itt = itt;
+            g.fuelFlow = ff;
+            g.oilTemperature = oilT;
+        }
+        n1Needle_[i].update(n1, dt, e.needle);
+        n2Needle_[i].update(n2, dt, e.needle);
+        engineOilNeedle_[i].update(oil, dt, e.needle);
+        g.n1 = std::max(n1Needle_[i].x, 0.0);
+        g.n2 = std::max(n2Needle_[i].x, 0.0);
+        g.oilPressure = std::max(engineOilNeedle_[i].x, 0.0);
+        g.itt = firstOrder(g.itt, itt, dt, 3.0);
+        g.fuelFlow = firstOrder(g.fuelFlow, ff, dt, 1.0);
+        g.oilTemperature = firstOrder(g.oilTemperature, oilT, dt, tau);
+    }
     // Self-powered: ammeter shunt, suction gauge, voltmeter (shows the bus).
     s_.ammeter = -in.batteryCurrent;
     s_.voltmeter = in.busVoltage;
@@ -463,7 +494,7 @@ void InstrumentPanel::updateEngineAndSystems(Real dt, const SensorInputs& in) {
     const AnnunciatorsDef& a = def_.annunciators;
     if (a.installed && in.annunciatorsPowered) {
         if (in.oilPressure < a.oilPressureBelow) ann |= kAnnOilPressure;
-        if (in.suction < a.vacuumBelow) ann |= kAnnLowVacuum;
+        if (in.vacuumInstalled && in.suction < a.vacuumBelow) ann |= kAnnLowVacuum;
         if (in.busVoltage < a.voltsBelow) ann |= kAnnVolts;
         for (int i = 0; i < std::min(in.tankCount, 2); ++i)
             if (in.fuelQuantity[i] - in.fuelUnusable[i] < a.lowFuelBelow) ann |= i == 0 ? kAnnLowFuelLeft : kAnnLowFuelRight;

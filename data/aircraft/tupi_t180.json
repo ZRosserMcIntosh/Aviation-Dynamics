@@ -15,6 +15,8 @@
   ],
   "provenance": [
     {"field": "mass.empty_kg", "kind": "published", "source": "POH", "note": "Standard empty weight 1663 lb (incl. unusable fuel and full oil)."},
+    {"field": "electrical.loads[fuel_pump].current_a", "kind": "estimated", "source": "EST", "note": "Auxiliary fuel pump current ~4 A (5 A breaker), drawn only while the pump switch is on."},
+    {"field": "electrical.battery_resistance_ohm", "kind": "estimated", "source": "EST", "note": "Battery model: loaded plateau 24.4 V charged / 23.0 V at 2 % with a surface charge of up to +1.1 V built by the alternator in ~1 min and stripped by a load in ~40 s; charge acceptance tapers to ~2 A at full (ammeter settles near +2 A in cruise, as a 172S does)."},
     {"field": "mass.empty_cg_m", "kind": "estimated", "source": "EST", "note": "Typical delivered C172S empty CG ~39.6 in aft of datum; height estimated."},
     {"field": "mass.empty_inertia_kgm2", "kind": "estimated", "source": "ROSKAM", "note": "Chosen so the gross-weight totals fall near the commonly quoted C172 values (Ixx~1285, Iyy~1825, Izz~2667 kg m^2); no manufacturer source."},
     {"field": "mass.max_takeoff_kg", "kind": "published", "source": "POH", "note": "2550 lb normal category."},
@@ -272,7 +274,7 @@
       {"name": "turn_coordinator", "label": "Circuit Breaker: Turn Coordinator", "current_a": 0.5, "minimum_voltage_v": 18},
       {"name": "engine_gauges", "label": "Circuit Breaker: Instruments (engine and fuel gauges)", "current_a": 0.5, "minimum_voltage_v": 18},
       {"name": "flaps", "label": "Circuit Breaker: Flap Motor", "current_a": 0.0, "minimum_voltage_v": 18},
-      {"name": "fuel_pump", "label": "Circuit Breaker: Fuel Pump", "current_a": 0.0, "minimum_voltage_v": 18},
+      {"name": "fuel_pump", "label": "Circuit Breaker: Fuel Pump", "current_a": 4.0, "minimum_voltage_v": 18},
       {"name": "beacon", "label": "Beacon Switch", "current_a": 1.5, "minimum_voltage_v": 18, "initially_on": false},
       {"name": "nav_lights", "label": "NAV Lights Switch", "current_a": 2.5, "minimum_voltage_v": 18, "initially_on": false},
       {"name": "strobes", "label": "Strobe Lights Switch", "current_a": 2.0, "minimum_voltage_v": 18, "initially_on": false},

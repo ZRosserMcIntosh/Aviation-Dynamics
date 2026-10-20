@@ -572,6 +572,8 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("oil_pressure_idle_psi", e.oilPressureIdle, 6894.757);
         o.num("oil_pressure_max_psi", e.oilPressureMax, 6894.757);
         o.integer("fuel_feed", e.fuelFeed);
+        o.num("fan_diameter_m", e.fanDiameter);
+        o.num("windmill_drag_area_m2", e.windmillDragArea);
         if (o.has("thrust_reverser")) {
             Obj rv = o.child("thrust_reverser");
             e.reverser.present = true;
@@ -619,6 +621,15 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         e.num("battery_resistance_ohm", d.electrical.batteryResistance);
         e.num("alternator_voltage_v", d.electrical.alternatorVoltage);
         e.num("alternator_max_current_a", d.electrical.alternatorMaxCurrent);
+        e.num("bus_minimum_v", d.electrical.busMinimumVoltage);
+        e.each("generators", [&](Obj& o, std::size_t) {
+            GeneratorDef g;
+            o.str("name", g.name);
+            o.integer("engine", g.engine, true);
+            o.num("max_current_a", g.maxCurrent, 1, true);
+            o.num("cut_in_n2", g.cutInN2);
+            d.electrical.generators.push_back(g);
+        });
         e.each("loads", [&](Obj& o, std::size_t) {
             ElectricalLoadDef l;
             o.str("name", l.name, true);
@@ -629,6 +640,37 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
             o.boolean("avionics_bus", l.onAvionicsBus);
             d.electrical.loads.push_back(l);
         });
+    }
+    if (r.has("hydraulics")) {
+        Obj h = r.child("hydraulics");
+        d.hydraulics.present = true;
+        h.each("systems", [&](Obj& o, std::size_t) {
+            HydraulicSystemDef sys;
+            std::vector<Real> eng;
+            o.str("name", sys.name);
+            o.numbers("engines", eng);
+            for (Real e : eng) sys.engines.push_back(static_cast<int>(e));
+            if (o.has("electric_pump")) {
+                Obj ep = o.child("electric_pump");
+                ep.num("current_a", sys.electricPump.current, 1, true);
+                ep.boolean("generator_only", sys.electricPump.generatorOnly);
+            }
+            o.num("nominal_pressure_psi", sys.nominalPressure, 6894.757);
+            o.num("rise_time_s", sys.riseTime);
+            d.hydraulics.systems.push_back(sys);
+        }, true);
+        auto users = [&](const char* key, std::vector<int>& out) {
+            std::vector<Real> v;
+            h.numbers(key, v);
+            for (Real x : v) out.push_back(static_cast<int>(x));
+        };
+        users("gear", d.hydraulics.gear);
+        users("flaps", d.hydraulics.flaps);
+        users("speedbrake", d.hydraulics.speedbrake);
+        users("steering", d.hydraulics.steering);
+        users("brakes", d.hydraulics.brakes);
+        h.integer("brake_accumulator_applications", d.hydraulics.brakeAccumulatorApplications);
+        h.num("free_fall_rate_fraction", d.hydraulics.freeFallRateFraction);
     }
     r.each("gear", [&](Obj& o, std::size_t) {
         GearDef g;
