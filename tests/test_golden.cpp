@@ -8,6 +8,14 @@
 // mismatch prints the worst delta per channel and the time of the first
 // divergence. Goldens change only in a commit that explains why
 // (tests/golden/README.md).
+//
+// The traces are recorded on the reference platform (Linux x86-64, GCC,
+// Release) and compared only there: another compiler, architecture or
+// optimisation level differs in the last bits of a few operations (FMA
+// contraction, libm, vectorised sums), and the contact-heavy scenarios
+// amplify that past the tight bands (ADR 0003 disclaims cross-platform
+// bit-identity). Elsewhere the cases SKIP; AVD_GOLDEN_FORCE=1 compares anyway.
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -19,7 +27,25 @@ namespace g = avd::scenarios::golden;
 
 namespace {
 
+bool referencePlatform() {
+#if defined(__linux__) && defined(__x86_64__) && defined(__GNUC__) && !defined(__clang__) && defined(NDEBUG)
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool compareHere() {
+    if (const char* f = std::getenv("AVD_GOLDEN_FORCE"); f && *f && *f != '0') return true;
+    return referencePlatform();
+}
+
 void replay(const char* name) {
+    if (!compareHere()) {
+        std::cout << "  SKIPPED: golden traces are compared on the reference platform (Linux x86-64, GCC, Release); "
+                     "set AVD_GOLDEN_FORCE=1 to compare here\n";
+        return;
+    }
     const std::string path = g::goldenPath(name);
     std::ifstream f(path);
     if (!f) {

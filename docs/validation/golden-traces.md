@@ -78,3 +78,12 @@ compiler's or platform's last-bit arithmetic over a few minutes of flight,
 not for a physics change. Traces are recorded with the project's release
 compiler (CI's `linux-gcc`, Release); ADR 0003 (deterministic per platform)
 applies.
+
+## Reference platform
+
+The traces are recorded and compared on Linux x86-64 with GCC in Release.
+Another compiler, architecture or optimisation level (Apple clang on arm64,
+MSVC, the sanitizer build) differs in the last bits of a few operations and
+the contact-heavy scenarios amplify that past the bands, so `avd_tests golden`
+skips there with a message; `AVD_GOLDEN_FORCE=1` compares anyway, and the
+`avdtrace --check` CI step runs only in the linux-gcc job.

@@ -46,3 +46,12 @@ fresh checkout is green; record on the branch the physics is settled on.
 | `roll_deg`, `heading_deg` | deg (on the circle) | 0.3 | `gear` | 0..1 | 0.01 |
 | | | | `flap_deg` | deg | 0.3 |
 | | | | `on_ground` | 0/1 | exact |
+
+## Reference platform
+
+The traces are recorded and compared on Linux x86-64 with GCC in Release.
+Another compiler, architecture or optimisation level (Apple clang on arm64,
+MSVC, the sanitizer build) differs in the last bits of a few operations and
+the contact-heavy scenarios amplify that past the bands, so `avd_tests golden`
+skips there with a message; `AVD_GOLDEN_FORCE=1` compares anyway, and the
+`avdtrace --check` CI step runs only in the linux-gcc job.
