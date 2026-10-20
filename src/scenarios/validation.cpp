@@ -699,7 +699,17 @@ std::string num(Real v) {
 }
 }  // namespace
 
-void writeJson(std::ostream& out, const Rows& rows, bool complete) {
+void writeJson(std::ostream& out, const Rows& in, bool complete) {
+    // Canonical order (allIds), whichever order the rows were produced in,
+    // so the tests and `avdemo validate` write the same file.
+    Rows rows = in;
+    const std::vector<std::string> ids = allIds();
+    auto rank = [&](const Row& r) {
+        for (std::size_t i = 0; i < ids.size(); ++i)
+            if (ids[i] == r.id) return i;
+        return ids.size();
+    };
+    std::stable_sort(rows.begin(), rows.end(), [&](const Row& a, const Row& b) { return rank(a) < rank(b); });
     out << "{\n  \"format\": \"avd-validation/1\",\n  \"complete\": " << (complete ? "true" : "false") << ",\n  \"rows\": [\n";
     for (std::size_t i = 0; i < rows.size(); ++i) {
         const Row& r = rows[i];
