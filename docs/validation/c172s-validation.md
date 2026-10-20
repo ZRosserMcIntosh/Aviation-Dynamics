@@ -19,9 +19,9 @@ windmilling, which is the chart's condition.
 | Quantity | Published | Simulation | Error | Band | Result | Source |
 |---|---|---|---|---|---|---|
 | Stall speed, flaps up, power off<br><small>1 kt/s deceleration at idle, wings level; clean section clmax is the published NACA 2412 value (not fitted)</small> | 53 KCAS | 53.3 KCAS | +0.6 % | ±6 % | within | C172S POH Section 5 |
-| Stall speed, flaps 30, power off<br><small>the flap clmax increment is calibrated to this row</small> | 48 KCAS | 48.1 KCAS | +0.3 % | ±6 % | within | C172S POH Section 5 |
-| Stall warning margin, flaps up<br><small>horn on at 55.8 KIAS, stall at 47.0 KIAS</small> | 5-10 kt above the stall | 8.75 kt | — | 5–10 kt | within | C172S POH Section 5 |
-| Stall warning margin, flaps 30<br><small>horn on at 50.1 KIAS, stall at 43.3 KIAS</small> | 5-10 kt above the stall | 6.82 kt | — | 5–10 kt | within | C172S POH Section 5 |
+| Stall speed, flaps 30, power off<br><small>the flap clmax increment is calibrated to this row</small> | 48 KCAS | 48.2 KCAS | +0.3 % | ±6 % | within | C172S POH Section 5 |
+| Stall warning margin, flaps up<br><small>horn on at 55.8 KIAS, stall at 47.1 KIAS</small> | 5-10 kt above the stall | 8.66 kt | — | 5–10 kt | within | C172S POH Section 5 |
+| Stall warning margin, flaps 30<br><small>horn on at 50.1 KIAS, stall at 42.9 KIAS</small> | 5-10 kt above the stall | 7.14 kt | — | 5–10 kt | within | C172S POH Section 5 |
 | Maximum level speed, sea level<br><small>full throttle, best power; 2693 rpm</small> | 126 KTAS | 127 KTAS | +0.4 % | ±5 % | within | C172S POH Section 5 |
 | Engine speed at the maximum level speed | at most 2,700 rpm (red line) | 2,693 rpm | — | 0–2,700 rpm | within | C172S POH Section 5 |
 | Full-throttle level speed, 8,000 ft<br><small>74 % power, 2606 rpm, propeller efficiency 0.84, 11.0 gph at best power</small> | 124 KTAS (75 % power, 2,650 rpm) | 120 KTAS | -2.9 % | ±5 % | within | C172S POH Section 5, Figure 5-8 |
@@ -54,13 +54,13 @@ windmilling, which is the chart's condition.
 | Take-off ground roll (short field)<br><small>flaps 10, lift off at 51 KIAS, climb at 56 KIAS</small> | 960 ft | 781 ft | -18.6 % | ±20 % | within | C172S POH Section 5 (short-field take-off, sea level, ISA) |
 | Take-off distance over a 50 ft obstacle | 1,630 ft | 1,529 ft | -6.2 % | ±20 % | within | C172S POH Section 5 (short-field take-off, sea level, ISA) |
 | Lift-off speed | 51 KIAS | 51.5 KIAS | — | 48–55 KIAS | within | C172S POH Section 5 |
-| Landing ground roll, pilot braking technique<br><small>touchdown at 50 KCAS, 1 s to the pedals, 1 s ramp, 50 % sustained pedal (no anti-skid), the throttle closed (the idling propeller drags a little); see the discussion in the validation note</small> | 575 ft | 408 ft | -29.1 % | ±25 % | **OUTSIDE** | C172S POH Section 5 (short-field landing, sea level, ISA) |
-| Landing roll, tyre-limited bound (full pedal at touchdown)<br><small>physics check, not a handbook figure</small> | — | 299 ft | — | — | info | — |
+| Landing ground roll, pilot braking technique<br><small>touchdown at 50 KCAS, 1 s to the pedals, 1 s ramp, 50 % sustained pedal (no anti-skid), the throttle closed (the idling propeller drags a little); see the discussion in the validation note</small> | 575 ft | 566 ft | -1.6 % | ±25 % | within | C172S POH Section 5 (short-field landing, sea level, ISA) |
+| Landing roll, tyre-limited bound (full pedal at touchdown)<br><small>physics check, not a handbook figure</small> | — | 311 ft | — | — | info | — |
 | Static rpm, full throttle | 2,300-2,420 rpm | 2,383 rpm | — | 2,300–2,420 rpm | within | C172S POH Section 4 (full-throttle static check) |
 <!-- validation:end -->
 
 <!-- validation:begin summary aircraft=tupi_t180 -->
-34 compared rows, 1 outside their band (c172s.landing.roll).
+34 compared rows, 0 outside their band.
 <!-- validation:end -->
 
 Aerodynamics II replaced independent strips with a nonlinear lifting line

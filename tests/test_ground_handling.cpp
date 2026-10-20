@@ -2,6 +2,7 @@
 // brakes (locking, sliding friction, anti-skid), the castoring nose wheel,
 // parked stability and the crosswind take-off roll.
 // SPDX-License-Identifier: MIT
+#include <cstdio>
 #include <algorithm>
 #include <cmath>
 #include <string>
@@ -62,6 +63,16 @@ Real noseVelocityDirection(const Aircraft& ac) {
     return std::atan2(v.y, std::max(v.x, 0.2));
 }
 
+// The reference airplane with brakes able to take its tyres past their peak
+// (three times a C172's capacity): the tyre-model tests below want the
+// brake-limited and tyre-limited regimes both reachable.
+AircraftDefinition strongBrakes() {
+    AircraftDefinition d = ref();
+    for (GearDef& g : d.gear)
+        if (g.brakeGroup >= 0) g.brakeTorque *= 3;
+    return d;
+}
+
 // Wheel rim speed over the contact point's rolling speed (1 = rolling freely).
 Real spinFraction(const GearTelemetry& gt, const GearDef& g) {
     return gt.wheelOmega * g.wheelRadius / std::max(gt.rollingSpeed, 1.0);
@@ -77,7 +88,7 @@ TEST_CASE("ground handling: the gear's tyre, brake and castor fields load and va
     CHECK_NEAR(n.steerLinkageStiffness, 2000, 1e-9);
     CHECK_NEAR(n.steerLinkageBreakout, 100, 1e-9);
     CHECK_NEAR(n.staticLoad, 2870, 1e-9);
-    CHECK_NEAR(m.brakeTorque, 630, 1e-9);
+    CHECK_NEAR(m.brakeTorque, 350, 1e-9);  // ~0.3 g full-pedal: a light aircraft's disc brakes
     CHECK_NEAR(m.wheelInertia, 0.18, 1e-12);
     CHECK_NEAR(m.staticLoad, 4220, 1e-9);
     CHECK_NEAR(m.slidingFrictionRatio, 0.75, 1e-12);
@@ -103,7 +114,7 @@ TEST_CASE("ground handling: braking and cornering share one friction ellipse") {
     // it away. With full brakes on top, the resultant tyre force never
     // exceeds mu N and the cornering force gives way to the braking.
     auto run = [](Real brake, Real& meanLateral, Real& worstDemand) {
-        Aircraft ac(ref());
+        Aircraft ac(strongBrakes());
         SimpleWeather atm;
         FlatGround g(0);
         setRolling(ac, g, atm, 15, 0.5, 1.0);
@@ -174,22 +185,26 @@ TEST_CASE("ground handling: without anti-skid a hard stop on a wet runway locks 
         return length(ac.datumPosition() - x0);
     };
     Real lockedFraction, slidingRatio, heading;
-    const Real locked = stop(ref(), true, 0, lockedFraction, slidingRatio, heading);
+    // Brakes strong enough to lock the mains on the wet surface (a C172's own
+    // 350 N.m would only just reach the peak); the sliding regime is the point.
+    const AircraftDefinition strong = strongBrakes();
+    const Real locked = stop(strong, true, 0, lockedFraction, slidingRatio, heading);
     CHECK(lockedFraction > 0.9);  // locked through the fast part of the roll
-    CHECK_NEAR(slidingRatio, ref().gear[1].slidingFrictionRatio, 0.03);
+    CHECK_NEAR(slidingRatio, strong.gear[1].slidingFrictionRatio, 0.03);
     // The same airplane with an anti-skid system never locks and stops shorter.
-    AircraftDefinition as = ref();
+    AircraftDefinition as = strong;
     for (GearDef& g : as.gear)
         if (g.brakeGroup >= 0) g.antiSkidEfficiency = 0.88;
     Real f2, s2, h2;
     const Real antiSkid = stop(as, true, 0, f2, s2, h2);
+    std::printf("    wet stop from 40 kt: locked %.1f m (slide %.2f mu_peak), anti-skid %.1f m (locked fraction %.3f)\n", locked, slidingRatio, antiSkid, f2);
     CHECK(f2 < 0.02);
     CHECK(antiSkid < 0.95 * locked);
     // Locked mains have no cornering left: with the pedals free the skid
     // swings into a ground loop, where the rolling (anti-skid) tyres keep
     // the airplane straight.
     Real f3, s3, h3, f4, s4, h4;
-    stop(ref(), false, 1.0, f3, s3, h3);  // a 2 kt sideways drift when the brakes go on
+    stop(strong, false, 1.0, f3, s3, h3);  // a 2 kt sideways drift when the brakes go on
     stop(as, false, 1.0, f4, s4, h4);
     CHECK(std::abs(h3) > degToRad(20));
     CHECK(std::abs(h4) < degToRad(6));
@@ -408,10 +423,10 @@ TEST_CASE("ground handling: the castoring nose wheel turns toward its velocity i
     // rolls in, against the linkage spring; a rigidly held wheel stays put.
     // Brake turns at ~1,700 rpm (lever 0.32 on the butterfly throttle schedule).
     Real s1, v1, r1;
-    turn(ref(), 0, 0.6, 0.32, s1, v1, r1);
+    turn(strongBrakes(), 0, 0.6, 0.32, s1, v1, r1);
     CHECK(v1 > degToRad(2));
     CHECK_RANGE(s1, 0.3 * v1, v1);
-    AircraftDefinition rigid = ref();
+    AircraftDefinition rigid = strongBrakes();
     rigid.gear[0].castorTrail = 0;
     Real s0, v0, r0;
     turn(rigid, 0, 0.6, 0.32, s0, v0, r0);

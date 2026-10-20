@@ -33,4 +33,5 @@ __pycache__/
 captures/
 *.csv
 !benchmarks/*.csv
+!tests/golden/*.csv
 web/dist/

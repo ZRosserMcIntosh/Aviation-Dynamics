@@ -56,7 +56,7 @@ Generated from the test output (`tests/test_validation.cpp`, rows in
 sources and the discussion of every row outside its band are in
 [validation/c172s-validation.md](validation/c172s-validation.md) and
 [validation/top-g-validation.md](validation/top-g-validation.md). The
-whole suite has <!-- validation:begin tests -->226<!-- validation:end --> test cases.
+whole suite has <!-- validation:begin tests -->231<!-- validation:end --> test cases.
 
 ### Tupi T-180 against the Cessna 172S POH
 
@@ -64,9 +64,9 @@ whole suite has <!-- validation:begin tests -->226<!-- validation:end --> test c
 | Quantity | Published | Simulation | Error | Band | Result | Source |
 |---|---|---|---|---|---|---|
 | Stall speed, flaps up, power off<br><small>1 kt/s deceleration at idle, wings level; clean section clmax is the published NACA 2412 value (not fitted)</small> | 53 KCAS | 53.3 KCAS | +0.6 % | ±6 % | within | C172S POH Section 5 |
-| Stall speed, flaps 30, power off<br><small>the flap clmax increment is calibrated to this row</small> | 48 KCAS | 48.1 KCAS | +0.3 % | ±6 % | within | C172S POH Section 5 |
-| Stall warning margin, flaps up<br><small>horn on at 55.8 KIAS, stall at 47.0 KIAS</small> | 5-10 kt above the stall | 8.75 kt | — | 5–10 kt | within | C172S POH Section 5 |
-| Stall warning margin, flaps 30<br><small>horn on at 50.1 KIAS, stall at 43.3 KIAS</small> | 5-10 kt above the stall | 6.82 kt | — | 5–10 kt | within | C172S POH Section 5 |
+| Stall speed, flaps 30, power off<br><small>the flap clmax increment is calibrated to this row</small> | 48 KCAS | 48.2 KCAS | +0.3 % | ±6 % | within | C172S POH Section 5 |
+| Stall warning margin, flaps up<br><small>horn on at 55.8 KIAS, stall at 47.1 KIAS</small> | 5-10 kt above the stall | 8.66 kt | — | 5–10 kt | within | C172S POH Section 5 |
+| Stall warning margin, flaps 30<br><small>horn on at 50.1 KIAS, stall at 42.9 KIAS</small> | 5-10 kt above the stall | 7.14 kt | — | 5–10 kt | within | C172S POH Section 5 |
 | Maximum level speed, sea level<br><small>full throttle, best power; 2693 rpm</small> | 126 KTAS | 127 KTAS | +0.4 % | ±5 % | within | C172S POH Section 5 |
 | Engine speed at the maximum level speed | at most 2,700 rpm (red line) | 2,693 rpm | — | 0–2,700 rpm | within | C172S POH Section 5 |
 | Full-throttle level speed, 8,000 ft<br><small>74 % power, 2606 rpm, propeller efficiency 0.84, 11.0 gph at best power</small> | 124 KTAS (75 % power, 2,650 rpm) | 120 KTAS | -2.9 % | ±5 % | within | C172S POH Section 5, Figure 5-8 |
@@ -95,12 +95,12 @@ whole suite has <!-- validation:begin tests -->226<!-- validation:end --> test c
 | Take-off ground roll (short field)<br><small>flaps 10, lift off at 51 KIAS, climb at 56 KIAS</small> | 960 ft | 781 ft | -18.6 % | ±20 % | within | C172S POH Section 5 (short-field take-off, sea level, ISA) |
 | Take-off distance over a 50 ft obstacle | 1,630 ft | 1,529 ft | -6.2 % | ±20 % | within | C172S POH Section 5 (short-field take-off, sea level, ISA) |
 | Lift-off speed | 51 KIAS | 51.5 KIAS | — | 48–55 KIAS | within | C172S POH Section 5 |
-| Landing ground roll, pilot braking technique<br><small>touchdown at 50 KCAS, 1 s to the pedals, 1 s ramp, 50 % sustained pedal (no anti-skid), the throttle closed (the idling propeller drags a little); see the discussion in the validation note</small> | 575 ft | 408 ft | -29.1 % | ±25 % | **OUTSIDE** | C172S POH Section 5 (short-field landing, sea level, ISA) |
+| Landing ground roll, pilot braking technique<br><small>touchdown at 50 KCAS, 1 s to the pedals, 1 s ramp, 50 % sustained pedal (no anti-skid), the throttle closed (the idling propeller drags a little); see the discussion in the validation note</small> | 575 ft | 566 ft | -1.6 % | ±25 % | within | C172S POH Section 5 (short-field landing, sea level, ISA) |
 | Static rpm, full throttle | 2,300-2,420 rpm | 2,383 rpm | — | 2,300–2,420 rpm | within | C172S POH Section 4 (full-throttle static check) |
 <!-- validation:end -->
 
 <!-- validation:begin summary aircraft=tupi_t180 -->
-34 compared rows, 1 outside their band (c172s.landing.roll).
+34 compared rows, 0 outside their band.
 <!-- validation:end -->
 
 ### Top G against published and representative G650ER figures
@@ -108,10 +108,10 @@ whole suite has <!-- validation:begin tests -->226<!-- validation:end --> test c
 <!-- validation:begin table aircraft=top_g kinds=tolerance,range -->
 | Quantity | Published | Simulation | Error | Band | Result | Source |
 |---|---|---|---|---|---|---|
-| Time to climb, sea level to FL410, mid weight<br><small>33.7 t at brake release; 250/300 KIAS, Mach 0.80; maximum-climb rating; rate of climb at FL410 1474 fpm</small> | about 14 min (derived from about 22 min at MTOW) | 10.9 min | -22.0 % | ±25 % | within | representative, estimated: the MTOW figure (about 22 min) scaled by the specific excess thrust at 33.7 t (12-15 min, see the note) |
-| Time to climb, sea level to FL410, maximum take-off weight<br><small>46.5 t at brake release; 250/300 KIAS, Mach 0.80; maximum-climb rating; rate of climb at FL410 601 fpm, at sea level 5083 fpm</small> | about 22 min | 18.0 min | -18.0 % | ±25 % | within | representative, estimated (G650ER class: FL410 as the initial cruise altitude in about 20-25 min from a departure near MTOW) |
-| Thrust needed for Mach 0.90 at FL410, mid weight (fraction of the maximum-cruise rating)<br><small>33.7 t; the rating allows 18.1 kN per engine here; fuel flow 2068 kg/h, pitch 1.3 deg</small> | available (high-speed cruise Mach 0.90) | 91.8 % | — | 0–98 % | within | Gulfstream G650ER published high-speed cruise Mach 0.90 |
-| Fuel flow at Mach 0.85, FL450, mid weight<br><small>82 % of the maximum-cruise rating (14.5 kN per engine)</small> | about 2,600-3,400 lb/h (class figures) | 1,447 kg/h | — | 998–1,724 kg/h | within | published long-range cruise burn of the class |
+| Time to climb, sea level to FL410, mid weight<br><small>33.7 t at brake release; 250/300 KIAS, Mach 0.80; maximum-climb rating; rate of climb at FL410 1472 fpm</small> | about 14 min (derived from about 22 min at MTOW) | 10.9 min | -22.0 % | ±25 % | within | representative, estimated: the MTOW figure (about 22 min) scaled by the specific excess thrust at 33.7 t (12-15 min, see the note) |
+| Time to climb, sea level to FL410, maximum take-off weight<br><small>46.5 t at brake release; 250/300 KIAS, Mach 0.80; maximum-climb rating; rate of climb at FL410 595 fpm, at sea level 5083 fpm</small> | about 22 min | 18.1 min | -17.9 % | ±25 % | within | representative, estimated (G650ER class: FL410 as the initial cruise altitude in about 20-25 min from a departure near MTOW) |
+| Thrust needed for Mach 0.90 at FL410, mid weight (fraction of the maximum-cruise rating)<br><small>33.7 t; the rating allows 18.1 kN per engine here; fuel flow 2117 kg/h, pitch 1.4 deg</small> | available (high-speed cruise Mach 0.90) | 93.9 % | — | 0–98 % | within | Gulfstream G650ER published high-speed cruise Mach 0.90 |
+| Fuel flow at Mach 0.85, FL450, mid weight<br><small>83 % of the maximum-cruise rating (14.5 kN per engine)</small> | about 2,600-3,400 lb/h (class figures) | 1,456 kg/h | — | 998–1,724 kg/h | within | published long-range cruise burn of the class |
 | Vref (1.23 Vs1g, landing flap) at 27.5 t<br><small>sea level ISA; trimmed CLmax, flaps 39; the square-root-of-weight law, not an independent published point</small> | about 103 KIAS (published 121 kt at MLW scaled by sqrt(W)) | 103 KIAS | — | 100–110 KIAS | within | derived: brokers' MLW Vref (about 121 kt at 37.9 t) x sqrt(27.5 / 37.9) = 103 KIAS; +-5 kt |
 | Vref (1.23 Vs1g, landing flap) at the maximum landing weight, 37.9 t<br><small>sea level ISA; trimmed CLmax, flaps 39</small> | 110-125 KIAS (representative; published values 110-121 kt) | 122 KIAS | — | 110–125 KIAS | within | representative, estimated (G650ER class) |
 | Landing distance from 50 ft, maximum landing weight (37.9 t)<br><small>Vref 122 KIAS (122 at 50 ft), touchdown 463 m past the 50 ft point at 380 fpm; full wheel braking from touchdown, ground spoilers, no reverse credit, dry runway</small> | 3,000 ft (914 m), SL, ISA, MLW | 791 m | -13.4 % | ±15 % | within | Gulfstream G650ER specification sheet (landing distance, SL, ISA, MLW); brokers quote 2,450-3,000 ft |

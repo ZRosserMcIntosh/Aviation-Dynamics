@@ -1254,8 +1254,14 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
                 const Real slipStiffness = kx * g.relaxationLength + gr.spinDamping * std::abs(gt.rollingSpeed);
                 const Real kappaPeak = std::max(gt.peakFriction * gt.normalForce / slipStiffness, 0.005);
                 const Real target = g.antiSkidEfficiency * kappaPeak;
-                m += (target - gt.slipRatio) / target * dt / 0.08;
-                if (gt.slipRatio > 1.2 * target) m -= dt / 0.03;
+                // The loop works in torque, not in lever fraction: a brake with
+                // more capacity than the tyre can react gets proportionally
+                // smaller steps, so the cycle depth does not grow with the
+                // brake (the modulation is a fraction of brakeCmd * brakeTorque).
+                const Real tyreTorque = gt.peakFriction * gt.normalForce * g.wheelRadius;
+                const Real gain = std::min(1.0, tyreTorque / std::max(brakeCmd * gr.brakeTorque, 1.0));
+                m += (target - gt.slipRatio) / target * gain * dt / 0.08;
+                if (gt.slipRatio > 1.2 * target) m -= gain * dt / 0.03;
                 m = clamp(m, 0.0, 1.0);
             }
         }
