@@ -20,32 +20,32 @@ windmilling, which is the chart's condition.
 |---|---|---|---|---|---|---|
 | Stall speed, flaps up, power off<br><small>1 kt/s deceleration at idle, wings level; clean section clmax is the published NACA 2412 value (not fitted)</small> | 53 KCAS | 53.3 KCAS | +0.6 % | ±6 % | within | C172S POH Section 5 |
 | Stall speed, flaps 30, power off<br><small>the flap clmax increment is calibrated to this row</small> | 48 KCAS | 48.2 KCAS | +0.3 % | ±6 % | within | C172S POH Section 5 |
-| Stall warning margin, flaps up<br><small>horn on at 55.8 KIAS, stall at 47.1 KIAS</small> | 5-10 kt above the stall | 8.66 kt | — | 5–10 kt | within | C172S POH Section 5 |
-| Stall warning margin, flaps 30<br><small>horn on at 50.1 KIAS, stall at 42.9 KIAS</small> | 5-10 kt above the stall | 7.14 kt | — | 5–10 kt | within | C172S POH Section 5 |
+| Stall warning margin, flaps up<br><small>horn on at 55.8 KIAS, stall at 47.0 KIAS</small> | 5-10 kt above the stall | 8.77 kt | — | 5–10 kt | within | C172S POH Section 5 |
+| Stall warning margin, flaps 30<br><small>horn on at 50.1 KIAS, stall at 43.0 KIAS</small> | 5-10 kt above the stall | 7.11 kt | — | 5–10 kt | within | C172S POH Section 5 |
 | Maximum level speed, sea level<br><small>full throttle, best power; 2693 rpm</small> | 126 KTAS | 127 KTAS | +0.4 % | ±5 % | within | C172S POH Section 5 |
 | Engine speed at the maximum level speed | at most 2,700 rpm (red line) | 2,693 rpm | — | 0–2,700 rpm | within | C172S POH Section 5 |
-| Full-throttle level speed, 8,000 ft<br><small>74 % power, 2606 rpm, propeller efficiency 0.84, 11.0 gph at best power</small> | 124 KTAS (75 % power, 2,650 rpm) | 120 KTAS | -2.9 % | ±5 % | within | C172S POH Section 5, Figure 5-8 |
-| Power at full throttle, 8,000 ft | 75 % | 74.2 % | -1.1 % | ±8 % | within | C172S POH Section 5, Figure 5-8 |
-| Fuel flow at full throttle, 8,000 ft<br><small>trimmed at best power (richer than the handbook's recommended lean)</small> | about 10.5 gph (recommended lean) | 11.0 gph | — | 8.50–12 gph | within | C172S POH Section 5, Figure 5-8 |
-| Rate of climb, sea level, Vy<br><small>74 KIAS, full throttle, full rich (POH: lean above 3,000 ft)</small> | 730 fpm | 739 fpm | +1.2 % | ±15 % | within | C172S POH Section 5, Figure 5-7 (2,550 lb, standard temperature) |
-| Rate of climb, 4000 ft, Vy<br><small>72-74 KIAS, full throttle, mixture leaned for best power</small> | 600 fpm | 587 fpm | -2.2 % | ±15 % | within | C172S POH Section 5, Figure 5-7 (2,550 lb, standard temperature) |
-| Rate of climb, 8000 ft, Vy<br><small>72-74 KIAS, full throttle, mixture leaned for best power</small> | 455 fpm | 425 fpm | -6.6 % | ±15 % | within | C172S POH Section 5, Figure 5-7 (2,550 lb, standard temperature) |
-| Rate of climb, 12000 ft, Vy<br><small>72-74 KIAS, full throttle, mixture leaned for best power</small> | 310 fpm | 264 fpm | -14.8 % | ±15 % | within | C172S POH Section 5, Figure 5-7 (2,550 lb, standard temperature) |
-| Time to climb, sea level to 8,000 ft | 14 min | 14.1 min | +0.6 % | ±15 % | within | C172S POH Section 5, Figure 5-7 (time, fuel and distance to climb; no start/taxi allowance) |
-| Fuel to climb, sea level to 8,000 ft<br><small>the handbook adds 1.4 gal for start, taxi and take-off, not counted here</small> | 3.0 gal | 2.66 gal | -11.3 % | ±15 % | within | C172S POH Section 5, Figure 5-7 (time, fuel and distance to climb; no start/taxi allowance) |
-| Distance to climb, sea level to 8,000 ft<br><small>zero wind</small> | 19 NM | 18.2 NM | -4.1 % | ±15 % | within | C172S POH Section 5, Figure 5-7 (time, fuel and distance to climb; no start/taxi allowance) |
-| Cruise speed, 2000 ft, 55 % power<br><small>2225 rpm, throttle 45 %, mixture 50 degF rich of peak</small> | 100 KTAS | 100 KTAS | +0.3 % | ±5 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
-| Fuel flow, 2000 ft, 55 % power<br><small>recommended lean</small> | 7.8 gph | 7.87 gph | +0.9 % | ±15 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
-| Cruise speed, 2000 ft, 65 % power<br><small>2368 rpm, throttle 51 %, mixture 50 degF rich of peak</small> | 109 KTAS | 108 KTAS | -0.5 % | ±5 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
-| Fuel flow, 2000 ft, 65 % power<br><small>recommended lean</small> | 9.1 gph | 9.14 gph | +0.4 % | ±15 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
-| Cruise speed, 2000 ft, 75 % power<br><small>2493 rpm, throttle 60 %, mixture 50 degF rich of peak</small> | 116 KTAS | 115 KTAS | -0.6 % | ±5 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
+| Full-throttle level speed, 8,000 ft<br><small>72 % power, 2585 rpm, propeller efficiency 0.84, 10.8 gph at best power</small> | 124 KTAS (75 % power, 2,650 rpm) | 119 KTAS | -3.8 % | ±5 % | within | C172S POH Section 5, Figure 5-8 |
+| Power at full throttle, 8,000 ft | 75 % | 72.5 % | -3.4 % | ±8 % | within | C172S POH Section 5, Figure 5-8 |
+| Fuel flow at full throttle, 8,000 ft<br><small>trimmed at best power (richer than the handbook's recommended lean)</small> | about 10.5 gph (recommended lean) | 10.8 gph | — | 8.50–12 gph | within | C172S POH Section 5, Figure 5-8 |
+| Rate of climb, sea level, Vy<br><small>74 KIAS, full throttle, full rich (POH: lean above 3,000 ft), 2,550 lb</small> | 730 fpm | 739 fpm | +1.2 % | ±15 % | within | C172S POH Section 5, Figure 5-7 (2,550 lb, standard temperature) |
+| Rate of climb, 4000 ft, Vy<br><small>72-74 KIAS, full throttle, mixture leaned for best power, 2,550 lb</small> | 600 fpm | 571 fpm | -4.8 % | ±15 % | within | C172S POH Section 5, Figure 5-7 (2,550 lb, standard temperature) |
+| Rate of climb, 8000 ft, Vy<br><small>72-74 KIAS, full throttle, mixture leaned for best power, 2,550 lb</small> | 410 fpm | 396 fpm | -3.3 % | ±15 % | within | C172S POH Section 5, Figure 5-7 (2,550 lb, standard temperature) |
+| Rate of climb, 12000 ft, Vy<br><small>72-74 KIAS, full throttle, mixture leaned for best power, 2,550 lb</small> | 220 fpm | 224 fpm | +2.0 % | ±15 % | within | C172S POH Section 5, Figure 5-7 (2,550 lb, standard temperature) |
+| Time to climb, sea level to 8,000 ft<br><small>integrated from the 2,550 lb rates, as the handbook's figure is</small> | 14 min | 14.6 min | +4.0 % | ±15 % | within | C172S POH Section 5, Figure 5-7 (time, fuel and distance to climb; no start/taxi allowance) |
+| Fuel to climb, sea level to 8,000 ft<br><small>the handbook adds 1.4 gal for start, taxi and take-off, not counted here</small> | 3.0 gal | 2.71 gal | -9.6 % | ±15 % | within | C172S POH Section 5, Figure 5-7 (time, fuel and distance to climb; no start/taxi allowance) |
+| Distance to climb, sea level to 8,000 ft<br><small>zero wind</small> | 19 NM | 18.8 NM | -0.9 % | ±15 % | within | C172S POH Section 5, Figure 5-7 (time, fuel and distance to climb; no start/taxi allowance) |
+| Cruise speed, 2000 ft, 55 % power<br><small>2223 rpm, throttle 45 %, mixture 50 degF rich of peak</small> | 100 KTAS | 100 KTAS | +0.2 % | ±5 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
+| Fuel flow, 2000 ft, 55 % power<br><small>recommended lean</small> | 7.8 gph | 7.85 gph | +0.7 % | ±15 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
+| Cruise speed, 2000 ft, 65 % power<br><small>2368 rpm, throttle 52 %, mixture 50 degF rich of peak</small> | 109 KTAS | 108 KTAS | -0.5 % | ±5 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
+| Fuel flow, 2000 ft, 65 % power<br><small>recommended lean</small> | 9.1 gph | 9.13 gph | +0.4 % | ±15 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
+| Cruise speed, 2000 ft, 75 % power<br><small>2493 rpm, throttle 61 %, mixture 50 degF rich of peak</small> | 116 KTAS | 115 KTAS | -0.6 % | ±5 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
 | Fuel flow, 2000 ft, 75 % power<br><small>recommended lean</small> | 10.5 gph | 10.4 gph | -0.9 % | ±15 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
-| Cruise speed, 8000 ft, 55 % power<br><small>2334 rpm, throttle 55 %, mixture 50 degF rich of peak</small> | 106 KTAS | 105 KTAS | -1.4 % | ±5 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
-| Fuel flow, 8000 ft, 55 % power<br><small>recommended lean</small> | 7.9 gph | 7.85 gph | -0.7 % | ±15 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
-| Cruise speed, 8000 ft, 65 % power<br><small>2489 rpm, throttle 70 %, mixture 50 degF rich of peak</small> | 116 KTAS | 114 KTAS | -2.0 % | ±5 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
-| Fuel flow, 8000 ft, 65 % power<br><small>recommended lean</small> | 9.2 gph | 9.14 gph | -0.6 % | ±15 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
-| Cruise speed, 8000 ft, 75 % power<br><small>full throttle gives only 73 % here; 2586 rpm, throttle 100 %, mixture 50 degF rich of peak</small> | 124 KTAS | 119 KTAS | -3.8 % | ±5 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
-| Fuel flow, 8000 ft, 75 % power<br><small>recommended lean</small> | 10.5 gph | 10.1 gph | -3.7 % | ±15 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
+| Cruise speed, 8000 ft, 55 % power<br><small>2334 rpm, throttle 56 %, mixture 50 degF rich of peak</small> | 106 KTAS | 105 KTAS | -1.4 % | ±5 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
+| Fuel flow, 8000 ft, 55 % power<br><small>recommended lean</small> | 7.9 gph | 7.84 gph | -0.8 % | ±15 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
+| Cruise speed, 8000 ft, 65 % power<br><small>2489 rpm, throttle 73 %, mixture 50 degF rich of peak</small> | 116 KTAS | 114 KTAS | -2.0 % | ±5 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
+| Fuel flow, 8000 ft, 65 % power<br><small>recommended lean</small> | 9.2 gph | 9.13 gph | -0.7 % | ±15 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
+| Cruise speed, 8000 ft, 75 % power<br><small>full throttle gives only 71 % here; 2565 rpm, throttle 100 %, mixture 50 degF rich of peak</small> | 124 KTAS | 118 KTAS | -4.7 % | ±5 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
+| Fuel flow, 8000 ft, 75 % power<br><small>recommended lean</small> | 10.5 gph | 9.88 gph | -5.9 % | ±15 % | within | C172S POH Section 5, Figure 5-8 (interpolated in % BHP) |
 | Best glide ratio at 68 KIAS, engine failed, propeller windmilling<br><small>throttle closed, mixture at idle cut-off, propeller windmilling the dead engine at 993 rpm, 3,000 ft; sink 748 fpm</small> | about 9.1:1 (1.5 NM per 1,000 ft) | 9.57 :1 | +5.2 % | ±15 % | within | C172S POH Section 5 (Maximum Glide: power off, propeller windmilling) and Section 3 (68 KIAS) |
 | Glide distance per 1,000 ft<br><small>from the ratio above</small> | — | 1.58 NM | — | — | info | — |
 | Propeller thrust in the glide (engine failed, windmilling)<br><small>the windmilling propeller drives the dead engine's friction and pumping, 9.2 hp at 993 rpm; + is pulling</small> | — | -219 N | — | — | info | — |
@@ -79,7 +79,7 @@ about 1,210 ft, against about 810 ft at sea-level ISA.
 |---|---|---|
 | Stall speeds, stall warning | C172S POH Section 5 (stall speeds, 2,550 lb, power off) and Section 4 (warning 5–10 kt above the stall) | |
 | Maximum level speed, full-throttle cruise at 8,000 ft | C172S POH Section 5, Figure 5-8 (cruise performance) and Section 1 (126 KTAS) | |
-| Rate of climb at sea level, 4,000, 8,000 and 12,000 ft; time, fuel and distance to 8,000 ft | C172S POH Section 5, Figure 5-7 (time, fuel and distance to climb; standard temperature column: 730, 600, 455, 310 fpm; 14 min, 3.0 gal, 19 NM; no start, taxi and take-off allowance) | Transcribed from the handbook table, confirm against the printed page before relying on a second decimal; the task that added the rows quoted about 730, 590, 440 and 290 fpm from memory, within a few percent of these |
+| Rate of climb at sea level, 4,000, 8,000 and 12,000 ft; time, fuel and distance to 8,000 ft | C172S POH Section 5, Figure 5-7 (time, fuel and distance to climb, 2,550 lb, standard temperature: 730, 695, 655, 620, 600, 550, 505, 455, 410, 365, 315, 265, 220 fpm from sea level to 12,000 ft by 1,000 ft; 14 min, 3.0 gal, 19 NM to 8,000 ft; no start, taxi and take-off allowance) and Figure 5-6 (maximum rate of climb at −20/0/20/40 °C: 465/405/345/285 fpm at 8,000 ft, 255/195/135 at 12,000) | The 8,000 and 12,000 ft rows carried 455 and 310 fpm until October 2026 (quoted from memory when the rows were added; 455 is the 7,000 ft figure). Checked against two copies of the handbook and against the 14,000 ft service ceiling of Section 1 (730 fpm at sea level and 310 at 12,000 would put the 100 fpm ceiling near 18,000 ft; 220 puts it at 14,500) |
 | Cruise table, 2,000 and 8,000 ft at 55, 65 and 75 % power | C172S POH Section 5, Figure 5-8 (recommended lean mixture: 50 °F rich of peak EGT, Section 4). The handbook tabulates by rpm; the rows are its nearest rows interpolated in % BHP: 100/109/116 KTAS and 7.8/9.1/10.5 gph at 2,000 ft, 106/116/124 KTAS and 7.9/9.2/10.5 gph at 8,000 ft | As above: transcribed, confirm against the page. The simulation trims at an equivalence ratio of 1.06 for the recommended lean |
 | Best glide | C172S POH Section 3 (68 KIAS) and Section 5 (maximum glide: power off, propeller windmilling, flaps up, zero wind, about 1.5 NM per 1,000 ft, 9.1:1) | The chart's "propeller windmilling" is the engine-failure glide: flown here with the mixture at idle cut-off. The idle-power glide is reported as information |
 | Take-off, landing | C172S POH Section 5 (short-field take-off and landing, sea level, ISA) | Landing: demonstrated figure with an unpublished braking technique; see below |
@@ -127,20 +127,97 @@ has 9 % more torque than at 2,700 (about 180/166/155/143/131 hp at
 volumetric efficiency, had 4 %. The inlet-port flow loss, which grows with
 the square of the flow (Heywood 6.2.4), is now in the model
 (`volumetric_efficiency_speed_loss` 0.08, calibrated to that curve). The
-climb rows are 739 / 587 / 425 / 264 fpm against 730 / 600 / 455 / 310
-(+1 %, −2 %, −7 %, −15 %), the time to 8,000 ft 14.1 min against 14, the
-distance 18.2 NM against 19. The 12,000 ft row sits at the edge of its
-band. What remains is not in the engine: the POH's 310 fpm at 12,000 ft
-needs about 88 hp of thrust power from the 106 hp the Gagg–Farrar-lapsed
-engine makes at that rpm (a propeller efficiency of 0.83 at J ≈ 0.64, not
-credible) unless the drag at 72 KIAS is about 10 % lower than the model's
-(L/D 10.6 in the climb, with the slipstream and trim). The full-throttle
-level row at 8,000 ft points the same way: the model turns the same
+climb rows were then 739 / 587 / 425 / 264 fpm against the 730 / 600 /
+455 / 310 the rows carried, the 12,000 ft row at the edge of its band;
+the 8,000 and 12,000 ft references turned out to be wrong, see the next
+section. The full-throttle level row at 8,000 ft: the model turns the same
 advance ratio as the handbook (2,606 rpm at 120 KTAS against 2,650 at
 124) and makes the handbook's power (74 % against 75 %) but flies 3 %
 slower, so the drag at 100–110 KCAS is a few percent high. That is the
 wing and fuselage model's territory (induced drag and slipstream scrubbing
 at CL 0.8–0.9), noted for it here.
+
+## The climb lapse revisited (October 2026): the handbook's figures and the charge temperature
+
+The 12,000 ft climb row at −15 % was investigated as an engine problem,
+and the engine was measured first: at full throttle and a fixed rpm the
+model's power follows Gagg–Farrar to 0.2 % at 2,000–12,000 ft (180 /
+157 / 136 / 117 hp at 2,700 rpm at 0 / 4,000 / 8,000 / 12,000 ft), the
+mixture trims to φ 1.15 (best power) above 3,000 ft, and the trimmed
+climb at Vy turns 2,228 / 2,246 / 2,259 / 2,281 rpm with 156 / 139 / 122 /
+106 hp and a propeller efficiency of 0.74 / 0.75 / 0.77 / 0.79. Nothing
+in the induction model, friction, pumping or mixture produces an excess
+lapse, and no propeller geometry (section stall, chord, camber, pitch,
+Korn factor, profile drag, with the chord re-scaled to the static rpm
+each time) changes the rate-of-climb lapse by more than a point or two:
+the lapse is the engine's Gagg–Farrar line times the efficiency's gain
+with advance ratio, which every blade gives alike.
+
+**The references were wrong.** The handbook's Figure 5-7 (2,550 lb,
+standard temperature) reads 730, 695, 655, 620, 600, 550, 505, 455, 410,
+365, 315, 265, 220 fpm from sea level to 12,000 ft; the rows had 455 at
+8,000 ft (the 7,000 ft figure) and 310 at 12,000 ft (the value near
+10,000). Figure 5-6's temperature columns agree (405 / 345 fpm at 0 / 20 °C
+at 8,000 ft, 195 / 135 at 12,000: 410 and 220 at ISA), and so does the
+14,000 ft service ceiling of Section 1 (310 fpm at 12,000 ft would put the
+100 fpm ceiling near 18,000 ft). The rows now carry 410 and 220 fpm. The
+rate-of-climb rows are also flown at 2,550 lb at every altitude, which is
+the figure's condition (the handbook integrates its time, fuel and
+distance from those rates at that weight; the rows used to burn the fuel
+on the way up, 1 % of the mass by 12,000 ft, worth 4 % of the rate there).
+Against the handbook's figures the model's lapse was now too gentle: 739 /
+583 / 418 / 254 fpm at 2,550 lb (+1 %, −3 %, +2 %, +15 %).
+
+**The engine's temperature sensitivity was the ideal gas's, and the
+handbook shows it is not.** Figure 5-6 gives the rate of climb at −20, 0,
+20 and 40 °C at each pressure altitude: the airplane loses 60 fpm per
+20 °C at 8,000 and 12,000 ft. With the charge density taken as p/(R T)
+at the ambient temperature the model lost 84 (503 / 414 / 330 / 254 fpm
+at 8,000 ft against 465 / 405 / 345 / 285): 40 % too steep, at every
+altitude. An engine's air flow at a given manifold pressure does not go
+as 1/T: the charge is heated in the induction tract (the IO-360 routes it
+through the oil sump), the port and the valve, and a colder charge picks
+up more heat (Heywood 6.2.3). This is why the Lycoming operator's manuals
+correct power for temperature as √(T_std/T) at a pressure altitude, and
+why SAE J1349's correction has the same exponent. The model now heats the
+charge by 30 K at sea-level ISA from an effective wall temperature of
+420 K, growing as the air cools (`charge_heating_k`,
+`charge_wall_temperature_k`), which makes the air flow go as T^−0.7; the
+30 K is calibrated to the handbook's fpm per °C (the ideal gas gave 84 fpm
+per 20 °C, the √T rule 42; 30 K gives 56–60 at every altitude), not to any
+ISA row. The volumetric efficiency stays referred to sea-level ISA, so
+nothing at sea level moves (static rpm, maximum speed, take-off, the
+2,000 ft cruise table and its fuel flows are unchanged to the last digit).
+
+The result, all at 2,550 lb: **739 / 571 / 396 / 224 fpm against 730 /
+600 / 410 / 220 (+1 %, −5 %, −3 %, +2 %)**; time to 8,000 ft 14.6 min
+against 14 (+4 %; integrated from the 2,550 lb rates as the handbook
+does), fuel 2.7 gal against 3.0, distance 18.8 NM against 19. The
+temperature columns: 867 / 793 / 721 / 651 fpm at sea level (handbook
+855 / 785 / 720 / 655), 454 / 394 / 335 / 279 at 8,000 ft (465 / 405 /
+345 / 285), 257 / 199 / 143 at 12,000 ft (255 / 195 / 135). The ISA
+full-throttle lapse now sits 1–3 % below Gagg–Farrar above 4,000 ft
+(134 hp at 8,000 ft, 114 at 12,000), so the full-throttle rows at
+8,000 ft moved: 72 % power against the handbook's chart-derived 75 % (was
+74 %), 119 KTAS against 124 (was 120), the 75 %-power cruise row 118 KTAS
+(−4.7 %, was −3.8 %) with 9.9 gph. Those rows and the 4,000 ft climb
+(−5 %) are the tightest on the page.
+
+**Noted, not changed: the climb rpm.** The static rpm is 2,383 (handbook
+2,300–2,420) but the trimmed climb at 74 KIAS turns 2,228 rpm, lower than
+static, and a fixed-pitch propeller unloads with airspeed: a 172S climbs
+at roughly 2,450–2,550 rpm. The blade-element propeller's power
+coefficient has a hump at J 0.2–0.5 (0.060 static, 0.076 at J 0.47, 0.046
+at J 0.75 at 2,300 rpm) that the real propeller does not have (about 0.062
+/ 0.053 / 0.044 from the static rpm, the climb rpm and the maximum speed):
+the section stall at static takes 28 % of the torque, the chord was scaled
+×1.15 to the static rpm to compensate, and the unstalled blade then absorbs
+too much torque in the climb. Every section or chord variant tried either
+breaks the static rpm or the red line at maximum speed, so the fix is a
+propeller rework (section polar, static stall, tip compressibility
+together), flagged for the propeller model. The climb rates are right
+because the lower rpm's power loss and the higher advance ratio's
+efficiency gain cancel to within a few percent.
 
 **The fuel flows were 5–8 % lean of the handbook at every power.** The
 indicated efficiency is calibrated from the rated power and the volumetric

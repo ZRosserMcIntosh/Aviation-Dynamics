@@ -226,6 +226,17 @@ struct PistonEngineDef {
     Real idleManifoldRatio = 0.33;    // MAP / ambient at closed throttle at idleRpm
     Real idleRpm = 650;               // rpm the idle orifice is sized at
     Real intakeLossRatio = 0.03;      // MAP loss at full throttle, rated rpm
+    // Heating of the inducted charge by the induction tract, port and valve
+    // (Heywood 6.2.3): the charge fills the cylinder at T_amb + dT with
+    // dT = chargeHeating x (wallTemperature - T_amb) / (wallTemperature - T0),
+    // i.e. a colder day heats the charge more, so the air flow at a given
+    // manifold pressure goes as T^-n with n between 1 (ideal gas, no
+    // heating) and about 1/2 (the sqrt(T_std/T) temperature correction of the
+    // Lycoming operator's manuals and of SAE J1349). volumetricEfficiency
+    // stays referred to the manifold density at sea-level ISA (the heating
+    // is normalised out there). 0: ideal-gas charge at ambient temperature.
+    Real chargeHeating = 0;           // K, charge temperature rise at sea-level ISA
+    Real chargeWallTemperature = 420; // K, effective induction tract / port wall temperature
     Real engineInertia = 0.6;         // kg m^2 crankshaft etc. (propeller separate)
     Real starterTorque = 60;          // N m at the crankshaft
     Real starterCurrent = 150;        // A

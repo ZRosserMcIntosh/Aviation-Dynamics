@@ -523,6 +523,8 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("idle_manifold_ratio", e.idleManifoldRatio);
         o.num("idle_rpm", e.idleRpm);
         o.num("intake_loss_ratio", e.intakeLossRatio);
+        o.num("charge_heating_k", e.chargeHeating);
+        o.num("charge_wall_temperature_k", e.chargeWallTemperature);
         o.num("engine_inertia_kgm2", e.engineInertia);
         o.num("starter_torque_nm", e.starterTorque);
         o.num("starter_current_a", e.starterCurrent);

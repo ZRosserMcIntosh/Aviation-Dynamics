@@ -41,6 +41,7 @@ against the POH revision of a specific airplane.
 | Engine rating, displacement | published | 180 bhp at 2700 rpm, 361 in³ |
 | Engine friction, efficiency, oil pump | calibrated / estimated | Mechanical fmep 130 kPa at 2,700 rpm so that friction plus the full-throttle pumping loss is the 13.2 % of rated power Lycoming's altitude curve (Gagg–Farrar) implies; volumetric efficiency 0.89 from the published take-off fuel flow, which with the rated power fixes the indicated efficiency (0.33); oil pump estimated |
 | Engine induction (compression ratio, throttle and idle orifices, VE with speed) | published / calibrated | Compression ratio 8.5 published. Idle orifice sized for 0.29 × ambient at 650 rpm (ground idle 704 rpm at 8.3 inHg: the idle stop); throttle bore for a 3 % drop at rated rpm; port-flow loss 0.08 calibrated to the rise of Lycoming's full-throttle torque below rated rpm |
+| Engine charge heating | calibrated | The inducted charge heated 30 K at sea-level ISA by the induction tract (the IO-360's heated sump), port and valve, from an effective wall at 420 K, more in colder air (Heywood 6.2.3): the air flow at a pressure altitude goes as T^−0.7 instead of the ideal gas's 1/T (Lycoming's manuals correct as √T). The 30 K is calibrated to the POH's rate of climb at −20/0/20/40 °C (Figure 5-6), 60 fpm per 20 °C at 8,000 and 12,000 ft |
 | Propeller | published / calibrated | 76 in diameter and 60 in geometric pitch published (pitch_m 1.524). Chord distribution calibrated to the POH static rpm; blade thickness estimated (drives tip compressibility) |
 | Fuel | published | Two 28 gal tanks, 26.5 gal usable each, arm 48 in, LEFT/BOTH/RIGHT selector and shutoff |
 | Fuel line volume | estimated | Sets the run-on time after a tank runs dry |
@@ -79,6 +80,13 @@ assists. Each change was made only after its physical cause was identified:
 5. **Tail lifting at 18 kt on the take-off roll.** Fixed with tail incidence
    −1° and slipstream exposure 0.6. Both are in the plausible range for the
    C172's fixed stabiliser.
+6. **Climb lapse (October 2026).** The 8,000 and 12,000 ft rate-of-climb
+   references were corrected to the handbook's 410 and 220 fpm (they
+   carried 455 and 310, quoted from memory), and the rows are flown at
+   2,550 lb at every altitude as the handbook's figure is. The engine's
+   charge heating (30 K) was then calibrated to the handbook's rate of
+   climb against temperature, not to any standard-day row; the standard-day
+   rows followed (+1 %, −5 %, −3 %, +2 %). See the validation report.
 
 Behaviour that was *not* tuned away is recorded under investigated
 comparisons in the validation report.
