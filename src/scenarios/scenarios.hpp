@@ -35,6 +35,7 @@ struct TrimRequest {
     bool solveFlightPath = false;
     bool solveTas = false;
     Real mixture = -1;         // < 0: best power
+    ThrustMode thrustMode = ThrustMode::Auto;  // turbofans: the FADEC rating that caps N1 (Auto: take-off on a fresh aircraft)
 };
 
 struct TrimResult {
@@ -45,6 +46,7 @@ struct TrimResult {
     // stick still needed beyond the stabiliser's travel, usually 0).
     Real trim = 0;
     Real brakePower = 0, thrust = 0, propEfficiency = 0, fuelFlow = 0;
+    Real thrustAvailable = 0;  // turbofans: N the active rating allows at the trimmed condition, all engines
     Real residual = 0;
     DynamicState state;
     PilotInput input;

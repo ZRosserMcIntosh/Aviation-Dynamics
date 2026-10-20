@@ -223,6 +223,9 @@ Rows c172ClimbRates() {
         r.altitude = ftToM(h);
         r.tas = tasFromCas(ktToMs(kias), atm.atmosphere().at(ftToM(h)));
         r.throttle = 1;
+        // POH Section 4 (enroute climb): mixture full rich below 3,000 ft,
+        // leaned for maximum rpm (best power) above; the figures assume it.
+        r.mixture = h < 3000 ? 1.0 : -1.0;
         r.solveFlightPath = true;
         const TrimResult t = trim(ac, r, atm);
         pts.push_back({h, t.converged ? t.tas * std::sin(t.flightPath) : 0, t.fuelFlow, t.tas * std::cos(t.flightPath)});
@@ -245,7 +248,7 @@ Rows c172ClimbRates() {
         q << "Rate of climb, " << (x.alt == 0 ? std::string("sea level") : fmt(x.alt, 0) + " ft") << ", Vy";
         rows.push_back(tolerance(x.id, q.str(), fmt(x.poh, 0) + " fpm", x.poh, msToFpm(at(x.alt).roc), 15, "fpm",
                                  std::string(kPoh) + ", Figure 5-7 (2,550 lb, standard temperature)",
-                                 x.alt == 0 ? "74 KIAS, full throttle" : "72-74 KIAS, full throttle, mixture leaned for best power"));
+                                 x.alt == 0 ? "74 KIAS, full throttle, full rich (POH: lean above 3,000 ft)" : "72-74 KIAS, full throttle, mixture leaned for best power"));
     }
     // Time, fuel and distance from sea level to 8,000 ft (trapezoids over the 500 ft segments).
     Real time = 0, fuel = 0, dist = 0;
@@ -322,10 +325,18 @@ Rows c172CruiseTable() {
 }
 
 Rows c172BestGlide() {
-    // Maximum glide: 68 KIAS, flaps up, propeller windmilling (throttle
-    // closed, engine idling), zero wind: about 1.5 NM per 1,000 ft (9.1:1).
+    // Maximum glide (POH Section 5, Figure 5-9): 68 KIAS, flaps up, power
+    // off, PROPELLER WINDMILLING, zero wind: about 1.5 NM per 1,000 ft
+    // (9.1:1). The chart is the engine-failure glide of Section 3: the
+    // engine is dead and the airstream turns it against its friction and
+    // pumping, which is what makes the propeller a drag (a windmilling
+    // propeller at a slightly negative blade angle of attack). Here the
+    // mixture is at idle cut-off with the throttle closed. The idle-power
+    // glide (engine firing, throttle closed) is reported as information: it
+    // is the flatter "practice" glide, where the idling engine turns the
+    // propeller faster, at about zero lift, and it hardly drags.
     // Reported with the propeller's thrust and the airframe's L/D so a
-    // discrepancy can be placed (idle power, windmilling drag or airframe).
+    // discrepancy can be placed (engine braking, windmilling drag or airframe).
     Rows rows;
     Aircraft ac = grossC172();
     SimpleWeather atm;
@@ -333,15 +344,28 @@ Rows c172BestGlide() {
     r.altitude = ftToM(3000);
     r.tas = tasFromCas(ktToMs(68), atm.atmosphere().at(ftToM(3000)));
     r.throttle = 0;
+    r.mixture = 0;  // idle cut-off: the engine has failed, the propeller windmills
     r.solveFlightPath = true;
     const TrimResult t = trim(ac, r, atm);
     const Real ratio = t.converged && t.flightPath < 0 ? 1.0 / std::tan(-t.flightPath) : 0;
-    rows.push_back(tolerance("c172s.glide.ratio", "Best glide ratio at 68 KIAS", "about 9.1:1 (1.5 NM per 1,000 ft)", 9.1, ratio, 15, ":1",
-                             std::string(kPoh) + " (Maximum Glide) and Section 3 (68 KIAS)",
-                             "throttle closed, engine idling at " + fmt(t.rpm, 0) + " rpm, 3,000 ft; sink " + fmt(-msToFpm(t.tas * std::sin(t.flightPath)), 0) + " fpm"));
+    rows.push_back(tolerance("c172s.glide.ratio", "Best glide ratio at 68 KIAS, engine failed, propeller windmilling", "about 9.1:1 (1.5 NM per 1,000 ft)", 9.1, ratio, 15, ":1",
+                             std::string(kPoh) + " (Maximum Glide: power off, propeller windmilling) and Section 3 (68 KIAS)",
+                             "throttle closed, mixture at idle cut-off, propeller windmilling the dead engine at " + fmt(t.rpm, 0) + " rpm, 3,000 ft; sink " +
+                                 fmt(-msToFpm(t.tas * std::sin(t.flightPath)), 0) + " fpm"));
     rows.push_back(info("c172s.glide.nm_per_1000ft", "Glide distance per 1,000 ft", ratio * 1000 * kFoot / kNauticalMile, "NM", "from the ratio above"));
-    rows.push_back(info("c172s.glide.prop_thrust", "Propeller thrust in the glide (throttle closed)", t.thrust, "N",
-                        "engine brake power " + fmt(wToHp(t.brakePower)) + " hp at " + fmt(t.rpm, 0) + " rpm; + is pulling"));
+    rows.push_back(info("c172s.glide.prop_thrust", "Propeller thrust in the glide (engine failed, windmilling)", t.thrust, "N",
+                        "the windmilling propeller drives the dead engine's friction and pumping, " + fmt(-wToHp(t.brakePower)) + " hp at " + fmt(t.rpm, 0) +
+                            " rpm; + is pulling"));
+    {
+        // The idle-power glide: throttle closed, engine firing (the practice glide).
+        TrimRequest ri = r;
+        ri.mixture = 1;
+        const TrimResult ti = trim(ac, ri, atm);
+        const Real ratioIdle = ti.converged && ti.flightPath < 0 ? 1.0 / std::tan(-ti.flightPath) : 0;
+        rows.push_back(info("c172s.glide.idle_ratio", "Glide ratio at 68 KIAS with the engine idling (practice glide)", ratioIdle, ":1",
+                            "throttle closed, mixture rich: the idling engine turns " + fmt(ti.rpm, 0) + " rpm, " + fmt(wToHp(ti.brakePower)) +
+                                " hp, propeller thrust " + fmt(ti.thrust, 0) + " N; flatter than the engine-failure glide, as pilots find"));
+    }
     {
         // The airframe alone: lift to drag at 68 KIAS with no propeller force (power-off L/D, mass 2,550 lb).
         Aircraft probe = grossC172();
@@ -389,7 +413,7 @@ Rows c172LandingRoll() {
     const Real limit = mToFt(landingRollTest(c172Def(), 50));
     rows.push_back(tolerance("c172s.landing.roll", "Landing ground roll, pilot braking technique", "575 ft", 575, roll, 25, "ft",
                              std::string(kPoh) + " (short-field landing, sea level, ISA)",
-                             "touchdown at 50 KCAS, 1 s to the pedals, 1 s ramp, 70 % sustained pedal (no anti-skid); see the discussion in the validation note"));
+                             "touchdown at 50 KCAS, 1 s to the pedals, 1 s ramp, 50 % sustained pedal (no anti-skid), the throttle closed (the idling propeller drags a little); see the discussion in the validation note"));
     rows.push_back(info("c172s.landing.tyre_limit", "Landing roll, tyre-limited bound (full pedal at touchdown)", limit, "ft", "physics check, not a handbook figure"));
     tag(rows, kC172);
     return rows;
@@ -427,14 +451,20 @@ Rows c172All() {
 
 // ------------------------------------------------------------- Top G ----
 
-Rows topGTimeToClimb() {
-    // The climb from sea level to FL410 integrated from trims every 1,000 ft
-    // at a representative schedule (250 KIAS to 10,000 ft, 300 KIAS to the
-    // crossover, then Mach 0.80), take-off thrust, the data file's mid
-    // weight (33.7 t), mass falling with the fuel burned.
-    Rows rows;
-    Aircraft ac = topGAt(33700);
-    const Real m0 = ac.massProperties().mass;
+namespace {
+
+// The climb from sea level to FL410 integrated from trims every 1,000 ft at
+// the published schedule (250 KIAS to 10,000 ft, 300 KIAS to the crossover,
+// then Mach 0.80) at the maximum-climb rating (the normal climb thrust; the
+// take-off rating is time-limited), the mass falling with the fuel burned.
+struct ClimbResult {
+    Real mass0 = 0, time = 0, fuel = 0, distance = 0, rocSeaLevel = 0, rocTop = 0;
+    bool reached = true;
+};
+ClimbResult climbToFl410(Real mass) {
+    ClimbResult out;
+    Aircraft ac = topGAt(mass);
+    out.mass0 = ac.massProperties().mass;
     SimpleWeather atm;
     struct Pt { Real altFt, roc, ff, vh; };
     std::vector<Pt> pts;
@@ -447,6 +477,7 @@ Rows topGTimeToClimb() {
         r.altitude = ftToM(h);
         r.tas = tas;
         r.throttle = 1;
+        r.thrustMode = ThrustMode::Climb;
         r.solveFlightPath = true;
         const TrimResult t = trim(ac, r, atm);
         pts.push_back({h, t.converged ? t.tas * std::sin(t.flightPath) : 0, t.fuelFlow, t.tas * std::cos(t.flightPath)});
@@ -454,48 +485,85 @@ Rows topGTimeToClimb() {
             burnFuel(ac, t.fuelFlow * ftToM(1000) / pts.back().roc);
         }
     }
-    Real time = 0, fuel = 0, dist = 0;
-    bool reached = true;
     for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
         const Real roc = 0.5 * (pts[i].roc + pts[i + 1].roc);
-        if (roc <= 0.1) { reached = false; break; }
+        if (roc <= 0.1) { out.reached = false; break; }
         const Real dt = ftToM(pts[i + 1].altFt - pts[i].altFt) / roc;
-        time += dt;
-        fuel += 0.5 * (pts[i].ff + pts[i + 1].ff) * dt;
-        dist += 0.5 * (pts[i].vh + pts[i + 1].vh) * dt;
+        out.time += dt;
+        out.fuel += 0.5 * (pts[i].ff + pts[i + 1].ff) * dt;
+        out.distance += 0.5 * (pts[i].vh + pts[i + 1].vh) * dt;
     }
-    const std::string src = "representative, estimated (G650ER class: FL410 as the initial cruise altitude in about 20-25 min)";
-    rows.push_back(tolerance("top_g.climb.fl410.time", "Time to climb, sea level to FL410, mid weight", "about 22 min", 22, reached ? time / 60 : 999, 25, "min", src,
-                             fmt(m0 / 1000) + " t at brake release; 250/300 KIAS, Mach 0.80; take-off thrust; rate of climb at FL410 " + fmt(msToFpm(pts.back().roc), 0) + " fpm"));
-    rows.push_back(info("top_g.climb.fl410.fuel", "Fuel to climb to FL410", fuel, "kg", "integrated from the trims"));
-    rows.push_back(info("top_g.climb.fl410.distance", "Distance to climb to FL410", dist / kNauticalMile, "NM", "zero wind"));
-    rows.push_back(info("top_g.climb.sl.roc", "Rate of climb at sea level, 250 KIAS, take-off thrust", msToFpm(pts.front().roc), "fpm"));
+    out.rocSeaLevel = pts.front().roc;
+    out.rocTop = pts.back().roc;
+    return out;
+}
+
+}  // namespace
+
+Rows topGTimeToClimb() {
+    // Two weights. The class figure ("FL410 in about 20-25 min") is quoted
+    // for a heavy departure, near the maximum take-off weight; the data
+    // file's mid weight (33.7 t) carries 40 % less and climbs faster. The
+    // expectation at 33.7 t is derived from the MTOW figure: the specific
+    // excess thrust (T - D)/W is what sets the rate of climb, and the drag
+    // falls less than the weight (the parasite part does not fall at all),
+    // so at FL250 / Mach 0.72 (T - D)/W is about 0.063 at 47 t against about
+    // 0.098 at 33.7 t (0.64x the time), and near FL410, where the heavy
+    // aeroplane crawls, the ratio is lower still: 12-15 min, taken as 14 min
+    // with the same +-25 % band. Both rows are reported so the weight
+    // dependence stays visible.
+    Rows rows;
+    const AircraftDefinition& d = topGDef();
+    const ClimbResult mid = climbToFl410(33700);
+    const ClimbResult heavy = climbToFl410(d.maxTakeoffMass);
+    const std::string srcHeavy = "representative, estimated (G650ER class: FL410 as the initial cruise altitude in about 20-25 min from a departure near MTOW)";
+    const std::string srcMid = "representative, estimated: the MTOW figure (about 22 min) scaled by the specific excess thrust at 33.7 t (12-15 min, see the note)";
+    rows.push_back(tolerance("top_g.climb.fl410.time", "Time to climb, sea level to FL410, mid weight", "about 14 min (derived from about 22 min at MTOW)", 14,
+                             mid.reached ? mid.time / 60 : 999, 25, "min", srcMid,
+                             fmt(mid.mass0 / 1000) + " t at brake release; 250/300 KIAS, Mach 0.80; maximum-climb rating; rate of climb at FL410 " +
+                                 fmt(msToFpm(mid.rocTop), 0) + " fpm"));
+    rows.push_back(info("top_g.climb.fl410.fuel", "Fuel to climb to FL410, mid weight", mid.fuel, "kg", "integrated from the trims"));
+    rows.push_back(info("top_g.climb.fl410.distance", "Distance to climb to FL410, mid weight", mid.distance / kNauticalMile, "NM", "zero wind"));
+    rows.push_back(info("top_g.climb.sl.roc", "Rate of climb at sea level, 250 KIAS, maximum-climb rating, mid weight", msToFpm(mid.rocSeaLevel), "fpm"));
+    rows.push_back(tolerance("top_g.climb.fl410.time.mtow", "Time to climb, sea level to FL410, maximum take-off weight", "about 22 min", 22,
+                             heavy.reached ? heavy.time / 60 : 999, 25, "min", srcHeavy,
+                             fmt(heavy.mass0 / 1000) + " t at brake release; 250/300 KIAS, Mach 0.80; maximum-climb rating; rate of climb at FL410 " +
+                                 fmt(msToFpm(heavy.rocTop), 0) + " fpm, at sea level " + fmt(msToFpm(heavy.rocSeaLevel), 0) + " fpm"));
+    rows.push_back(info("top_g.climb.fl410.fuel.mtow", "Fuel to climb to FL410, maximum take-off weight", heavy.fuel, "kg", "integrated from the trims"));
+    rows.push_back(info("top_g.climb.fl410.distance.mtow", "Distance to climb to FL410, maximum take-off weight", heavy.distance / kNauticalMile, "NM", "zero wind"));
     tag(rows, kTopG);
     return rows;
 }
 
 Rows topGMaxCruise() {
+    // Level cruise is flown on the maximum-cruise rating: the thrust needed is
+    // reported as a fraction of what that rating allows at the condition.
     Rows rows;
     SimpleWeather atm;
     const StandardAtmosphere isa;
+    auto pct = [](const TrimResult& t) { return t.converged && t.thrustAvailable > 0 ? t.thrust / t.thrustAvailable * 100 : 999.0; };
     {
         Aircraft ac = topGAt(33700);
         TrimRequest r;
         r.altitude = ftToM(41000);
         r.tas = 0.90 * isa.at(ftToM(41000)).speedOfSound;
+        r.thrustMode = ThrustMode::Cruise;
         const TrimResult t = trim(ac, r, atm);
-        rows.push_back(range("top_g.cruise.fl410.m090", "Thrust needed for Mach 0.90 at FL410, mid weight (fraction of maximum)", "available (high-speed cruise Mach 0.90)", 0, 98,
-                             t.converged ? t.throttle * 100 : 999, "%", "Gulfstream G650ER published high-speed cruise Mach 0.90",
-                             "33.7 t; fuel flow " + fmt(t.fuelFlow * 3600, 0) + " kg/h, pitch " + fmt(radToDeg(t.theta)) + " deg"));
+        rows.push_back(range("top_g.cruise.fl410.m090", "Thrust needed for Mach 0.90 at FL410, mid weight (fraction of the maximum-cruise rating)",
+                             "available (high-speed cruise Mach 0.90)", 0, 98, pct(t), "%", "Gulfstream G650ER published high-speed cruise Mach 0.90",
+                             "33.7 t; the rating allows " + fmt(t.thrustAvailable / 2000) + " kN per engine here; fuel flow " + fmt(t.fuelFlow * 3600, 0) + " kg/h, pitch " +
+                                 fmt(radToDeg(t.theta)) + " deg"));
     }
     {
         Aircraft ac = topGAt(33700);
         TrimRequest r;
         r.altitude = ftToM(45000);
         r.tas = 0.85 * isa.at(ftToM(45000)).speedOfSound;
+        r.thrustMode = ThrustMode::Cruise;
         const TrimResult t = trim(ac, r, atm);
         rows.push_back(range("top_g.cruise.fl450.m085.fuel", "Fuel flow at Mach 0.85, FL450, mid weight", "about 2,600-3,400 lb/h (class figures)", lbToKg(2200), lbToKg(3800),
-                             t.converged ? t.fuelFlow * 3600 : 0, "kg/h", "published long-range cruise burn of the class", "throttle " + fmt(t.throttle * 100, 0) + " %"));
+                             t.converged ? t.fuelFlow * 3600 : 0, "kg/h", "published long-range cruise burn of the class",
+                             fmt(pct(t), 0) + " % of the maximum-cruise rating (" + fmt(t.thrustAvailable / 2000) + " kN per engine)"));
     }
     tag(rows, kTopG);
     return rows;
@@ -512,8 +580,16 @@ Rows topGVref() {
         const Real cl = trimmedMaxLiftCoefficient(model, d.referenceArea, ac.massProperties().cg, d.controls.flapDetents.back(), 0.2);
         return 1.23 * msToKt(std::sqrt(2 * ac.massProperties().mass * kStandardGravity / (isa::kSeaLevelDensity * d.referenceArea * cl)));
     };
-    rows.push_back(range("top_g.vref.27500kg", "Vref (1.23 Vs1g, landing flap) at 27.5 t", "115-125 KIAS at 25-30 t (representative)", 115, 125, vref(27500), "KIAS",
-                         "representative, estimated (G650ER class)", "sea level ISA; trimmed CLmax, flaps 39"));
+    // The 115-125 KIAS "at 25-30 t" band this row first carried was
+    // inconsistent with the published maximum-landing-weight Vref it came
+    // with (about 121 kt at 37.9 t): the stall speed, and so Vref, scales
+    // with the square root of the weight, 121 x sqrt(27.5 / 37.9) = 103 KIAS.
+    // The row is therefore targeted at the published MLW figure scaled to
+    // 27.5 t (a typical end-of-flight weight), 100-110 KIAS; the MLW row
+    // below checks the published figure itself.
+    rows.push_back(range("top_g.vref.27500kg", "Vref (1.23 Vs1g, landing flap) at 27.5 t", "about 103 KIAS (published 121 kt at MLW scaled by sqrt(W))", 100, 110, vref(27500), "KIAS",
+                         "derived: brokers' MLW Vref (about 121 kt at 37.9 t) x sqrt(27.5 / 37.9) = 103 KIAS; +-5 kt",
+                         "sea level ISA; trimmed CLmax, flaps 39; the square-root-of-weight law, not an independent published point"));
     rows.push_back(range("top_g.vref.mlw", "Vref (1.23 Vs1g, landing flap) at the maximum landing weight, 37.9 t", "110-125 KIAS (representative; published values 110-121 kt)", 110, 125,
                          vref(d.maxLandingMass), "KIAS", "representative, estimated (G650ER class)", "sea level ISA; trimmed CLmax, flaps 39"));
     tag(rows, kTopG);
@@ -657,11 +733,12 @@ std::vector<std::string> allIds() {
         "c172s.cruise.2000.55.ktas", "c172s.cruise.2000.55.gph", "c172s.cruise.2000.65.ktas", "c172s.cruise.2000.65.gph",
         "c172s.cruise.2000.75.ktas", "c172s.cruise.2000.75.gph", "c172s.cruise.8000.55.ktas", "c172s.cruise.8000.55.gph",
         "c172s.cruise.8000.65.ktas", "c172s.cruise.8000.65.gph", "c172s.cruise.8000.75.ktas", "c172s.cruise.8000.75.gph",
-        "c172s.glide.ratio", "c172s.glide.nm_per_1000ft", "c172s.glide.prop_thrust", "c172s.glide.airframe_ld",
+        "c172s.glide.ratio", "c172s.glide.nm_per_1000ft", "c172s.glide.prop_thrust", "c172s.glide.idle_ratio", "c172s.glide.airframe_ld",
         "c172s.takeoff.roll", "c172s.takeoff.over50ft", "c172s.takeoff.liftoff",
         "c172s.landing.roll", "c172s.landing.tyre_limit",
         "c172s.static_rpm",
         "top_g.climb.fl410.time", "top_g.climb.fl410.fuel", "top_g.climb.fl410.distance", "top_g.climb.sl.roc",
+        "top_g.climb.fl410.time.mtow", "top_g.climb.fl410.fuel.mtow", "top_g.climb.fl410.distance.mtow",
         "top_g.cruise.fl410.m090", "top_g.cruise.fl450.m085.fuel",
         "top_g.vref.27500kg", "top_g.vref.mlw",
         "top_g.landing.distance",

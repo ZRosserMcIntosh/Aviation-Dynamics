@@ -171,6 +171,12 @@
    "note": "Three spoiler panels per side ahead of the outboard flap (photographs), 14 % chord, 40 deg at full speedbrake; their drag (~1.6 m^2 CdA fully out) and lift loss (~25 % of the wing's) match the lumped speedbrake estimate they replace."
   },
   {
+   "field": "turbofans[*].ratings",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "FADEC thrust ratings as fractions of the sea-level static take-off thrust: maximum continuous 0.92, maximum climb 0.88, maximum cruise 0.84 (typical of modern business-jet turbofans: MCT 0.90-0.93, MCL 0.85-0.90, MCR 0.80-0.87), take-off limited to 5 min (10 min with an engine out). Modelled as turbine-temperature limits: each rating holds a fixed fraction of the temperature-limited thrust (Mattingly's temperature branch continued below the throttle ratio), so the fractions apply at sea level and the ratings converge on the flat-rated line at altitude, where the take-off rating itself is far below its temperature limit (at FL410 the maximum-cruise rating allows 97 % of the lapse-law thrust). The lapse coefficient's earlier calibration (Mach 0.85 to FL510 at mid weight) therefore stands."
+  },
+  {
    "field": "turbofans[*].thrust_reverser",
    "kind": "estimated",
    "source": "EST",
@@ -601,6 +607,13 @@
    "oil_pressure_max_psi": 70,
    "fan_diameter_m": 1.27,
    "windmill_drag_area_m2": 0.152,
+   "ratings": {
+    "max_continuous": 0.92,
+    "max_climb": 0.88,
+    "max_cruise": 0.84,
+    "takeoff_time_s": 300,
+    "takeoff_time_engine_out_s": 600
+   },
    "thrust_reverser": {
     "effectiveness": 0.4,
     "transit_time_s": 2.0,
@@ -638,6 +651,13 @@
    "fuel_feed": 0,
    "fan_diameter_m": 1.27,
    "windmill_drag_area_m2": 0.152,
+   "ratings": {
+    "max_continuous": 0.92,
+    "max_climb": 0.88,
+    "max_cruise": 0.84,
+    "takeoff_time_s": 300,
+    "takeoff_time_engine_out_s": 600
+   },
    "thrust_reverser": {
     "effectiveness": 0.4,
     "transit_time_s": 2.0,

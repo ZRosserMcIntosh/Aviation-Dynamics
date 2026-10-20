@@ -103,7 +103,7 @@ TEST_CASE("validation: cruise table at 2,000 and 8,000 ft, 55/65/75 % power (POH
     expect(val::c172CruiseTable());
 }
 
-TEST_CASE("validation: best glide at 68 KIAS is about 9:1 (POH maximum glide, 1.5 NM per 1,000 ft)") {
+TEST_CASE("validation: best glide at 68 KIAS, engine failed and propeller windmilling, is about 9:1 (POH maximum glide, 1.5 NM per 1,000 ft)") {
     expect(val::c172BestGlide());
 }
 
@@ -128,15 +128,15 @@ TEST_CASE("validation: landing roll with a pilot's braking technique (POH 575 ft
     CHECK(mToFt(landingRollTest(ref(), 50, kDefaultDt, soft)) > rows[0].value);
 }
 
-TEST_CASE("validation: Top G time to climb to FL410 at mid weight (representative 20-25 min, +-25 %)") {
+TEST_CASE("validation: Top G time to climb to FL410 at the maximum-climb rating, mid weight and MTOW (representative 20-25 min at MTOW, +-25 %)") {
     expect(val::topGTimeToClimb());
 }
 
-TEST_CASE("validation: Top G high-speed cruise Mach 0.90 at FL410 is available; FL450 Mach 0.85 fuel flow") {
+TEST_CASE("validation: Top G high-speed cruise Mach 0.90 at FL410 is inside the maximum-cruise rating; FL450 Mach 0.85 fuel flow") {
     expect(val::topGMaxCruise());
 }
 
-TEST_CASE("validation: Top G Vref at 27.5 t and at the maximum landing weight (representative 115-125 KIAS)") {
+TEST_CASE("validation: Top G Vref at the maximum landing weight (published about 121 kt) and at 27.5 t by the square-root-of-weight law") {
     expect(val::topGVref());
 }
 

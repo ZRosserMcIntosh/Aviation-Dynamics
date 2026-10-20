@@ -10,8 +10,21 @@
 //    blade sees half of it (tangential speed Omega r - w/2). Swirl matters
 //    most at low advance ratio (take-off), where the blade torque is high.
 //  - Piston engine air flow and fmep: Heywood, "Internal Combustion Engine
-//    Fundamentals" (volumetric efficiency, friction mean effective pressure,
+//    Fundamentals" (volumetric efficiency: residual gas with the
+//    exhaust/intake pressure ratio, sec. 6.2, and inlet flow losses with
+//    speed, 6.2.4; friction and pumping mean effective pressure, ch. 13;
 //    equivalence-ratio effects on power).
+//  - Induction: manifold pressure from the balance of the throttle plate's
+//    compressible orifice flow (isentropic flow function, choked below the
+//    critical ratio 0.528) against the engine's pumping; a butterfly plate's
+//    effective area goes as 1 - cos of its angle. Closed, the idle orifice is
+//    choked, the air flow fixed and MAP ~ 1/rpm when the propeller windmills
+//    the engine, which then absorbs power (friction plus the pumping loop).
+//  - Altitude lapse check: Gagg-Farrar P/P0 = 1.132 sigma - 0.132 (the
+//    Lycoming sea-level/altitude curve), which the friction share reproduces.
+//  - Turbofan ratings: Mattingly, "Elements of Gas Turbine Propulsion", eq.
+//    2.54a (installed thrust lapse, flat rating to the throttle ratio TR); the
+//    lower ratings hold a fixed fraction of the temperature-limited branch.
 //  - Carburettor/injector metering richens ~sqrt(rho0/rho) with altitude
 //    (fuel metered by the square root of the air-flow pressure drop).
 #include "avd/propulsion.hpp"
@@ -270,16 +283,49 @@ PropellerForces Propeller::evaluate(Real axialSpeed, Real omega, Real rho, Real 
 
 // ---------------------------------------------------------------------------
 
+namespace {
+
+// Compressible orifice flow function: m_dot sqrt(R T0) / (Cd A p0) for a
+// downstream/upstream pressure ratio x (isentropic, gamma = 1.4), constant
+// at its choked value below the critical ratio 0.5283.
+Real orificeFlowFunction(Real x) {
+    constexpr Real kCritical = 0.528282;   // (2/(gamma+1))^(gamma/(gamma-1))
+    constexpr Real kChoked = 0.684740;     // sqrt(gamma (2/(gamma+1))^((gamma+1)/(gamma-1)))
+    if (x <= kCritical) return kChoked;
+    if (x >= 1) return 0;
+    const Real a = std::pow(x, 2 / 1.4) - std::pow(x, 2.4 / 1.4);
+    return std::sqrt(std::max(7.0 * a, 0.0));  // 2 gamma / (gamma - 1) = 7
+}
+
+}  // namespace
+
 PistonEngine::PistonEngine(const PistonEngineDef& def) : def_(def) {
     if (def_.powerVsPhi.empty()) def_.powerVsPhi = defaultPowerVsPhi();
-    // Calibrate indicated efficiency: rated brake power at SL ISA, full
-    // throttle, rated rpm, best-power mixture.
+    const Real p0 = isa::kSeaLevelPressure, T0 = isa::kSeaLevelTemperature, R = isa::kGasConstantDryAir;
+    const Real rc = std::max(def_.compressionRatio, 2.0);
+    const Real wot = 1 - clamp(def_.intakeLossRatio, 0.0, 0.5);
+    // Volumetric efficiency is given at wide-open throttle: normalise the
+    // residual-gas law to 1 there.
+    volumetricNorm_ = std::max((rc - 1 / wot) / (rc - 1), 0.1);
+    // Throttle bore: the wide-open plate drops intakeLossRatio x ambient at
+    // rated rpm (full-throttle air flow through the incompressible-to-choked
+    // orifice law).
     const Real omegaR = def_.ratedRpm * kTwoPi / 60;
-    const Real map = isa::kSeaLevelPressure * (1 - def_.intakeLossRatio);
-    const Real mAir = def_.volumetricEfficiency * map / (isa::kGasConstantDryAir * isa::kSeaLevelTemperature) *
-                      def_.displacement * omegaR / (4 * kPi);
-    const Real pInd = def_.ratedPower + frictionTorque(omegaR) * omegaR;
-    const Real chem = mAir * def_.stoichiometricFar * def_.fuelHeatingValue *
+    const Real mAirRated = def_.volumetricEfficiency * wot * p0 / (R * T0) * def_.displacement * omegaR / (4 * kPi);
+    throttleAreaFull_ = mAirRated * std::sqrt(R * T0) / (p0 * orificeFlowFunction(wot));
+    // Idle orifice (closed plate's crack and idle air bleed): MAP =
+    // idleManifoldRatio x ambient at idleRpm, sea level. The orifice is choked
+    // there, so the idle air flow is set once and for all by this area.
+    const Real xi = clamp(def_.idleManifoldRatio, 1.2 / rc, wot);
+    const Real omegaI = std::max(def_.idleRpm, 100.0) * kTwoPi / 60;
+    const Real mAirIdle = volumetricEfficiency(xi * p0, p0, omegaI) * xi * p0 / (R * T0) * def_.displacement * omegaI / (4 * kPi);
+    throttleAreaIdle_ = std::min(mAirIdle * std::sqrt(R * T0) / (p0 * orificeFlowFunction(xi)), throttleAreaFull_);
+    // Calibrate indicated efficiency: rated brake power at SL ISA, full
+    // throttle, rated rpm, best-power mixture; the losses there are the
+    // mechanical friction plus the small full-throttle pumping loop.
+    const Real pumping = (1 - wot) * p0 * def_.displacement / (4 * kPi);
+    const Real pInd = def_.ratedPower + (frictionTorque(omegaR) + pumping) * omegaR;
+    const Real chem = mAirRated * def_.stoichiometricFar * def_.fuelHeatingValue *
                       def_.powerVsPhi(bestPowerPhi(def_.powerVsPhi));
     etaIndicated_ = chem > 0 ? pInd / chem : 0.3;
 }
@@ -290,16 +336,53 @@ Real PistonEngine::frictionTorque(Real omega) const {
     return fmep * def_.displacement / (4 * kPi);
 }
 
+Real PistonEngine::throttleArea(Real throttle) const {
+    // Butterfly plate: the open area goes as 1 - cos of the plate angle,
+    // closed (idle orifice only) to 90 degrees, lever-linear in angle.
+    const Real plate = 1 - std::cos(clamp(throttle, 0.0, 1.0) * 0.5 * kPi);
+    return throttleAreaIdle_ + (throttleAreaFull_ - throttleAreaIdle_) * plate;
+}
+
+Real PistonEngine::volumetricEfficiency(Real manifoldPressure, Real ambientPressure, Real omega) const {
+    const Real rc = std::max(def_.compressionRatio, 2.0);
+    const Real ratio = ambientPressure / std::max(manifoldPressure, 1.0);  // exhaust / intake
+    const Real residual = std::max((rc - ratio) / (rc - 1), 0.0) / volumetricNorm_;
+    const Real loss = clamp(def_.volumetricEfficiencySpeedLoss, 0.0, 0.5);
+    const Real omegaR = def_.ratedRpm * kTwoPi / 60;
+    const Real speed = std::max(1 - loss * sq(omega / omegaR), 0.0) / (1 - loss);
+    return def_.volumetricEfficiency * residual * speed;
+}
+
+Real PistonEngine::manifoldPressure(Real throttle, Real omega, Real ambientPressure, Real ambientTemperature) const {
+    // Per unit ambient pressure, with x = MAP / ambient:
+    //   pump:    m_dot / p = eta_v(x) x D omega / (4 pi R T)  (rises linearly in x from the residual floor x = 1/r_c)
+    //   orifice: m_dot / p = Cd A Psi(x) / sqrt(R T)          (falls from the choked value to 0 at x = 1)
+    // One crossing; bisection on [1/r_c, 1].
+    const Real R = isa::kGasConstantDryAir, T = std::max(ambientTemperature, 150.0);
+    const Real rc = std::max(def_.compressionRatio, 2.0);
+    // eta_v(x) x = eta_v(1) (r_c x - 1) / (r_c - 1), the speed factor folded into eta_v(1).
+    const Real etaUnthrottled = volumetricEfficiency(ambientPressure, ambientPressure, omega);
+    const Real pumpScale = etaUnthrottled / (rc - 1) * def_.displacement * std::max(omega, 0.0) / (4 * kPi * R * T);
+    const Real orificeScale = throttleArea(throttle) / std::sqrt(R * T);
+    Real lo = 1 / rc, hi = 1;
+    for (int it = 0; it < 44; ++it) {
+        const Real x = 0.5 * (lo + hi);
+        const Real g = pumpScale * (rc * x - 1) - orificeScale * orificeFlowFunction(x);
+        (g > 0 ? hi : lo) = x;
+    }
+    return ambientPressure * 0.5 * (lo + hi);
+}
+
 PistonEngineState PistonEngine::evaluate(const PistonEngineInputs& in, Real omega) const {
     PistonEngineState s;
     omega = std::max(omega, 0.0);
     s.omega = omega;
     const Real throttle = clamp(in.throttle, 0.0, 1.0);
-    const Real ratio = def_.idleManifoldRatio + (1 - def_.intakeLossRatio - def_.idleManifoldRatio) * throttle;
-    s.manifoldPressure = in.ambientPressure * ratio;
+    s.manifoldPressure = manifoldPressure(throttle, omega, in.ambientPressure, in.ambientTemperature);
 
     const Real rhoIntake = s.manifoldPressure / (isa::kGasConstantDryAir * in.ambientTemperature);
-    const Real airPerRad = def_.volumetricEfficiency * rhoIntake * def_.displacement / (4 * kPi);  // kg/rad
+    const Real airPerRad = volumetricEfficiency(s.manifoldPressure, in.ambientPressure, omega) * rhoIntake * def_.displacement /
+                           (4 * kPi);  // kg/rad
     const Real mAir = airPerRad * omega;
 
     // Metered mixture: lever below 5% is idle cut-off.
@@ -325,8 +408,11 @@ PistonEngineState PistonEngine::evaluate(const PistonEngineInputs& in, Real omeg
         // Torque = eta * (air per radian) * FAR_stoich * LHV * relPower.
         indicatedTorque = etaIndicated_ * airPerRad * def_.stoichiometricFar * def_.fuelHeatingValue * relPower * mag;
     }
-    // Friction opposes rotation; smooth through zero speed.
-    const Real friction = frictionTorque(omega) * std::tanh(omega / 2.0);
+    // Friction and the pumping loop (exhaust at ambient, intake at MAP: the
+    // throttled engine is an air pump working against the plate) oppose
+    // rotation; smooth through zero speed.
+    const Real pumping = std::max(in.ambientPressure - s.manifoldPressure, 0.0) * def_.displacement / (4 * kPi);
+    const Real friction = (frictionTorque(omega) + pumping) * std::tanh(omega / 2.0);
     s.brakeTorque = indicatedTorque - friction;
     s.brakePower = s.brakeTorque * omega;
     if (in.starterPowered && in.magnetos == Magnetos::Start) {
@@ -412,6 +498,47 @@ Real TurbofanEngine::thrustFraction(Real n1) const {
     return def_.idleThrustFraction + (1 - def_.idleThrustFraction) * std::pow(x, def_.thrustExponent);
 }
 
+Real TurbofanEngine::n1ForThrustFraction(Real fraction) const {
+    const Real i = def_.idleThrustFraction;
+    if (fraction <= i) return def_.idleN1 * std::sqrt(std::max(fraction, 0.0) / i);
+    const Real x = std::pow(std::min((fraction - i) / (1 - i), 1.0), 1 / def_.thrustExponent);
+    return def_.idleN1 + (1 - def_.idleN1) * x;
+}
+
+Real TurbofanEngine::ratingThrust(ThrustRating rating, Real pressure, Real temperature, Real mach) const {
+    const Real takeoff = availableThrust(pressure, temperature, mach);
+    if (rating == ThrustRating::Takeoff) return takeoff;
+    const Real fraction = rating == ThrustRating::MaxContinuous ? def_.maxContinuousFraction
+                          : rating == ThrustRating::MaxClimb    ? def_.maxClimbFraction
+                                                                : def_.maxCruiseFraction;
+    // Temperature-limited thrust: Mattingly's theta0 > TR branch on both
+    // sides of TR (below it the flat rating holds the engine short of its
+    // turbine temperature limit; the margin grows as theta0 falls).
+    auto temperatureLimited = [&](Real p, Real T, Real m) {
+        const Real k = 1 + 0.2 * m * m;
+        const Real delta0 = p / isa::kSeaLevelPressure * std::pow(k, 3.5);
+        const Real theta0 = T / isa::kSeaLevelTemperature * k;
+        const Real lapse = 1 - def_.lapseMachCoefficient * std::sqrt(m) + 3 * (def_.throttleRatio - theta0) / (1.5 + m);
+        return def_.staticThrust * delta0 * std::max(lapse, 0.0);
+    };
+    // The fraction is quoted against take-off thrust at sea level, static,
+    // ISA; refer it to the temperature limit there.
+    const Real seaLevel = availableThrust(isa::kSeaLevelPressure, isa::kSeaLevelTemperature, 0) /
+                          std::max(temperatureLimited(isa::kSeaLevelPressure, isa::kSeaLevelTemperature, 0), 1.0);
+    return std::min(takeoff, fraction * seaLevel * temperatureLimited(pressure, temperature, std::max(mach, 0.0)));
+}
+
+Real TurbofanEngine::ratingN1(ThrustRating rating, Real pressure, Real temperature, Real mach) const {
+    if (rating == ThrustRating::Takeoff) return 1.0;
+    const Real takeoff = availableThrust(pressure, temperature, mach);
+    if (takeoff <= 0) return 1.0;
+    return n1ForThrustFraction(ratingThrust(rating, pressure, temperature, mach) / takeoff);
+}
+
+Real TurbofanEngine::commandedN1(const TurbofanInputs& in) const {
+    return std::min(commandedN1(in.throttle), ratingN1(in.rating, in.ambientPressure, in.ambientTemperature, in.mach));
+}
+
 Real TurbofanEngine::n2FromN1(Real n1) const {
     if (n1 <= def_.idleN1) return n1 * def_.idleN2 / def_.idleN1;
     return def_.idleN2 + (1 - def_.idleN2) * std::sqrt((n1 - def_.idleN1) / (1 - def_.idleN1));
@@ -426,6 +553,7 @@ void TurbofanEngine::evaluate(TurbofanState& s, const TurbofanInputs& in) const 
     const Real thetaAmb = in.ambientTemperature / isa::kSeaLevelTemperature;
     const Real deltaAmb = in.ambientPressure / isa::kSeaLevelPressure;
     const bool lit = s.running || (s.starting && s.n2 >= 0.2 && in.fuelOn && in.fuelAtEngine);
+    s.ratingThrust = ratingThrust(in.rating, in.ambientPressure, in.ambientTemperature, in.mach);
     if (lit) {
         s.thrustFraction = thrustFraction(s.n1);
         s.thrust = availableThrust(in.ambientPressure, in.ambientTemperature, in.mach) * s.thrustFraction;
@@ -468,7 +596,7 @@ void TurbofanEngine::step(TurbofanState& s, const TurbofanInputs& in, Real dt) c
     }
     if (s.starting && !in.fuelOn) s.starting = false;
     if (s.running) {
-        const Real cmd = commandedN1(in.throttle);
+        const Real cmd = commandedN1(in);
         const Real tau = cmd > s.n1 ? tauUp_ * (1.6 - s.n1) : def_.decelerationTime / 3.0;
         s.n1 += (cmd - s.n1) * std::min(dt / tau, 1.0);
         s.n2 = n2FromN1(s.n1);
@@ -514,7 +642,7 @@ void TurbofanEngine::setSteady(TurbofanState& s, const TurbofanInputs& in) const
     s.running = true;
     s.starting = false;
     s.startAborted = false;
-    s.n1 = commandedN1(in.throttle);
+    s.n1 = commandedN1(in);
     s.n2 = n2FromN1(s.n1);
     evaluate(s, in);
 }

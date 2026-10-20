@@ -46,6 +46,13 @@ inline constexpr int kMaxContacts = 16;
 // Pilot (or assist) control positions, sampled every step. Persistent
 // cockpit switches (master, magnetos, fuel valves, flap lever, parking brake)
 // are changed through the cockpit-control API instead.
+// Turbofan thrust-rating selection (the FADEC's N1 limit). Auto: take-off on
+// the ground and for the definition's take-off time after lift-off (re-armed
+// by a go-around: levers to the stop with the gear or flaps out), then
+// maximum continuous with an engine out, maximum climb while climbing and
+// maximum cruise once level for a minute. The others force one rating.
+enum class ThrustMode { Auto = 0, Takeoff = 1, MaxContinuous = 2, Climb = 3, Cruise = 4 };
+
 struct PilotInput {
     Real pitch = 0;        // -1..1, + stick aft (nose up)
     Real roll = 0;         // -1..1, + roll right
@@ -58,6 +65,7 @@ struct PilotInput {
     std::array<Real, kMaxEngines> throttles{};
     bool splitThrottles = false;
     Real engineThrottle(int engine) const { return splitThrottles ? throttles[static_cast<std::size_t>(engine)] : throttle; }
+    ThrustMode thrustMode = ThrustMode::Auto;  // turbofans: the rating that caps N1
     Real mixture = 1;      // 0 (idle cut-off) .. 1 (full rich)
     Real brakeLeft = 0, brakeRight = 0;  // 0..1 toe brakes
     Real trimRate = 0;     // -1..1, + nose-up trim wheel movement
@@ -237,6 +245,9 @@ public:
     int turbofanCount() const { return static_cast<int>(turbofans_.size()); }
     const TurbofanEngine& turbofan(int i) const { return turbofans_[i]; }
     const TurbofanState& turbofanState(int i) const { return turboState_[i]; }
+    // The FADEC rating in force (ThrustMode::Auto's schedule, or the forced one).
+    ThrustRating activeThrustRating() const { return activeRating_; }
+    Real takeoffRatingTime() const { return takeoffRatingTimer_; }
     // Trim/spawn: turbofans lit and held at the commanded fan speed (no spool lag).
     void setTurbofansSteady(bool on) { turbofanSteady_ = on; }
     Real gearPosition() const { return gearPos_; }
@@ -388,6 +399,12 @@ private:
     std::array<int, kMaxEngines> reverserPhase_{};
     bool reverserDone_ = false;  // used on this ground run: not again until airborne
     Real airborneTime_ = 0;      // s off the ground since the last stop (a landing roll follows)
+    // FADEC rating schedule (ThrustMode::Auto).
+    ThrustRating activeRating_ = ThrustRating::Takeoff;
+    ThrustRating autoRating_ = ThrustRating::Takeoff;
+    Real takeoffRatingTimer_ = 0;  // s airborne on the take-off rating since lift-off or a go-around
+    Real levelTime_ = 0;           // s without a climb (switches climb -> cruise rating)
+    bool leversLow_ = true;        // levers were below the go-around position
     bool machOverWas_ = false;
     std::array<Real, kMaxGear> steerAngle_{};  // steering actuator position (rad)
     std::array<Real, kMaxEngines> lever_{};    // throttle each engine followed this step

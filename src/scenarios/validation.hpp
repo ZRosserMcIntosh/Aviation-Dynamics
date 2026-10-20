@@ -58,8 +58,8 @@ Rows c172StaticRpm();              // c172s.static_rpm
 Rows c172All();
 
 // ---- Top G against published / representative Gulfstream G650ER figures ----
-Rows topGTimeToClimb();            // top_g.climb.fl410.{time,fuel,distance}
-Rows topGMaxCruise();              // top_g.cruise.fl410.m090.throttle (+ fuel flow), top_g.cruise.fl450.m085 (info)
+Rows topGTimeToClimb();            // top_g.climb.fl410.{time,fuel,distance}[.mtow], top_g.climb.sl.roc
+Rows topGMaxCruise();              // top_g.cruise.fl410.m090 (fraction of the max-cruise rating), top_g.cruise.fl450.m085.fuel
 Rows topGVref();                   // top_g.vref.27500kg, top_g.vref.mlw
 Rows topGLandingDistance();        // top_g.landing.distance
 Rows topGAll();

@@ -95,6 +95,7 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
         }
         in.throttle = t.v[Throttle];
         in.mixture = mixture;
+        in.thrustMode = req.thrustMode;
     };
     auto residual = [&](const TrimVars& t, Real r[4]) {
         DynamicState s;
@@ -185,6 +186,7 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
         for (int i = 0; i < ac.turbofanCount(); ++i) {
             res.thrust += ac.turbofanState(i).thrust;
             res.fuelFlow += ac.turbofanState(i).fuelFlow;
+            res.thrustAvailable += ac.turbofanState(i).ratingThrust;
         }
     } else {
         const PistonEngine& e = ac.engine(0);

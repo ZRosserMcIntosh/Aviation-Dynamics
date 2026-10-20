@@ -506,10 +506,13 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("rated_power_kw", e.ratedPower, 1000, true);
         o.num("rated_rpm", e.ratedRpm, 1, true);
         o.num("displacement_l", e.displacement, 1e-3, true);
+        o.num("compression_ratio", e.compressionRatio);
         o.num("volumetric_efficiency", e.volumetricEfficiency);
+        o.num("volumetric_efficiency_speed_loss", e.volumetricEfficiencySpeedLoss);
         o.num("friction_mep_rated_kpa", e.frictionMepAtRated, 1000);
         o.num("friction_mep_zero_kpa", e.frictionMepAtZero, 1000);
         o.num("idle_manifold_ratio", e.idleManifoldRatio);
+        o.num("idle_rpm", e.idleRpm);
         o.num("intake_loss_ratio", e.intakeLossRatio);
         o.num("engine_inertia_kgm2", e.engineInertia);
         o.num("starter_torque_nm", e.starterTorque);
@@ -574,6 +577,14 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.integer("fuel_feed", e.fuelFeed);
         o.num("fan_diameter_m", e.fanDiameter);
         o.num("windmill_drag_area_m2", e.windmillDragArea);
+        if (o.has("ratings")) {
+            Obj rt = o.child("ratings");
+            rt.num("max_continuous", e.maxContinuousFraction);
+            rt.num("max_climb", e.maxClimbFraction);
+            rt.num("max_cruise", e.maxCruiseFraction);
+            rt.num("takeoff_time_s", e.takeoffRatingTime);
+            rt.num("takeoff_time_engine_out_s", e.takeoffRatingTimeEngineOut);
+        }
         if (o.has("thrust_reverser")) {
             Obj rv = o.child("thrust_reverser");
             e.reverser.present = true;

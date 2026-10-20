@@ -176,7 +176,7 @@ TEST_CASE("ground: engine start develops oil pressure, suction and charging; gyr
     }
     CHECK(run.status() == ProcedureRunner::Status::Done);
     PilotInput idle;
-    idle.throttle = 0.12;
+    idle.throttle = 0.14;  // about 1,000 rpm after start (POH: "1000 rpm or less"); the idle stop itself is ~700 rpm
     gr.run(15, idle);
     const CockpitState& c = gr.ac.instruments().state();
     CHECK(c.oilPressure > 20 * 6894.757);     // POH: 20 psi minimum at idle

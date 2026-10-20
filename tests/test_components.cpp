@@ -371,6 +371,54 @@ TEST_CASE("piston engine: rated power, altitude lapse, mixture, ignition and fue
     CHECK(cs.starterTorque + cs.brakeTorque > 0);
 }
 
+TEST_CASE("piston engine: induction model (throttle orifice, idle orifice, residual gas, pumping)") {
+    const PistonEngineDef& d = ref().engines[0];
+    const PistonEngine e(d);
+    const Real p0 = isa::kSeaLevelPressure, T0 = isa::kSeaLevelTemperature;
+    const Real wr = rpmToRadS(d.ratedRpm), wi = rpmToRadS(d.idleRpm);
+    // Full throttle at rated rpm: the definition's intake loss; at a lower
+    // rpm the drop shrinks with the square of the air flow.
+    CHECK_NEAR(e.manifoldPressure(1, wr, p0, T0) / p0, 1 - d.intakeLossRatio, 1e-6);
+    CHECK(e.manifoldPressure(1, rpmToRadS(1800), p0, T0) > e.manifoldPressure(1, wr, p0, T0));
+    CHECK(e.manifoldPressure(1, rpmToRadS(1800), p0, T0) < p0);
+    // Closed throttle: the idle orifice gives the definition's MAP at the idle
+    // rpm, and above it the choked flow is fixed, so MAP falls with rpm
+    // toward the residual-gas floor (ambient / compression ratio).
+    CHECK_NEAR(e.manifoldPressure(0, wi, p0, T0) / p0, d.idleManifoldRatio, 1e-6);
+    const Real m1200 = e.manifoldPressure(0, rpmToRadS(1200), p0, T0), m2400 = e.manifoldPressure(0, rpmToRadS(2400), p0, T0);
+    CHECK(m1200 < d.idleManifoldRatio * p0);
+    CHECK(m2400 < m1200);
+    CHECK(m2400 > p0 / d.compressionRatio);
+    // Fixed choked air flow: eta_v MAP omega is the same at 1,200 and 2,400 rpm.
+    const Real flow1200 = e.volumetricEfficiency(m1200, p0, rpmToRadS(1200)) * m1200 * 1200;
+    const Real flow2400 = e.volumetricEfficiency(m2400, p0, rpmToRadS(2400)) * m2400 * 2400;
+    CHECK_NEAR(flow2400 / flow1200, 1.0, 0.01);
+    // Stopped engine: no pumping, MAP = ambient. Half lever: well below ambient at cruise rpm.
+    CHECK_NEAR(e.manifoldPressure(0.5, 0, p0, T0), p0, 1.0);
+    CHECK_RANGE(e.manifoldPressure(0.5, rpmToRadS(2300), p0, T0) / p0, 0.65, 0.85);
+    // Volumetric efficiency is the definition's at the rated point and falls
+    // both with speed (port losses) and with the exhaust/intake ratio (residual gas).
+    CHECK_NEAR(e.volumetricEfficiency((1 - d.intakeLossRatio) * p0, p0, wr), d.volumetricEfficiency, 1e-9);
+    CHECK(e.volumetricEfficiency((1 - d.intakeLossRatio) * p0, p0, rpmToRadS(1800)) > d.volumetricEfficiency);
+    CHECK(e.volumetricEfficiency(0.3 * p0, p0, wr) < 0.8 * d.volumetricEfficiency);
+    // Windmilled at 1,500 rpm with the throttle closed the firing engine is a
+    // brake (indicated power below friction plus pumping); dead, more so.
+    PistonEngineInputs in;
+    in.throttle = 0;
+    in.magnetos = Magnetos::Both;
+    in.fuelAtEngine = true;
+    in.mixture = 1;
+    const PistonEngineState idle = e.evaluate(in, rpmToRadS(1500));
+    CHECK(idle.firing);
+    CHECK(idle.brakeTorque < 0);
+    in.mixture = 0;
+    CHECK(e.evaluate(in, rpmToRadS(1500)).brakeTorque < idle.brakeTorque);
+    // Rated power still calibrated with the pumping loop included.
+    in.mixture = scenarios::bestPowerMixture(ref(), 1.225);
+    in.throttle = 1;
+    CHECK_NEAR(e.evaluate(in, wr).brakePower, d.ratedPower, 1.0);
+}
+
 // -------------------------------------------------------------- systems ----
 
 TEST_CASE("fuel system: selector, usable fuel, shutoff valve, line and leaks") {

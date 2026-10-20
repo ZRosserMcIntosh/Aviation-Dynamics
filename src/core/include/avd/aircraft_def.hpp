@@ -174,11 +174,27 @@ struct PistonEngineDef {
     Real ratedPower = 134226;         // W, brake, sea-level ISA, full throttle, best power
     Real ratedRpm = 2700;
     Real displacement = 5.916e-3;     // m^3
-    Real volumetricEfficiency = 0.85;
-    Real frictionMepAtRated = 1.6e5;  // Pa, friction+pumping mean effective pressure
-    Real frictionMepAtZero = 0.6e5;   // Pa
-    Real idleManifoldRatio = 0.33;    // MAP / ambient at closed throttle
-    Real intakeLossRatio = 0.03;      // MAP loss at full throttle
+    Real compressionRatio = 8.5;      // geometric; sets the residual-gas loss of volumetric efficiency at low MAP
+    Real volumetricEfficiency = 0.85; // referred to manifold density, at full throttle and rated rpm
+    // Inlet-port and valve flow losses grow with the square of the flow, so
+    // the trapped charge falls with speed: eta_v x (1 - loss (rpm/rated)^2),
+    // normalised to 1 at rated rpm (Heywood 6.2.4). Sets how much the
+    // full-throttle torque rises below rated rpm (Lycoming's sea-level curve:
+    // about +9 % from 2,700 to 1,800 rpm).
+    Real volumetricEfficiencySpeedLoss = 0.08;
+    Real frictionMepAtRated = 1.6e5;  // Pa, mechanical friction (rubbing, accessories) mean effective pressure
+    Real frictionMepAtZero = 0.6e5;   // Pa (pumping, exhaust minus manifold pressure, is separate)
+    // Induction: a butterfly throttle plate (effective area 1 - cos of the
+    // plate angle, lever-linear) in series with the engine's pumping. The
+    // closed plate leaves an idle orifice sized so that MAP = idleManifoldRatio
+    // x ambient at idleRpm (the idle stop a mechanic sets); the wide-open
+    // plate is sized so that MAP = (1 - intakeLossRatio) x ambient at rated
+    // rpm (about 1 inHg). Between, MAP follows from rpm and lever: closed
+    // throttle is choked, so the air flow is fixed and MAP falls as 1/rpm
+    // when the propeller windmills the engine.
+    Real idleManifoldRatio = 0.33;    // MAP / ambient at closed throttle at idleRpm
+    Real idleRpm = 650;               // rpm the idle orifice is sized at
+    Real intakeLossRatio = 0.03;      // MAP loss at full throttle, rated rpm
     Real engineInertia = 0.6;         // kg m^2 crankshaft etc. (propeller separate)
     Real starterTorque = 60;          // N m at the crankshaft
     Real starterCurrent = 150;        // A
@@ -208,6 +224,14 @@ struct PistonEngineDef {
 // with delta0, theta0 the free-stream total pressure and temperature ratios.
 // Part throttle follows the fan speed N1; the spools lag the throttle, and
 // fuel flow is thrust times a TSFC that rises with Mach number.
+//
+// FADEC thrust ratings (TurbofanDef::*Fraction): the fuel control caps the
+// commanded N1 at the active rating's limit; the lever still commands N1
+// below it. Take-off (TO/GA) is time-limited after lift-off, then maximum
+// continuous (one engine out) or maximum climb apply, and maximum cruise in
+// level flight (Aircraft schedules this in ThrustMode::Auto).
+enum class ThrustRating { Takeoff = 0, MaxContinuous = 1, MaxClimb = 2, MaxCruise = 3 };
+
 struct TurbofanDef {
     std::string name = "engine";
     Vec3 position;                    // thrust line point (nozzle exit), structural frame
@@ -231,6 +255,22 @@ struct TurbofanDef {
     Real oilPressureIdle = 2.4e5;     // Pa
     Real oilPressureMax = 4.1e5;      // Pa
     int fuelFeed = 0;
+    // Thrust ratings as fractions of the take-off thrust at sea level, static,
+    // ISA (Estimated: typical of modern business-jet turbofans, maximum
+    // continuous 0.90-0.93, maximum climb 0.85-0.90, maximum cruise
+    // 0.80-0.87). The ratings are turbine-temperature limits: the flat-rated
+    // take-off thrust is held up to the throttle ratio by raising T_t4, and
+    // each lower rating holds a fixed fraction of the temperature-limited
+    // thrust (Mattingly's temperature branch, slope 3/(1.5 + M) per unit
+    // theta0, on both sides of TR). They therefore give these fractions at
+    // sea level and converge on the flat-rated line in the cold air at
+    // altitude, where the take-off rating itself sits well below its
+    // temperature limit (TurbofanEngine::ratingThrust).
+    Real maxContinuousFraction = 0.92;
+    Real maxClimbFraction = 0.88;
+    Real maxCruiseFraction = 0.84;
+    Real takeoffRatingTime = 300;           // s of take-off thrust after lift-off (all engines)
+    Real takeoffRatingTimeEngineOut = 600;  // s with an engine out
     // Fan diameter, m (0: twice the reverser's cowl radius). Sets the default
     // windmilling drag area.
     Real fanDiameter = 0;
