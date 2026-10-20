@@ -591,7 +591,14 @@ void writeReport(std::ostream& out, const Comparison& c) {
 
 // ----------------------------------------------------------------- paths ----
 
+namespace {
+std::string g_goldenDirOverride;
+}  // namespace
+
+void setGoldenDirectory(const std::string& dir) { g_goldenDirOverride = dir; }
+
 std::string goldenDirectory() {
+    if (!g_goldenDirOverride.empty()) return g_goldenDirOverride;
     if (const char* env = std::getenv("AVD_GOLDEN_DIR"); env && *env) return env;
 #ifdef AVD_GOLDEN_DIR
     return AVD_GOLDEN_DIR;

@@ -67,6 +67,9 @@ void writeReport(std::ostream& out, const Comparison& c);
 // Where the goldens live: AVD_GOLDEN_DIR (compile-time: <repo>/tests/golden),
 // overridable at run time by the AVD_GOLDEN_DIR environment variable.
 std::string goldenDirectory();
+// Overrides AVD_GOLDEN_DIR and the build-time default for this process
+// (the recorder's --dir); an empty string clears the override.
+void setGoldenDirectory(const std::string& dir);
 std::string goldenPath(const std::string& name);
 
 }  // namespace avd::scenarios::golden

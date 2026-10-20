@@ -37,7 +37,7 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--dir" && i + 1 < argc) {
-            setenv("AVD_GOLDEN_DIR", argv[++i], 1);
+            g::setGoldenDirectory(argv[++i]);
         } else if (a.rfind("--", 0) == 0) {
             if (!mode.empty()) return usage();
             mode = a;
