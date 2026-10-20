@@ -189,6 +189,7 @@
    },
    "span_efficiency": 0.88,
    "lifting_line": true,
+   "sweep_stall_gradient": 0.5,
    "thickness_ratio": 0.11,
    "korn_factor": 0.95,
    "mach_clmax_knee": 0.4,
