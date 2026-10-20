@@ -145,6 +145,14 @@ std::vector<std::string> AircraftDefinition::validate() const {
         if (L.slipstreamEngine >= static_cast<int>(engines.size())) c.add(p + ".slipstreamEngine", "no such engine");
         c.range(p + ".thicknessRatio", L.thicknessRatio, 0.01, 0.4);
         c.range(p + ".kornFactor", L.kornFactor, 0.7, 1.0);
+        c.range(p + ".machClMaxKnee", L.machClMaxKnee, 0.3, 1.0);
+        c.range(p + ".machClMaxFactor", L.machClMaxFactor, 0, 30);
+        c.range(p + ".machAcShift", L.machAcShift, 0, 0.5);
+        c.range(p + ".machCm0Shift", L.machCm0Shift, -0.2, 0.2);
+        c.range(p + ".machControlExponent", L.machControlExponent, 1, 40);
+        c.range(p + ".machControlFloor", L.machControlFloor, 0, 1);
+        c.range(p + ".wakeSpread", L.wakeSpread, 0, 0.5);
+        c.range(p + ".wakeDynamicPressureRatio", L.wakeDynamicPressureRatio, 0.1, 1);
         int strips = 0;
         for (std::size_t k = 0; k < L.panels.size(); ++k) {
             const PanelDef& P = L.panels[k];

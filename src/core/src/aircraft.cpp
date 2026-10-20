@@ -944,7 +944,7 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
             Real least = 1e9;
             for (int i = first; i < end; ++i) {
                 const StripTelemetry& s = aeroOut_.strips[i];
-                if (s.q > 30 && s.stallAlpha - s.alpha < least) {
+                if (s.q > 30 && aeroModel_->stripIsPrimary(i) && s.stallAlpha - s.alpha < least) {
                     least = s.stallAlpha - s.alpha;
                     idx = i;
                 }

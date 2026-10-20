@@ -117,6 +117,37 @@ struct LiftingSurfaceDef {
     // aerodynamics are a separate model (Milestone 7).
     Real thicknessRatio = 0.12;
     Real kornFactor = 0.87;           // 0.87 conventional, ~0.95 supercritical
+    // Transonic section behaviour, on the Mach number normal to the span
+    // (simple sweep theory, as the Korn drag rise). The defaults are an
+    // ordinary subsonic section's; below M ~0.4 they change nothing.
+    //  - clmax x max(0.35, 1 - k (Mn - knee)^2) above the knee: shock-induced
+    //    separation, the buffet boundary at altitude (Mn = M cos(sweep)).
+    //  - The section's force point moves aft from c/4 toward c/2 between
+    //    about Mdd (Korn, with the lift coefficient) and M 1: Mach tuck.
+    //  - Hinged controls lose effectiveness by (1 - (M/Mdd0)^n), floored, Mdd0
+    //    the zero-lift Korn Mdd: the shock ahead of the hinge line.
+    Real machClMaxKnee = 0.4;         // normal Mach
+    Real machClMaxFactor = 2.0;       // k, per (normal Mach)^2: 0.92 at Mn 0.6, 0.68 at 0.8, 0.5 at 0.9
+    Real machAcShift = 0.25;          // chord fraction at M 1 (c/4 -> c/2)
+    //  - Optional cm0 shift through the drag rise (Mcrit = Mdd - 0.1077 to
+    //    Mdd + 0.05): a rear-loaded supercritical section's aft loading grows
+    //    with Mach (more nose-down); 0 for conventional sections.
+    Real machCm0Shift = 0;            // added to cm0 past the drag rise (negative: nose down)
+    Real machControlExponent = 10;    // n
+    Real machControlFloor = 0.2;      // effectiveness kept at and above Mdd
+    // A horizontal tail with a downwash source sits in that wing's separated
+    // wake when the wing is stalled: a band about the wake centreline (from
+    // the mid-chord, deflected by alpha less the downwash) of half-thickness
+    // c/2 sin(alpha - eps) plus the spreading aft, thickness and strength
+    // both scaled by the wing's separated fraction; inside it the tail sees reduced dynamic pressure
+    // and a wake-fixed downwash (the T-tail deep stall). The spreading is a
+    // turbulent wake's (~9 deg half-angle); the core's q ratio the ~55 %
+    // velocity deficit a few chords behind a stalled wing (Taylor & Ray, AIAA
+    // 65-737: the tail's contribution nearly lost in the wake core). Off:
+    // the downwash model alone.
+    bool wakeBlanking = true;
+    Real wakeSpread = 0.16;           // half-thickness per metre aft
+    Real wakeDynamicPressureRatio = 0.2;  // q ratio at the band's centre
     // Span loading from a nonlinear lifting line (horseshoe vortices solved
     // together, ground images) instead of independent strips with the
     // Helmbold slope: tip stall, swept-wing pitch-up, winglets, roll damping.

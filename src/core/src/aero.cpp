@@ -16,6 +16,17 @@
 //  - Drag rise: Korn equation + Lock's fourth-power law (Mason, "Transonic
 //    aerodynamics of airfoils and wings", Virginia Tech notes).
 //  - Slender-body Munk moment: Munk (1924), NACA TR-184.
+//  - Transonic section behaviour: aerodynamic-centre travel from c/4 toward
+//    c/2 through the transonic range and the loss of flap effectiveness once
+//    the shock stands ahead of the hinge (Hilton, "High-Speed Aerodynamics",
+//    1951; Raymer §12.4.2 on the pitch-down "tuck"); the buffet boundary as a
+//    clmax falling with the normal Mach number above a knee (Obert,
+//    "Aerodynamic Design of Transport Aircraft", ch. 20: CL_buffet vs M).
+//  - Tail in the stalled wing's wake (deep stall): Taylor & Ray, "A
+//    systematic study of the factors contributing to post-stall longitudinal
+//    stability of T-tail transport configurations", AIAA 65-737; the wake
+//    centreline from the mid-chord along alpha less the downwash, the
+//    separated region spreading aft, reduced tail q inside it.
 #include "avd/aero.hpp"
 
 #include <stdexcept>
@@ -159,12 +170,14 @@ AeroModel::AeroModel(const AircraftDefinition& def) : fuselages_(def.fuselages),
         }
         Surface& S = surfaces_.back();
         S.endStrip = static_cast<int>(strips_.size());
-        Vec3 c;
+        Vec3 c, nrm;
         for (int i = S.firstStrip; i < S.endStrip; ++i) {
             S.area += strips_[i].area;
             c += strips_[i].position * strips_[i].area;
+            nrm += strips_[i].normalAxis * strips_[i].area;
         }
         S.centroid = S.area > 0 ? c / S.area : Vec3{};
+        if (length(nrm) > 1e-6) S.meanNormal = normalized(nrm);
         S.sweep = S.area > 0 ? sweepArea / S.area : 0;
         S.horizontal = !anyVertical;
         S.span = anyMirrored ? 2 * spanSum : spanSum;
@@ -172,6 +185,7 @@ AeroModel::AeroModel(const AircraftDefinition& def) : fuselages_(def.fuselages),
         // aspect ratio (end-plate effect of fuselage and tailplane; DATCOM 5.3).
         S.aspectRatio = S.area > 0 ? sq(S.span) / S.area * (anyVertical && !anyMirrored ? 1.55 : 1.0) : 0;
         S.liftSlope = liftCurveSlope3D(S.aspectRatio, S.sweep, S.def.section.liftSlope);
+        S.meanChord = S.span > 0 ? S.area / S.span : 0;
     }
     for (std::size_t si = 0; si < surfaces_.size(); ++si) {
         Surface& S = surfaces_[si];
@@ -206,6 +220,12 @@ AeroModel::AeroModel(const AircraftDefinition& def) : fuselages_(def.fuselages),
             const Surface& W = surfaces_[src];
             S.downwashGradient = S.def.downwashGradient >= 0 ? S.def.downwashGradient
                                                              : 2 * W.liftSlope / (kPi * W.aspectRatio);
+            // The separated wake of the stalled wing keeps about the deflection
+            // it had at the stall (its normal force does not collapse), rather
+            // than the falling CL's: the downwash at the finite wing's CLmax,
+            // ~0.9 clmax cos(sweep) (Raymer §12.4.1).
+            const Real clRef = 0.9 * W.def.section.clMax * std::cos(W.sweep);
+            S.wakeDownwash = S.def.downwashAtZeroLift + S.downwashGradient * clRef / std::max(W.liftSlope, 0.1);
         }
     }
 }
@@ -509,7 +529,10 @@ void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, Ae
         return w;
     };
     std::array<Vec3, 64> wSave{};
-    for (int it = 0; it < 24; ++it) {
+    // A warm start converges in a few iterations; a cold one from the
+    // transonic regime, where the un-induced sections sit past their reduced
+    // lift limits, needs the room (24 left the forces 7 % short at M0.92).
+    for (int it = 0; it < 64; ++it) {
         Real rMax = 0, gMax = 1e-3;
         for (int i = 0; i < n; ++i) {
             if (!strips_[static_cast<std::size_t>(n0 + i)].attached) {
@@ -601,15 +624,18 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
         const Real ge = S.def.groundEffect && S.horizontal ? groundEffectFactor(in.heightAboveGround, S.span) : 1.0;
         const Real arEff = S.aspectRatio / ge;
         const Real a3 = liftCurveSlope3D(arEff, S.sweep, S.def.section.liftSlope, beta);
-        // Downwash from the source surface (lagged if available).
+        // Downwash from the source surface: the linear estimate here; the
+        // stalled wake (below, once the strips' flow is known) may relax it,
+        // and eps (lagged if available) is settled before any strip is evaluated.
         Real eps = 0;
-        if (S.def.downwashSource >= 0) {
-            const int src = S.def.downwashSource;
+        Real epsLinear = 0, srcGe = 1;
+        const int src = S.def.downwashSource;
+        if (src >= 0) {
             const Real clSrc = out.surfaces[src].cl;
             const Real aSrc = surfaces_[src].liftSlope;
-            const Real srcGe = groundEffectFactor(in.heightAboveGround, surfaces_[src].span);
-            so.downwash = (S.def.downwashAtZeroLift + S.downwashGradient * clSrc / aSrc) * srcGe;
-            eps = in.downwashLagged ? in.downwashLagged[si] : so.downwash;
+            srcGe = groundEffectFactor(in.heightAboveGround, surfaces_[src].span);
+            epsLinear = (S.def.downwashAtZeroLift + S.downwashGradient * clSrc / aSrc) * srcGe;
+            so.downwash = epsLinear;
         }
 
         const bool ll = S.def.liftingLine;
@@ -661,10 +687,26 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             // flow. Strip theory: the surface's 3-D slope.
             const Real an = ll ? S.def.section.liftSlope / std::sqrt(1 - std::min(vp2 / sq(in.speedOfSound), 0.81)) : a3 / cs;
             e.an = an;
+            // Transonic section behaviour on the normal Mach number mn (the
+            // free-stream equivalent m = mn / cos(sweep) is what Korn's
+            // equation is written for). Above the knee the section's lift
+            // limit falls (shock-induced separation: the buffet boundary);
+            // the hinged controls lose effectiveness as the shock moves to
+            // the hinge line, by the zero-lift Mdd so that the control's own
+            // lift does not feed back into it.
+            const Real mn = std::sqrt(vp2) / in.speedOfSound;
+            const Real m = mn / cs;
+            const Real mdd0 = S.def.kornFactor / cs - S.def.thicknessRatio / (cs * cs);
+            const Real ctlEff = mdd0 > 0.05 ? std::max(S.def.machControlFloor, 1 - std::pow(m / mdd0, S.def.machControlExponent)) : 1.0;
+            if (mn > S.def.machClMaxKnee) {
+                const Real k = std::max(0.35, 1 - S.def.machClMaxFactor * sq(mn - S.def.machClMaxKnee));
+                sp.clMax *= k;
+                sp.clMin *= k;
+            }
             // Controls on this strip (deflections normal to the hinge line),
             // spread spanwise over half a chord on a lifting-line surface.
             const std::array<Real, 6> ctl = ll ? out.llControl[static_cast<std::size_t>(&st - strips_.data())] : controlEffects(st, in.controls);
-            const Real dAlpha0 = ctl[0], dClMax = ctl[1] * an, dCm = ctl[2], dCd = ctl[3], extension = ctl[4], spoiled = ctl[5];
+            const Real dAlpha0 = ctl[0] * ctlEff, dClMax = ctl[1] * an * ctlEff, dCm = ctl[2] * ctlEff, dCd = ctl[3], extension = ctl[4], spoiled = ctl[5];
             e.sec = evaluateSection(sp, alpha, an, dAlpha0, dClMax, cdMax);
             e.sec.cm += dCm;
             e.sec.cd += dCd;
@@ -679,10 +721,21 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             // Korn's equation is written for the free-stream Mach number and
             // the streamwise lift coefficient (cl_streamwise = cl_n cos^2), and
             // Lock's increment is streamwise (normal: divide by cos^2).
-            const Real m = std::sqrt(vp2) / in.speedOfSound / cs;
-            const Real mdd = S.def.kornFactor / cs - S.def.thicknessRatio / (cs * cs) - std::abs(e.sec.cl) / (10 * cs);
+            const Real mdd = mdd0 - std::abs(e.sec.cl) / (10 * cs);
             const Real mcrit = mdd - 0.1077;  // (0.1/80)^(1/3)
             e.cdWave = m > mcrit ? 20 * std::pow(m - mcrit, 4) / (cs * cs) : 0;
+            // Mach tuck. Through the drag rise (Mcrit to just past Mdd) a
+            // rear-loaded section's aft loading grows: the cm0 shift. From
+            // about Mdd, where the shock is strong and moving aft, the force
+            // point travels from c/4 toward c/2 (reached about M 1): the
+            // lift's moment about the quarter chord, where the lifting line
+            // keeps its control points. Attached flow only; the separated
+            // section's centre of pressure is in evaluateSection.
+            if (m > mcrit && mcrit < 0.99) {
+                const Real fCm0 = smoothstep(mcrit, mdd + 0.05, m) * e.sec.attached;
+                const Real fAc = mdd - 0.05 < 0.99 ? smoothstep(mdd - 0.05, 1.0, m) * e.sec.attached : 0.0;
+                e.sec.cm += fCm0 * S.def.machCm0Shift - fAc * S.def.machAcShift * e.sec.cl;
+            }
             e.alpha = alpha;
             e.q = 0.5 * rho * vp2;
             e.qFree = 0.5 * rho * dot(v, v);
@@ -714,11 +767,86 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
                 raw[i] = sm;
             }
         }
+        // The stalled wing's wake over a horizontal tail. The separated
+        // fraction of the wing within the tail's span sets the band: the
+        // separated region spans the chord's projection across the flow (the
+        // shear layer off the leading edge to the trailing edge), so its
+        // centreline leaves the mid-chord along the flow (alpha less the
+        // downwash, in body axes) with a half-thickness of c/2 sin(alpha - eps)
+        // plus the spreading aft, both scaled by that fraction. A strip inside
+        // sees the wake's reduced dynamic pressure; the surface's downwash
+        // relaxes toward the wake's own instead of following the collapsing CL
+        // (which made a stalled wing's tail MORE effective: the reverse of
+        // blanketing).
+        bool wake = false;
+        Real wakeFraction = 0, wakeHalfBase = 0, wakeTanAlpha = 0, wakeXte = 0, wakeZte = 0;
+        if (src >= 0 && S.horizontal && S.def.wakeBlanking && surfaces_[static_cast<std::size_t>(src)].horizontal) {
+            const Surface& W = surfaces_[static_cast<std::size_t>(src)];
+            const Real yMax = 0.5 * S.span + 0.5 * W.meanChord;
+            Real sepArea = 0, area = 0;
+            for (int i = W.firstStrip; i < W.endStrip; ++i) {
+                const Strip& ws = strips_[static_cast<std::size_t>(i)];
+                if (std::abs(ws.position.y) > yMax || !ws.attached) continue;
+                const StripTelemetry& wt = out.strips[static_cast<std::size_t>(i)];
+                if (wt.q <= 0) continue;
+                // Separated by the strip's own section weight, or by its
+                // free-stream angle (incidence, twist, rotation; no induced
+                // flow) further past its stall angle than attached flow's
+                // largest induced angle, ~2 clmax / (pi AR): the lifting
+                // line's regularised post-stall solution holds a root strip
+                // attached under its stalled neighbours' induced flow long
+                // after the wing has let go (17 deg past its stall at 30 deg
+                // alpha), while a flapped wing at its 1-g CLmax is genuinely
+                // held attached by 4-6 deg of induced downwash.
+                const Vec3& v = out.llFlow[static_cast<std::size_t>(i)];
+                const Vec3 vp = v - ws.spanAxis * dot(v, ws.spanAxis);
+                Real sep = 1 - wt.attached;
+                if (dot(vp, vp) > 1e-8) {
+                    const Real aFree = std::atan2(-dot(vp, ws.normalNormal), dot(vp, ws.chordNormal)) * ws.cosSweep;
+                    const Real width = W.def.section.stallWidth * ws.cosSweep;
+                    const Real induced = 2 * W.def.section.clMax / (kPi * std::max(W.aspectRatio, 1.0));
+                    sep = std::max(sep, smoothstep(wt.stallAlpha + induced, wt.stallAlpha + induced + width, aFree));
+                }
+                sepArea += ws.area * sep;
+                area += ws.area;
+            }
+            wakeFraction = area > 0 ? clamp(sepArea / area, 0.0, 1.0) : 0.0;
+            if (wakeFraction > 1e-3) {
+                wake = true;
+                const Real deflection = clamp(out.alpha - std::max(epsLinear, 0.0), -1.0, 1.0);
+                wakeXte = W.centroid.x - 0.25 * W.meanChord;  // mid-chord (the centroid is on the quarter-chord line)
+                wakeZte = W.centroid.z;
+                wakeHalfBase = 0.5 * W.meanChord * std::abs(std::sin(deflection));
+                wakeTanAlpha = std::tan(deflection);
+            }
+        }
         Vec3* vFree = out.llFlow.data() + n0;
+        Real immersion = 0, immersionArea = 0;
         for (int k = 0; k < n; ++k) {
             const Strip& st = strips_[static_cast<std::size_t>(n0 + k)];
             vFree[k] = st.attached ? localFlow(S, st, st.position - in.cg, in) : Vec3{};
+            if (!wake || !st.attached) continue;
+            immersionArea += st.area;
+            const Real dx = wakeXte - st.position.x;  // distance aft of the wing's mid-chord
+            if (dx <= 0) continue;
+            // Air flowing aft and up (z down) at alpha carries the wake up by dx tan(alpha - eps).
+            const Real zWake = wakeZte - dx * wakeTanAlpha;
+            // The thickness and the strength both grow with the separated
+            // fraction: a wing just past its stall sheds a thin wake (a low
+            // tail with landing flap sits in the wing's plane and must not
+            // lose its elevator at the 1-g stall), a fully stalled one the
+            // whole separated region.
+            const Real half = wakeFraction * (wakeHalfBase + S.def.wakeSpread * dx);
+            const Real w = half > 1e-6 ? wakeFraction * (1 - smoothstep(0.5, 1.0, std::abs(st.position.z - zWake) / half)) : 0.0;
+            if (w <= 0) continue;
+            vFree[k] = vFree[k] * std::sqrt(1 - w * (1 - S.def.wakeDynamicPressureRatio));
+            immersion += w * st.area;
         }
+        if (wake && immersionArea > 0) {
+            so.wakeImmersion = immersion / immersionArea;
+            so.downwash = lerp(epsLinear, S.wakeDownwash * srcGe, so.wakeImmersion);
+        }
+        if (src >= 0) eps = in.downwashLagged ? in.downwashLagged[si] : so.downwash;
         if (ll)
             solveLiftingLine(static_cast<int>(si), n0, n, in, out, [&](int k, const Vec3& v, Real* attached) {
                 const StripEval e = evalStrip(strips_[static_cast<std::size_t>(n0 + k)], v);
@@ -726,7 +854,7 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
                 return e.gamma;
             });
 
-        Real liftSum = 0, qaFree = 0, alphaSum = 0, areaSum = 0;
+        Real liftSum = 0, qaFree = 0, alphaSum = 0, areaSum = 0, separatedSum = 0;
         for (int i = S.firstStrip; i < S.endStrip; ++i) {
             const Strip& st = strips_[i];
             StripTelemetry& tel = out.strips[i];
@@ -762,6 +890,7 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             qaFree += qFree * area;
             alphaSum += e.alpha * cs * st.area;
             areaSum += st.area;
+            separatedSum += (1 - sec.attached) * st.area;
             if (sec.stalled) ++so.stalledStrips;
 
             // Forces. Lift is normal to both the strip's (spanwise-free) flow
@@ -797,6 +926,7 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
         // the input of the downwash it makes.
         so.cl = qaFree > 0 ? liftSum / qaFree : 0;
         so.alphaMean = areaSum > 0 ? alphaSum / areaSum : 0;
+        so.separated = areaSum > 0 ? separatedSum / areaSum : 0;
     }
 
     // Fuselage: Munk moment and crossflow drag (free stream; slender-body

@@ -40,7 +40,7 @@ Real wingStallMargin(const Aircraft& ac) {
     const AeroOutputs& a = ac.aero();
     Real margin = 1;
     for (int i = ac.aeroModel().firstStrip(0); i < ac.aeroModel().endStrip(0); ++i)
-        if (a.strips[i].q > 0) margin = std::min(margin, a.strips[i].stallAlpha - a.strips[i].alpha);
+        if (a.strips[i].q > 0 && ac.aeroModel().stripIsPrimary(i)) margin = std::min(margin, a.strips[i].stallAlpha - a.strips[i].alpha);
     return margin;
 }
 
