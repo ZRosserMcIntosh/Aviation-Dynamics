@@ -616,10 +616,20 @@ void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, con
         e.starterPowered = false;
     }
     const Real airspeed = length(s_.body.velocity - c.air.wind);
+    // The FADEC rating: forced by the pilot's thrust mode, else the automatic
+    // schedule (advanced in step()).
+    switch (in.thrustMode) {
+    case ThrustMode::Takeoff: activeRating_ = ThrustRating::Takeoff; break;
+    case ThrustMode::MaxContinuous: activeRating_ = ThrustRating::MaxContinuous; break;
+    case ThrustMode::Climb: activeRating_ = ThrustRating::MaxClimb; break;
+    case ThrustMode::Cruise: activeRating_ = ThrustRating::MaxCruise; break;
+    default: activeRating_ = autoRating_; break;
+    }
     for (int i = 0; i < turbofanCount(); ++i) {
         TurbofanInputs& e = c.turboIn[i];
         lever_[i] = clamp(in.engineThrottle(i), 0.0, 1.0);
         e.throttle = lever_[i];
+        e.rating = activeRating_;
         e.fuelOn = turboFuel_[i];
         e.fuelAtEngine = fuel_.fuelAtEngine();
         e.ambientPressure = c.air.state.pressure;
@@ -1074,6 +1084,28 @@ void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, co
         // The most advanced lever: every throttle at idle arms the automation.
         Real lever = in.throttle;
         for (int i = 0; i < engineCount() + turbofanCount(); ++i) lever = i == 0 ? lever_[i] : std::max(lever, lever_[i]);
+        // ---- FADEC rating schedule (ThrustMode::Auto) ----
+        if (turbofanCount() > 0) {
+            const bool airborne = !mains && !tel_.onGround;
+            bool engineOut = false;
+            for (int i = 0; i < turbofanCount(); ++i) engineOut = engineOut || !turboState_[i].running;
+            // Take-off thrust from lift-off for the rating's time; a go-around
+            // (levers to the stop with the gear or flaps out) starts it again.
+            const bool goAround = airborne && lever >= 0.95 && leversLow_ && (gearDown_ || flapDetent_ > 0);
+            if (!airborne || goAround) takeoffRatingTimer_ = 0;
+            else takeoffRatingTimer_ += dt;
+            leversLow_ = lever < 0.9;
+            const TurbofanDef& td = def_.turbofans[0];
+            const Real limit = engineOut ? td.takeoffRatingTimeEngineOut : td.takeoffRatingTime;
+            // Climbing (> 300 fpm) keeps the climb rating; a minute without a
+            // climb (level, or descending) selects maximum cruise.
+            if (-s_.body.velocity.z > 1.5) levelTime_ = 0;
+            else levelTime_ += dt;
+            if (takeoffRatingTimer_ < limit) autoRating_ = ThrustRating::Takeoff;
+            else if (engineOut) autoRating_ = ThrustRating::MaxContinuous;
+            else if (levelTime_ < 60) autoRating_ = ThrustRating::MaxClimb;
+            else autoRating_ = ThrustRating::MaxCruise;
+        }
         const bool idle = lever <= (landing ? 0.4 : 0.08), advanced = lever > (landing ? 0.5 : 0.2);
         const SpeedbrakeDef& sb = def_.controls.speedbrake;
         if (sb.present && sb.groundSpoilers) {

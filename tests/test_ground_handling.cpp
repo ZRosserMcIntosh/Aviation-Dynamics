@@ -137,13 +137,17 @@ TEST_CASE("ground handling: braking and cornering share one friction ellipse") {
 }
 
 TEST_CASE("ground handling: without anti-skid a hard stop on a wet runway locks the wheels, which slide at mu_slide") {
-    auto stop = [](const AircraftDefinition& d, bool pedals, Real& lockedFraction, Real& slidingRatio, Real& headingAtEnd) {
+    // `lateral`: a sideways drift (m/s) at brake application, the small
+    // disturbance any real skid starts from (the ground-loop cases below;
+    // before the induction model the idling engine's slipstream swirl
+    // supplied one by itself).
+    auto stop = [](const AircraftDefinition& d, bool pedals, Real lateral, Real& lockedFraction, Real& slidingRatio, Real& headingAtEnd) {
         Aircraft ac(d);
         SimpleWeather atm;
         SurfaceProperties s = surfaces::kAsphalt;
         s.waterDepth = 0.001;
         FlatGround g(0, s);
-        setRolling(ac, g, atm, 40, 0, 1.0);
+        setRolling(ac, g, atm, 40, lateral, 1.0);
         PilotInput in;
         in.brakeLeft = in.brakeRight = 1;
         const Vec3 x0 = ac.datumPosition();
@@ -170,7 +174,7 @@ TEST_CASE("ground handling: without anti-skid a hard stop on a wet runway locks 
         return length(ac.datumPosition() - x0);
     };
     Real lockedFraction, slidingRatio, heading;
-    const Real locked = stop(ref(), true, lockedFraction, slidingRatio, heading);
+    const Real locked = stop(ref(), true, 0, lockedFraction, slidingRatio, heading);
     CHECK(lockedFraction > 0.9);  // locked through the fast part of the roll
     CHECK_NEAR(slidingRatio, ref().gear[1].slidingFrictionRatio, 0.03);
     // The same airplane with an anti-skid system never locks and stops shorter.
@@ -178,15 +182,15 @@ TEST_CASE("ground handling: without anti-skid a hard stop on a wet runway locks 
     for (GearDef& g : as.gear)
         if (g.brakeGroup >= 0) g.antiSkidEfficiency = 0.88;
     Real f2, s2, h2;
-    const Real antiSkid = stop(as, true, f2, s2, h2);
+    const Real antiSkid = stop(as, true, 0, f2, s2, h2);
     CHECK(f2 < 0.02);
     CHECK(antiSkid < 0.95 * locked);
     // Locked mains have no cornering left: with the pedals free the skid
     // swings into a ground loop, where the rolling (anti-skid) tyres keep
     // the airplane straight.
     Real f3, s3, h3, f4, s4, h4;
-    stop(ref(), false, f3, s3, h3);
-    stop(as, false, f4, s4, h4);
+    stop(ref(), false, 1.0, f3, s3, h3);  // a 2 kt sideways drift when the brakes go on
+    stop(as, false, 1.0, f4, s4, h4);
     CHECK(std::abs(h3) > degToRad(20));
     CHECK(std::abs(h4) < degToRad(6));
 }
@@ -380,7 +384,7 @@ TEST_CASE("ground handling: the castoring nose wheel turns toward its velocity i
         ac.placeOnGround(0, 0, 0, g, atm);
         ac.setCockpitControl("brakes.parking", 0);
         PilotInput in;
-        in.throttle = 0.15;
+        in.throttle = 0.25;  // ~1,500 rpm: walking pace in a few seconds (below ~20 % lever the idle thrust is under the rolling resistance)
         for (int i = 0; i < 4 * 240; ++i) ac.step(kDefaultDt, in, g, atm);
         in.yaw = yaw;
         in.brakeRight = brakeRight;
@@ -402,14 +406,15 @@ TEST_CASE("ground handling: the castoring nose wheel turns toward its velocity i
     // The C172's bungee linkage, pedals neutral, right brake: the tyre's
     // aligning moment on the trail turns the wheel toward the direction it
     // rolls in, against the linkage spring; a rigidly held wheel stays put.
+    // Brake turns at ~1,700 rpm (lever 0.32 on the butterfly throttle schedule).
     Real s1, v1, r1;
-    turn(ref(), 0, 0.6, 0.25, s1, v1, r1);
+    turn(ref(), 0, 0.6, 0.32, s1, v1, r1);
     CHECK(v1 > degToRad(2));
     CHECK_RANGE(s1, 0.3 * v1, v1);
     AircraftDefinition rigid = ref();
     rigid.gear[0].castorTrail = 0;
     Real s0, v0, r0;
-    turn(rigid, 0, 0.6, 0.25, s0, v0, r0);
+    turn(rigid, 0, 0.6, 0.32, s0, v0, r0);
     CHECK(std::abs(s0) < 1e-9);
     // Full pedal, full right brake and power: the dragged tyre pushes the
     // bungee back past its breakout, so the wheel sits short of the 10 deg
@@ -424,7 +429,7 @@ TEST_CASE("ground handling: the castoring nose wheel turns toward its velocity i
     freeCastor.gear[0].maxSteerAngle = 0;
     freeCastor.gear[0].castorAngle = degToRad(60);
     Real s3, v3, r3;
-    turn(freeCastor, 0, 0.6, 0.25, s3, v3, r3);
+    turn(freeCastor, 0, 0.6, 0.32, s3, v3, r3);
     CHECK(v3 > degToRad(2));
     CHECK_NEAR(s3, v3, degToRad(2));
 }

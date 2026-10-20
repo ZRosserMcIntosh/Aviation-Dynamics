@@ -52,7 +52,7 @@ moment, and they have a yaw damper.
 | Assists | Easy, Sport and Simulation, plus an auto-trim that holds straight and level. They act only through the pilot's controls; the physics is the same in all three ([ADR 0004](docs/decisions/0004-assistance-is-not-physics.md)) | `tests/test_systems_scenarios.cpp`, `tests/test_jet.cpp` |
 | Browser | WebAssembly build (wasi-sdk, no exceptions or RTTI) with a C ABI. Streams the airflow, wake and body data the 3D site draws (streamlines, smoke, wind tunnel). Node smoke test, a self-contained 2D cockpit page, flight replay | `web/`, `web/smoke_test.mjs` |
 
-Everything in this table is tested: <!-- validation:begin tests -->204<!-- validation:end --> test cases, on Linux (gcc, clang,
+Everything in this table is tested: <!-- validation:begin tests -->226<!-- validation:end --> test cases, on Linux (gcc, clang,
 sanitizers), macOS, Windows and WASM in CI. How far each area is validated,
 and its main gap, is in the [fidelity matrix](docs/fidelity-matrix.md); the
 comparisons with published data, with their sources and every row that is
@@ -64,7 +64,7 @@ and are regenerated from the test output so they cannot drift.
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/tests/avd_tests             # <!-- validation:begin tests -->204<!-- validation:end --> test cases
+./build/tests/avd_tests             # <!-- validation:begin tests -->226<!-- validation:end --> test cases
 ./build/tests/avd_tests "blind"     # a filter: the blind landings
 ./build/avdemo validate [--json f]  # the comparison tables against published data (172S POH, G650ER)
 ./build/tools/avdtrace --record     # record the golden traces (tests/golden/README.md)

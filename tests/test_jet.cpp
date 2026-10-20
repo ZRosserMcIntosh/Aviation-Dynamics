@@ -74,6 +74,85 @@ TEST_CASE("turbofan: Mattingly thrust lapse, spool lag and fuel flow") {
     CHECK(s.n1 < 0.05);
 }
 
+TEST_CASE("turbofan: FADEC ratings cap N1 (fractions at sea level, converging at altitude) and the automatic schedule") {
+    const AircraftDefinition& d = jet();
+    const TurbofanDef& td = d.turbofans[0];
+    const TurbofanEngine e(td);
+    const Real p0 = isa::kSeaLevelPressure, T0 = isa::kSeaLevelTemperature;
+    // Sea level static: the definition's fractions, and N1 limits in order.
+    const Real to = e.ratingThrust(ThrustRating::Takeoff, p0, T0, 0);
+    CHECK_NEAR(to, td.staticThrust, 1);
+    CHECK_NEAR(e.ratingThrust(ThrustRating::MaxContinuous, p0, T0, 0) / to, td.maxContinuousFraction, 1e-6);
+    CHECK_NEAR(e.ratingThrust(ThrustRating::MaxClimb, p0, T0, 0) / to, td.maxClimbFraction, 1e-6);
+    CHECK_NEAR(e.ratingThrust(ThrustRating::MaxCruise, p0, T0, 0) / to, td.maxCruiseFraction, 1e-6);
+    const Real n1Clb = e.ratingN1(ThrustRating::MaxClimb, p0, T0, 0);
+    CHECK(n1Clb < 1 && n1Clb > e.ratingN1(ThrustRating::MaxCruise, p0, T0, 0));
+    CHECK_NEAR(e.thrustFraction(n1Clb), td.maxClimbFraction, 1e-6);
+    // At FL410 / Mach 0.85 the take-off rating sits far below its temperature
+    // limit and the lower ratings converge on it (never above it).
+    const StandardAtmosphere atm;
+    const auto a = atm.at(ftToM(41000));
+    const Real toHigh = e.ratingThrust(ThrustRating::Takeoff, a.pressure, a.temperature, 0.85);
+    const Real crzHigh = e.ratingThrust(ThrustRating::MaxCruise, a.pressure, a.temperature, 0.85);
+    CHECK(crzHigh <= toHigh + 1e-9);
+    CHECK(crzHigh / toHigh > 0.95);
+    CHECK(e.ratingThrust(ThrustRating::MaxClimb, a.pressure, a.temperature, 0.85) >= crzHigh);
+    // The fuel control: the lever commands N1 below the limit, the limit above it.
+    TurbofanInputs in;
+    in.rating = ThrustRating::MaxClimb;
+    in.throttle = 0.5;
+    CHECK_NEAR(e.commandedN1(in), e.commandedN1(0.5), 1e-12);
+    in.throttle = 1;
+    CHECK_NEAR(e.commandedN1(in), n1Clb, 1e-12);
+    // The aircraft's automatic schedule: take-off thrust from lift-off for
+    // the rating's time, then the climb rating caps N1 at its limit for the
+    // flight condition reached. A forced rating applies at once.
+    SimpleWeather atmo;
+    const FlatGround ground(1e7);
+    auto limitN1 = [&](const Aircraft& ac, ThrustRating r) {
+        const AirState air = atmo.atmosphere().at(ac.altitudeMsl());
+        return ac.turbofan(0).ratingN1(r, air.pressure, air.temperature, length(ac.state().body.velocity) / air.speedOfSound);
+    };
+    auto climb = [&](Aircraft& ac, const TrimResult& tr, ThrustMode mode, Real seconds) {
+        PilotInput in1 = tr.input;
+        in1.thrustMode = mode;
+        for (Real t = 0; t < seconds; t += kDt) {
+            in1.pitch = tr.input.pitch + clamp(2.0 * (tr.theta - ac.telemetry().pitch) - 0.5 * ac.telemetry().omega.y, -0.3, 0.3);
+            ac.step(kDt, in1, ground, atmo);
+        }
+    };
+    TrimRequest req;
+    req.altitude = ftToM(10000);
+    req.tas = tasFromCas(ktToMs(250), atmo.atmosphere().at(ftToM(10000)));
+    req.throttle = 1;
+    req.solveFlightPath = true;
+    {
+        Aircraft ac(d);
+        const TrimResult tr = trim(ac, req, atmo);
+        CHECK(tr.converged);
+        CHECK(ac.activeThrustRating() == ThrustRating::Takeoff);
+        climb(ac, tr, ThrustMode::Auto, td.takeoffRatingTime - 5);
+        CHECK(ac.activeThrustRating() == ThrustRating::Takeoff);
+        CHECK_NEAR(ac.turbofanState(0).n1, 1.0, 1e-6);
+        climb(ac, tr, ThrustMode::Auto, 25);
+        CHECK(ac.activeThrustRating() == ThrustRating::MaxClimb);
+        CHECK(ac.turbofanState(0).n1 <= limitN1(ac, ThrustRating::MaxClimb) + 1e-3);
+    }
+    {
+        // Forced climb rating at 10,000 ft: well below take-off N1.
+        Aircraft ac(d);
+        const TrimResult tr = trim(ac, req, atmo);
+        climb(ac, tr, ThrustMode::Climb, 15);
+        CHECK(ac.activeThrustRating() == ThrustRating::MaxClimb);
+        CHECK(ac.turbofanState(0).n1 < 0.97);
+        CHECK_NEAR(ac.turbofanState(0).n1, limitN1(ac, ThrustRating::MaxClimb), 2e-3);
+        CHECK(ac.turbofanState(0).thrustFraction < 0.95);  // about 0.91 of take-off at 250 KIAS, 10,000 ft
+        climb(ac, tr, ThrustMode::Cruise, 15);
+        CHECK(ac.activeThrustRating() == ThrustRating::MaxCruise);
+        CHECK(ac.turbofanState(0).n1 < limitN1(ac, ThrustRating::MaxClimb));
+    }
+}
+
 TEST_CASE("top g: definition loads; cruise at Mach 0.85 is available at FL450 with sensible fuel burn") {
     Aircraft ac(jet());
     CHECK(ac.turbofanCount() == 2);

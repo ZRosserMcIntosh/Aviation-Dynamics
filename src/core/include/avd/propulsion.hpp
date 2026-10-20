@@ -97,16 +97,37 @@ public:
     Real totalInertia() const { return def_.engineInertia + def_.propeller.inertia; }
     Real indicatedEfficiency() const { return etaIndicated_; }
 
-private:
+    // Induction model (exposed for tests). Manifold pressure (Pa) at a
+    // throttle lever and shaft speed: the balance of the throttle plate's
+    // compressible orifice flow (choked below 0.528 x ambient) against the
+    // engine's pumping. Closed, the idle orifice is choked at any speed above
+    // a crawl, so the air flow is fixed and MAP falls as 1/rpm (less the
+    // residual-gas floor at ambient / compression ratio).
+    Real manifoldPressure(Real throttle, Real omega, Real ambientPressure, Real ambientTemperature) const;
+    // Effective throttle flow area Cd A (m^2) at a lever position.
+    Real throttleArea(Real throttle) const;
+    // Volumetric efficiency referred to manifold density: the exhaust
+    // residual left at ambient pressure re-expands and displaces fresh charge,
+    // eta_v = eta_v,wot (r_c - p_amb / MAP) / (r_c - p_amb / MAP_wot) (Heywood
+    // 6.2), times the port-flow loss with speed (1 - loss (omega/omega_R)^2),
+    // both normalised to the definition's value at full throttle, rated rpm.
+    Real volumetricEfficiency(Real manifoldPressure, Real ambientPressure, Real omega) const;
+    // Mechanical friction torque (N m), rubbing and accessories; pumping
+    // (ambient minus manifold pressure over the displacement) is added in evaluate().
     Real frictionTorque(Real omega) const;
+
+private:
     PistonEngineDef def_;
     Real etaIndicated_ = 0.3;
+    Real throttleAreaFull_ = 1e-3, throttleAreaIdle_ = 1e-4;  // Cd A, m^2
+    Real volumetricNorm_ = 1;                                 // (r_c - 1/(1 - intake loss)) / (r_c - 1)
 };
 
 // ---- Turbofan (see TurbofanDef) --------------------------------------------
 
 struct TurbofanInputs {
     Real throttle = 0;            // 0 idle .. 1 take-off
+    ThrustRating rating = ThrustRating::Takeoff;  // active FADEC rating: caps the commanded N1
     bool fuelOn = false;          // fuel control switch at RUN
     bool fuelAtEngine = false;    // the fuel system delivers fuel
     bool starterPowered = false;  // bus power for the starter and igniters
@@ -123,6 +144,7 @@ struct TurbofanState {
     bool startAborted = false;    // no light-off: the starter waits for the fuel switch to be cycled
     Real thrust = 0;              // N, net, along the thrust axis (negative: windmilling drag, unlit)
     Real thrustFraction = 0;      // of the available take-off thrust
+    Real ratingThrust = 0;        // N available under the active rating at this flight condition
     Real fuelFlow = 0;            // kg/s
     Real itt = 288;               // K, inter-turbine temperature
     Real oilPressure = 0;         // Pa
@@ -132,10 +154,22 @@ class TurbofanEngine {
 public:
     explicit TurbofanEngine(const TurbofanDef& def);
     const TurbofanDef& def() const { return def_; }
-    // Fan speed the fuel control schedules for a throttle position.
+    // Fan speed the lever alone asks for (idle to take-off N1, linear).
     Real commandedN1(Real throttle) const { return def_.idleN1 + (1 - def_.idleN1) * clamp(throttle, 0.0, 1.0); }
-    // Take-off thrust available at the flight condition (Mattingly lapse).
+    // Fan speed the fuel control schedules: the lever's N1 capped at the
+    // active rating's limit for the flight condition.
+    Real commandedN1(const TurbofanInputs& in) const;
+    // Take-off thrust available at the flight condition (Mattingly lapse,
+    // flat-rated to the throttle ratio).
     Real availableThrust(Real pressure, Real temperature, Real mach) const;
+    // Thrust the rating allows at the flight condition (<= availableThrust):
+    // a fixed fraction of the temperature-limited thrust, which is the
+    // Mattingly temperature branch continued below the throttle ratio.
+    Real ratingThrust(ThrustRating rating, Real pressure, Real temperature, Real mach) const;
+    // The N1 limit of a rating at the flight condition (1 for take-off).
+    Real ratingN1(ThrustRating rating, Real pressure, Real temperature, Real mach) const;
+    // Inverse of thrustFraction above idle.
+    Real n1ForThrustFraction(Real fraction) const;
     // Fan diameter (m) and the drag area (m^2 of CdA) of the unlit, windmilling
     // engine: thrust = -q CdA (TurbofanDef::windmillDragArea or its default).
     Real fanDiameter() const;
