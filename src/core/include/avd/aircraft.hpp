@@ -51,7 +51,13 @@ struct PilotInput {
     Real roll = 0;         // -1..1, + roll right
     Real yaw = 0;          // -1..1, + right pedal
     Real tiller = 0;       // -1..1, + steer right (nose-wheel tiller, where fitted)
-    Real throttle = 0;     // 0..1
+    Real throttle = 0;     // 0..1, every engine
+    // Split levers (asymmetric thrust, differential taxi): with
+    // `splitThrottles` set, engine i follows throttles[i] and `throttle` is
+    // ignored; code that sets only `throttle` drives every engine as before.
+    std::array<Real, kMaxEngines> throttles{};
+    bool splitThrottles = false;
+    Real engineThrottle(int engine) const { return splitThrottles ? throttles[static_cast<std::size_t>(engine)] : throttle; }
     Real mixture = 1;      // 0 (idle cut-off) .. 1 (full rich)
     Real brakeLeft = 0, brakeRight = 0;  // 0..1 toe brakes
     Real trimRate = 0;     // -1..1, + nose-up trim wheel movement
@@ -132,8 +138,16 @@ struct AircraftTelemetry {
     AirSample air;
     std::array<EngineTelemetry, kMaxEngines> engines{};
     std::array<TurbofanState, kMaxEngines> turbofans{};
+    std::array<Real, kMaxEngines> throttles{};  // lever position each engine followed this step
     Real gearPosition = 1;                   // 0 up and locked .. 1 down and locked
     Real speedbrake = 0;                     // 0 retracted .. 1 fully deployed
+    // Hydraulics: pressure fraction of each system (1 = nominal), what each
+    // actuator has (1 without hydraulics), the free-fall release, and the
+    // brake accumulator's remaining applications (-1 without hydraulics).
+    std::array<Real, 4> hydraulicPressure{};
+    Real gearPower = 1, flapPower = 1, speedbrakePower = 1, steeringPower = 1, brakePower = 1;
+    bool gearEmergency = false;
+    int brakeAccumulator = -1;
     std::array<GearTelemetry, kMaxGear> gear{};
     ControlDeflections controls;
 };
@@ -225,6 +239,10 @@ public:
     Real reverserPosition(int i) const { return reverserPos_[static_cast<std::size_t>(i)]; }
     int reverserPhase(int i) const { return reverserPhase_[static_cast<std::size_t>(i)]; }
     bool groundSpoilersActive() const { return groundSpoilers_; }
+    // Hydraulics (HydraulicsDef): system pressure fraction, actuator supply.
+    int hydraulicSystemCount() const { return static_cast<int>(def_.hydraulics.systems.size()); }
+    Real hydraulicPressure(int i) const { return hydPressure_[static_cast<std::size_t>(i)]; }
+    int brakeAccumulatorApplications() const { return brakeAccumulator_; }
 
     // ---- Loading -------------------------------------------------------------
     void setStationMass(int station, Real kg);
@@ -298,6 +316,14 @@ private:
     SensorInputs sensorInputs() const;
     bool loadPowered(const std::string& name, bool fallback) const;
     void updateTelemetry();
+    // Pressure available to an actuator fed by `systems` (1 when the list is
+    // empty or no hydraulics are fitted), and the rate factor it moves at.
+    Real hydraulicSupply(const std::vector<int>& systems) const;
+    static Real actuatorRate(Real supply) { return clamp((supply - 0.2) / 0.8, 0.0, 1.0); }
+    void stepHydraulics(Real dt, const PilotInput& in);
+    // Pressure a system's pumps deliver now (0..1); adds any electric pump's current.
+    Real hydraulicSource(std::size_t system, Real* electricCurrent) const;
+    void settleHydraulics();
 
     AircraftDefinition def_;
     LocalFrame frame_;
@@ -340,6 +366,17 @@ private:
     Real airborneTime_ = 0;      // s off the ground since the last stop (a landing roll follows)
     bool machOverWas_ = false;
     std::array<Real, kMaxGear> steerAngle_{};  // steering actuator position (rad)
+    std::array<Real, kMaxEngines> lever_{};    // throttle each engine followed this step
+    // Hydraulics.
+    std::array<Real, 4> hydPressure_{};        // pressure fraction per system
+    std::array<bool, 4> hydPumpOn_{};          // electric pump switches
+    bool gearEmergency_ = false;               // free-fall release pulled
+    int brakeAccumulator_ = -1;                // applications left (-1: not hydraulic)
+    bool brakeWasApplied_ = false, brakeHeld_ = false;  // an application backed by the accumulator
+    Real hydPumpCurrent_ = 0;                  // A, electric hydraulic pumps running
+    Real gearSupply_ = 1, flapSupply_ = 1, speedbrakeSupply_ = 1, steeringSupply_ = 1, brakeSupply_ = 1;
+    bool batteryDepletedWas_ = false;
+    std::array<bool, kMaxGenerators> genOnlineWas_{};
 
     // Derived/lagged.
     std::array<Real, 8> downwashLag_{};
@@ -359,7 +396,7 @@ private:
     bool wasOnGround_ = false, stallWarningWas_ = false, overspeedWas_ = false, overGWas_ = false;
     bool flapOverspeedWas_ = false;
     std::array<bool, kMaxEngines> runningWas_{};
-    bool altOnlineWas_ = false, starvingWas_ = false, stallVane_ = false;
+    bool starvingWas_ = false, stallVane_ = false;
     Real lastSinkRate_ = 0;
 
     std::vector<CockpitControl> cockpit_;

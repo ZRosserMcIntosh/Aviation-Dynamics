@@ -33,6 +33,24 @@
  ],
  "provenance": [
   {
+   "field": "turbofans[*].fan_diameter_m, turbofans[*].windmill_drag_area_m2",
+   "kind": "estimated",
+   "source": "ENG",
+   "note": "BR725 fan diameter 50 in (1.27 m, manufacturer). Windmilling drag area 0.12 x the fan disc (1.267 m^2) = 0.152 m^2 of CdA, after Torenbeek App. G (windmilling high-bypass turbofan ~0.1 q x inlet area); about 0.55 kN at 150 KTAS at sea level."
+  },
+  {
+   "field": "electrical.generators, electrical.bus_minimum_v",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Two engine-driven starter-generators in parallel (the G650ER's two 40 kVA generators, here 300 A each on a 28 V DC bus), each on line from 45 % N2; bus minimum 18 V (24 V system)."
+  },
+  {
+   "field": "hydraulics",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Two 3,000 psi systems, each with an engine-driven pump (A: left, B: right), A also with an electric pump that needs generator power; gear, flaps, spoilers, nose-wheel steering and brakes on either system; brake accumulator good for 6 applications; free-fall gear extension at 35 % of the normal rate. Layout after the G650's two-system arrangement, numbers estimated."
+  },
+  {
    "field": "controls.yaw_damper",
    "kind": "estimated",
    "source": "EST",
@@ -569,6 +587,8 @@
    "itt_takeoff_k": 1170,
    "oil_pressure_idle_psi": 40,
    "oil_pressure_max_psi": 70,
+   "fan_diameter_m": 1.27,
+   "windmill_drag_area_m2": 0.152,
    "thrust_reverser": {
     "effectiveness": 0.4,
     "transit_time_s": 2.0,
@@ -604,6 +624,8 @@
    "oil_pressure_idle_psi": 40,
    "oil_pressure_max_psi": 70,
    "fuel_feed": 0,
+   "fan_diameter_m": 1.27,
+   "windmill_drag_area_m2": 0.152,
    "thrust_reverser": {
     "effectiveness": 0.4,
     "transit_time_s": 2.0,
@@ -659,6 +681,11 @@
   "battery_resistance_ohm": 0.02,
   "alternator_voltage_v": 28.0,
   "alternator_max_current_a": 600,
+  "bus_minimum_v": 18,
+  "generators": [
+   {"name": "GEN 1", "engine": 0, "max_current_a": 300, "cut_in_n2": 0.45},
+   {"name": "GEN 2", "engine": 1, "max_current_a": 300, "cut_in_n2": 0.45}
+  ],
   "loads": [
    {
     "name": "avionics",
@@ -741,6 +768,19 @@
     "initially_on": false
    }
   ]
+ },
+ "hydraulics": {
+  "systems": [
+   {"name": "A", "engines": [0], "electric_pump": {"current_a": 60, "generator_only": true}, "nominal_pressure_psi": 3000, "rise_time_s": 2.0},
+   {"name": "B", "engines": [1], "nominal_pressure_psi": 3000, "rise_time_s": 2.0}
+  ],
+  "gear": [0, 1],
+  "flaps": [0, 1],
+  "speedbrake": [0, 1],
+  "steering": [0, 1],
+  "brakes": [0, 1],
+  "brake_accumulator_applications": 6,
+  "free_fall_rate_fraction": 0.35
  },
  "gear": [
   {

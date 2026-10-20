@@ -64,12 +64,24 @@ struct SensorInputs {
     bool pitotHeatOn = false;
     bool panelLightsOn = false;
     Real liquidWaterContent = 0;   // kg/m^3 cloud liquid water at the aircraft (icing)
-    // Engine and fuel.
+    bool vacuumInstalled = true;   // a vacuum system is fitted (else no LOW VAC lamp)
+    // Engine and fuel (engine 1, the single-engine panel).
     Real engineRpm = 0;
     Real oilPressure = 0;          // Pa (engine model)
     Real oilTemperature = 0;       // K
     Real egt = 0, cht = 0;         // K
     Real fuelFlow = 0;             // kg/s
+    // Every engine, for the per-engine indications (EICAS): what its senders see.
+    struct EngineSense {
+        Real n1 = 0, n2 = 0;       // turbofan: % of take-off; piston: crankshaft rpm as n1
+        Real itt = 0;              // K (piston: EGT)
+        Real fuelFlow = 0;         // kg/s
+        Real oilPressure = 0;      // Pa
+        Real oilTemperature = 0;   // K
+        bool electric = true;      // the speed indication needs the gauge bus (a piston tach is mechanical)
+    };
+    int engineCount = 0;
+    std::array<EngineSense, 4> engines{};
     Real fuelDensity = 720;
     int tankCount = 0;
     std::array<Real, 4> fuelQuantity{};  // m^3 (truth)
@@ -112,11 +124,22 @@ struct CockpitState {
     Real slipBall = 0;             // rad of ball travel (+ right)
     // Magnetic compass.
     Real magneticHeading = 0;      // rad (card reading)
-    // Engine and systems gauges.
+    // Engine and systems gauges (engine 1, the single-engine panel).
     Real tachometerRpm = 0;
     Real oilPressure = 0, oilTemperature = 0;  // Pa, K
     Real egt = 0, cht = 0;         // K
     Real fuelFlow = 0;             // kg/s
+    // Per-engine indications through their own needles and senders, blank
+    // (zero) without gauge power, except a piston engine's mechanical tach.
+    struct EngineGauges {
+        Real n1 = 0, n2 = 0;       // turbofan: % of take-off; piston: rpm as n1
+        Real itt = 0;              // K (piston: EGT)
+        Real fuelFlow = 0;         // kg/s
+        Real oilPressure = 0;      // Pa
+        Real oilTemperature = 0;   // K
+    };
+    int engineCount = 0;
+    std::array<EngineGauges, 4> engines{};
     std::array<Real, 4> fuelGauge{};  // m^3 usable indicated
     Real ammeter = 0;              // A (+ charging)
     Real voltmeter = 0;            // V
@@ -260,6 +283,7 @@ private:
     SecondOrder compassCard_;
     // Engine gauges.
     SecondOrder tachNeedle_, oilPressNeedle_;
+    std::array<SecondOrder, 4> n1Needle_{}, n2Needle_{}, engineOilNeedle_{};
     Real oatProbe_ = 288.15;
 };
 

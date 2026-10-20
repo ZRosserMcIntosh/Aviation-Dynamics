@@ -10,6 +10,7 @@
 // See docs/architecture/aircraft-systems.md.
 #pragma once
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -61,27 +62,57 @@ private:
     Real line_ = 0;
 };
 
+inline constexpr int kMaxGenerators = 4;
+
 struct ElectricalInputs {
-    Real alternatorRpm = 0;   // engine rpm driving the alternator
+    // Drive speed of each generator relative to its cut-in speed (>= 1: at
+    // speed; a piston alternator at rpm / alternatorMinRpm, a turbofan
+    // starter-generator at N2 / cutInN2). `alternatorRpm` is the single
+    // alternator's engine rpm (generator 0; kept for one-alternator callers).
+    Real alternatorRpm = 0;
+    std::array<Real, kMaxGenerators> generatorDrive{};
     Real starterCurrent = 0;  // A demanded by the starter (if engaged)
     Real flapMotorCurrent = 0;
-    Real auxPumpCurrent = 0;
+    Real auxPumpCurrent = 0;  // the electric fuel pump while it runs (its breaker's declared current)
+    Real hydraulicPumpCurrent = 0;  // electric hydraulic pumps while they run
 };
 
+// Main-bus electrical system: a lead-acid battery, one or more engine-driven
+// generators in parallel, named loads with breakers and an avionics bus relay.
+//
+// Battery (Estimated shape, Published plateau): under load a charged 24 V
+// lead-acid battery sits on a plateau of ~24.4 V (12 x 2.03 V), not at its
+// resting open-circuit 25.5 V; the resting value is a surface charge that a
+// charger builds in a minute and a load strips in about as long. Its internal
+// resistance rises steeply toward full discharge, and its acceptance of charge
+// falls as it fills (CC/CV: the regulator's overpotential across a resistance
+// that grows near full), so the ammeter settles to a few amps in cruise.
 class ElectricalSystem {
 public:
     explicit ElectricalSystem(const ElectricalDef& def, Real alternatorMinRpm = 900);
+    const ElectricalDef& def() const { return def_; }
 
     bool batterySwitch() const { return bat_; }
-    bool alternatorSwitch() const { return alt_; }
+    // The alternator / generator master: all generator switches on.
+    bool alternatorSwitch() const;
     bool avionicsSwitch() const { return avionics_; }
     void setBatterySwitch(bool on) { bat_ = on; }
-    void setAlternatorSwitch(bool on) { alt_ = on; }
+    void setAlternatorSwitch(bool on);   // every generator
     void setAvionicsSwitch(bool on) { avionics_ = on; }
     void setLoadSwitch(int i, bool on) { loadOn_[i] = on; }
     bool loadSwitch(int i) const { return loadOn_[i]; }
     int loadIndex(const std::string& name) const;
-    void setAlternatorFailed(bool failed) { altFailed_ = failed; }
+    void setAlternatorFailed(bool failed);  // every generator
+
+    // Generators: one alternator unless the definition declares a list.
+    int generatorCount() const { return static_cast<int>(gens_.size()); }
+    const GeneratorDef& generator(int i) const { return gens_[static_cast<std::size_t>(i)]; }
+    void setGeneratorSwitch(int i, bool on);
+    bool generatorSwitch(int i) const { return genOn_[static_cast<std::size_t>(i)]; }
+    void setGeneratorFailed(int i, bool failed);
+    bool generatorFailed(int i) const { return genFailed_[static_cast<std::size_t>(i)]; }
+    bool generatorOnline(int i) const { return genOnline_[static_cast<std::size_t>(i)]; }
+    Real generatorCapacity() const;  // A, the generators on line
 
     void step(Real dt, const ElectricalInputs& in);
 
@@ -90,19 +121,32 @@ public:
     Real batteryCharge() const { return charge_ / def_.batteryCapacity; }  // 0..1
     void setBatteryCharge(Real fraction);
     Real batteryCurrent() const { return batteryCurrent_; }  // + discharge
-    bool alternatorOnline() const { return altOnline_; }
+    bool batteryDepleted() const { return charge_ <= 0; }
+    bool alternatorOnline() const;   // any generator on line
     bool loadPowered(int i) const;
-    bool powered(Real minimumVoltage = 18) const { return busVoltage_ >= minimumVoltage; }
+    // Bus-powered devices work above the definition's bus minimum (default
+    // 18 V on a 24 V system); pass a voltage to ask about another threshold.
+    Real busMinimum() const { return def_.busMinimum(); }
+    bool powered(Real minimumVoltage = -1) const {
+        return busVoltage_ >= (minimumVoltage >= 0 ? minimumVoltage : def_.busMinimum());
+    }
+    // The breaker protecting the electric fuel pump ("fuel_pump"): its current
+    // is drawn through ElectricalInputs::auxPumpCurrent only while the pump runs.
+    int fuelPumpLoad() const { return pumpLoad_; }
 
 private:
     Real openCircuitVoltage() const;
     Real internalResistance() const;
+    Real chargeAcceptanceResistance() const;
     ElectricalDef def_;
     Real altMinRpm_;
+    std::vector<GeneratorDef> gens_;
     std::vector<bool> loadOn_;
-    bool bat_ = false, alt_ = false, avionics_ = false, altFailed_ = false;
-    bool altOnline_ = false;
+    std::vector<bool> genOn_, genFailed_, genOnline_;
+    int pumpLoad_ = -1;
+    bool bat_ = false, avionics_ = false;
     Real charge_ = 0;
+    Real surface_ = 1;   // surface charge, 0..1 (a fresh battery off the charger: 1)
     Real busVoltage_ = 0, batteryCurrent_ = 0;
 };
 

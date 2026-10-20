@@ -429,7 +429,7 @@ TEST_CASE("top g: an engine starved with its fuel switch at RUN winds down inste
     CHECK(!e.running);
     CHECK(!e.starting);                 // the no-light-off start was aborted
     CHECK(e.n2 < 0.3);                  // run down to the starter's speed at most
-    CHECK(e.thrust == 0);
+    CHECK(e.thrust <= 0 && e.thrust > -20);  // unlit: no thrust, only the windmilling drag of whatever air moves past
     CHECK(e.itt < atm.atmosphere().at(0).temperature + 60);
     // Fuel back, and the battery recharged (as ground power would): the starter
     // waits until the fuel switch is cycled, then starts it.

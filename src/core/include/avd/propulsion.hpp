@@ -121,7 +121,7 @@ struct TurbofanState {
     bool starting = false;        // start sequence in progress
     Real startTimer = 0;          // s since the start sequence began
     bool startAborted = false;    // no light-off: the starter waits for the fuel switch to be cycled
-    Real thrust = 0;              // N, net, along the thrust axis
+    Real thrust = 0;              // N, net, along the thrust axis (negative: windmilling drag, unlit)
     Real thrustFraction = 0;      // of the available take-off thrust
     Real fuelFlow = 0;            // kg/s
     Real itt = 288;               // K, inter-turbine temperature
@@ -136,6 +136,10 @@ public:
     Real commandedN1(Real throttle) const { return def_.idleN1 + (1 - def_.idleN1) * clamp(throttle, 0.0, 1.0); }
     // Take-off thrust available at the flight condition (Mattingly lapse).
     Real availableThrust(Real pressure, Real temperature, Real mach) const;
+    // Fan diameter (m) and the drag area (m^2 of CdA) of the unlit, windmilling
+    // engine: thrust = -q CdA (TurbofanDef::windmillDragArea or its default).
+    Real fanDiameter() const;
+    Real windmillDragArea() const;
     // Thrust fraction of the available thrust at fan speed n1 (lit engine).
     Real thrustFraction(Real n1) const;
     // Thrust, fuel flow, ITT and oil pressure for the spool speeds in `s`

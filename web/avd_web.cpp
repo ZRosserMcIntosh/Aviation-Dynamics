@@ -80,7 +80,7 @@ constexpr Real kOwnWakeAge = 4.0;
 Sim* g = nullptr;
 double g_state[kStateSize];
 double g_cockpit[96];
-double g_jet[64];
+double g_jet[96];
 double g_load[256];
 // Airport for spawns: 0 Campo de Marte (SBMT, runway 12), 1 Congonhas (SBSP,
 // runway 35L). Kept across aircraft loads.
@@ -222,8 +222,8 @@ const char* eventText(FlightEventType t) {
         case FlightEventType::PropStrike: return "PROPELLER STRIKE";
         case FlightEventType::HardPointContact: return "Airframe ground contact";
         case FlightEventType::BatteryDepleted: return "Battery depleted";
-        case FlightEventType::AlternatorOffline: return g && !g->def.turbofans.empty() ? "Generators offline" : "Alternator offline";
-        case FlightEventType::AlternatorOnline: return g && !g->def.turbofans.empty() ? "Generators online" : "Alternator online";
+        case FlightEventType::AlternatorOffline: return g && !g->def.turbofans.empty() ? "Generator offline" : "Alternator offline";
+        case FlightEventType::AlternatorOnline: return g && !g->def.turbofans.empty() ? "Generator online" : "Alternator online";
         case FlightEventType::CockpitControlChanged: return "";
     }
     return "";
@@ -238,6 +238,9 @@ void collectEvents() {
         }
         if (e.type == FlightEventType::Touchdown)
             s += " (" + std::to_string(static_cast<int>(msToFpm(e.value))) + " fpm)";
+        if ((e.type == FlightEventType::AlternatorOffline || e.type == FlightEventType::AlternatorOnline) &&
+            g->ac->electrical().generatorCount() > 1)
+            s.insert(s.find(' '), " " + std::to_string(e.index + 1));
         if (e.type == FlightEventType::HardPointContact || e.type == FlightEventType::PropStrike)
             s += " (" + g->def.contacts[static_cast<std::size_t>(e.index)].name + ")";
         if (!s.empty()) g->events += s + "\n";
@@ -636,11 +639,27 @@ AVD_EXPORT void avd_set_input(double pitch, double roll, double yaw, double thro
     g->raw.roll = roll;
     g->raw.yaw = yaw;
     g->raw.throttle = throttle;
+    g->raw.splitThrottles = false;  // every lever together again
     g->raw.mixture = mixture;
     g->raw.brakeLeft = brakeLeft;
     g->raw.brakeRight = brakeRight;
     g->raw.trimRate = trimRate;
     g->raw.starterHeld = starter != 0;
+}
+
+// One engine's throttle lever (0-based; -1 or out of range: every lever).
+// Splits the levers until the next avd_set_input, which sets them all again.
+AVD_EXPORT void avd_set_throttle(int engine, double v) {
+    if (!g) return;
+    const int n = g->ac->engineCount() + g->ac->turbofanCount();
+    if (engine < 0 || engine >= n) {
+        g->raw.throttle = v;
+        g->raw.splitThrottles = false;
+        return;
+    }
+    if (!g->raw.splitThrottles) g->raw.throttles.fill(g->raw.throttle);
+    g->raw.throttles[static_cast<std::size_t>(engine)] = v;
+    g->raw.splitThrottles = true;
 }
 
 // 0 Arcade, 1 Sport, 2 Simulation.
@@ -799,12 +818,21 @@ AVD_EXPORT void avd_ai_cage() {
 // fuel flow kg/h, thrust kN, running, starting, fuel switch; [24] MMO,
 // [25] VMO kt, [26] TAS kt, [27] flap deg, [28] trim, [29] weight on wheels,
 // [30], [31] oil pressure psi (engines 1, 2); ... [52..55] thrust reversers
-// (position, phase) engines 1, 2, [56] ground spoilers out, [57] reversers fitted.
+// (position, phase) engines 1, 2, [56] ground spoilers out, [57] reversers fitted,
+// [58..59] throttle levers, [60..61] generators on line, [62..63] hydraulic
+// pressure A, B psi, [64..68] gear / flap / speedbrake / steering / brake
+// power, [69] brake accumulator applications, [70] gear emergency release,
+// [71] hydraulics fitted, [72] battery charge, [73] battery current A,
+// [74 + 4i] truth N1 %, N2 %, ITT C, fuel flow kg/h (engines 1, 2).
+// The per-engine fields at 8 + 8i and the oil pressures are what the engine
+// indication shows (sensed: needle lag, blank without gauge power); the truth
+// is at 74 + 4i for the debug overlay.
 AVD_EXPORT double* avd_jet() {
     for (double& v : g_jet) v = 0;
     if (!g) return g_jet;
     const Aircraft& ac = *g->ac;
     const AircraftTelemetry& t = ac.telemetry();
+    const CockpitState& cs = ac.instruments().state();
     g_jet[0] = ac.turbofanCount();
     g_jet[1] = ac.gearPosition();
     g_jet[2] = ac.cockpitControl("gear.lever") != 0;
@@ -815,12 +843,25 @@ AVD_EXPORT double* avd_jet() {
     Real ff = 0;
     for (int i = 0; i < std::min(ac.turbofanCount(), 2); ++i) {
         const TurbofanState& e = ac.turbofanState(i);
+        const CockpitState::EngineGauges& s = cs.engines[static_cast<std::size_t>(i)];
         double* o = g_jet + 8 + 8 * i;
-        o[0] = e.n1 * 100; o[1] = e.n2 * 100; o[2] = e.itt - 273.15; o[3] = e.fuelFlow * 3600; o[4] = e.thrust / 1000;
+        o[0] = s.n1; o[1] = s.n2; o[2] = s.itt > 0 ? s.itt - 273.15 : 0.0; o[3] = s.fuelFlow * 3600; o[4] = e.thrust / 1000;
         o[5] = e.running; o[6] = e.starting; o[7] = ac.cockpitControl("engine" + std::to_string(i + 1) + ".fuel") == 1;
-        g_jet[30 + i] = e.oilPressure / 6894.757;
+        g_jet[30 + i] = s.oilPressure / 6894.757;
         ff += e.fuelFlow;
+        g_jet[58 + i] = t.throttles[static_cast<std::size_t>(i)];
+        g_jet[60 + i] = i < ac.electrical().generatorCount() ? ac.electrical().generatorOnline(i) : 0.0;
+        double* u = g_jet + 74 + 4 * i;
+        u[0] = e.n1 * 100; u[1] = e.n2 * 100; u[2] = e.itt - 273.15; u[3] = e.fuelFlow * 3600;
     }
+    for (int k = 0; k < std::min(ac.hydraulicSystemCount(), 2); ++k)
+        g_jet[62 + k] = ac.hydraulicPressure(k) * g->def.hydraulics.systems[static_cast<std::size_t>(k)].nominalPressure / 6894.757;
+    g_jet[64] = t.gearPower; g_jet[65] = t.flapPower; g_jet[66] = t.speedbrakePower; g_jet[67] = t.steeringPower; g_jet[68] = t.brakePower;
+    g_jet[69] = t.brakeAccumulator;
+    g_jet[70] = t.gearEmergency;
+    g_jet[71] = g->def.hydraulics.present;
+    g_jet[72] = ac.electrical().batteryCharge();
+    g_jet[73] = ac.electrical().batteryCurrent();
     g_jet[7] = ff * 3600;
     g_jet[24] = g->def.limits.maxOperatingMach;
     g_jet[25] = msToKt(g->def.limits.neverExceedIas);
@@ -1455,7 +1496,8 @@ AVD_EXPORT void avd_xpdr_mode(int m) {
     if (g && m >= 0 && m <= 3) g->ac->instruments().setTransponderMode(static_cast<TransponderMode>(m));
 }
 AVD_EXPORT void avd_dimmer(double v) { if (g) g->ac->instruments().setPanelLightDimmer(v); }
-// Failure injection: 0 pitot (drain open), 1 static port, 2 vacuum pump, 3 alternator.
+// Failure injection: 0 pitot (drain open), 1 static port, 2 vacuum pump,
+// 3 alternator / every generator, 4 generator 1 only, 5 generator 2 only.
 AVD_EXPORT void avd_failure(int which, int on) {
     if (!g) return;
     auto& f = g->ac->instruments().faults();
@@ -1464,6 +1506,8 @@ AVD_EXPORT void avd_failure(int which, int on) {
         case 1: f.staticBlocked = on != 0; break;
         case 2: g->ac->vacuum().setPumpFailed(on != 0); break;
         case 3: g->ac->electrical().setAlternatorFailed(on != 0); break;
+        case 4: g->ac->electrical().setGeneratorFailed(0, on != 0); break;
+        case 5: g->ac->electrical().setGeneratorFailed(1, on != 0); break;
         default: break;
     }
 }
