@@ -7,7 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(AVD_BUILD_TESTS "Build Aviation Dynamics tests" ON)
-option(AVD_BUILD_TOOLS "Build the avdemo tool" ON)
+option(AVD_BUILD_TOOLS "Build the avdemo and avdtrace tools" ON)
 option(AVD_WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)
 option(AVD_FUZZ "Build the libFuzzer targets (clang only; instruments every target with ASan/UBSan)" OFF)
 option(AVD_FUZZ_DRIVER "Build the fuzz targets as stand-alone mutation drivers (any compiler; add sanitizers via CMAKE_CXX_FLAGS)" OFF)
@@ -63,16 +63,21 @@ target_compile_options(avd_core PRIVATE ${AVD_WARNINGS})
 
 # ---- Scenarios, test pilot, airports (shared by tests and avdemo) ----
 add_library(avd_scenarios src/scenarios/scenarios.cpp src/scenarios/trim.cpp src/scenarios/test_pilot.cpp src/scenarios/approach_pilot.cpp
-            src/scenarios/airports.cpp src/scenarios/validation.cpp)
+            src/scenarios/airports.cpp src/scenarios/validation.cpp src/scenarios/golden.cpp)
 target_include_directories(avd_scenarios PUBLIC src/scenarios)
 target_link_libraries(avd_scenarios PUBLIC avd_core)
 target_compile_options(avd_scenarios PRIVATE ${AVD_WARNINGS})
-target_compile_definitions(avd_scenarios PUBLIC AVD_DATA_DIR="${PROJECT_SOURCE_DIR}/data")
+target_compile_definitions(avd_scenarios PUBLIC AVD_DATA_DIR="${PROJECT_SOURCE_DIR}/data" AVD_GOLDEN_DIR="${PROJECT_SOURCE_DIR}/tests/golden")
 
 if(AVD_BUILD_TOOLS)
   add_executable(avdemo tools/avdemo/main.cpp tools/avdemo/demos.cpp)
   target_link_libraries(avdemo PRIVATE avd_scenarios)
   target_compile_options(avdemo PRIVATE ${AVD_WARNINGS})
+  # Golden-trace recorder/checker: ./build/tools/avdtrace --record (tests/golden/README.md)
+  add_executable(avdtrace tools/avdtrace/main.cpp)
+  target_link_libraries(avdtrace PRIVATE avd_scenarios)
+  target_compile_options(avdtrace PRIVATE ${AVD_WARNINGS})
+  set_target_properties(avdtrace PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tools")
 endif()
 
 if(AVD_BUILD_TESTS)
