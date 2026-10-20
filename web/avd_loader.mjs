@@ -2,6 +2,17 @@
 // SPDX-License-Identifier: MIT
 // `const A = await createAvdModule(bytes?)` then A.avd_*() and helpers. The core
 // does no I/O in the browser, so the WASI imports are minimal stubs.
+
+// The ABI version this loader was written for: kAbiVersion in web/avd_web.cpp.
+// A module with another version is refused (web/README.md, "ABI version").
+export const EXPECTED_ABI = 1;
+// avd_layout(which), in this order (abi::layout in avd_web.cpp).
+export const LAYOUT_NAMES = [
+  'state', 'cockpit', 'jet', 'loadsheet', 'flowHeader', 'flowStride', 'flowStrips', 'flowEngineStride', 'flowEngines', 'flow',
+  'markings', 'compassCard', 'runway', 'region', 'route', 'routeMax', 'gps', 'wakeHeader', 'wakeStride', 'wakeMax',
+  'bodiesMax', 'bodyStride', 'bodies', 'windBoxMax', 'windGridMax', 'textSlack', 'eventsMax',
+];
+
 export default async function createAvdModule(wasmBytes) {
   let bytes = wasmBytes;
   if (!bytes) {
@@ -32,8 +43,21 @@ export default async function createAvdModule(wasmBytes) {
   memory = ex.memory;
   ex._initialize?.();
   const A = { ...Object.fromEntries(Object.entries(ex).filter(([k]) => k.startsWith('avd_'))) };
+  // ABI handshake: the module's layout version must be the one this file was written for.
+  const abi = typeof ex.avd_abi_version === 'function' ? ex.avd_abi_version() : 0;
+  if (abi !== EXPECTED_ABI) {
+    throw new Error(`avd.wasm has ABI version ${abi}, this loader expects ${EXPECTED_ABI}: ` +
+      'rebuild web/dist with web/build_wasi.sh from the same commit as avd_loader.mjs (web/README.md, "ABI version")');
+  }
+  // Every array's size, stride and count from the module, never from literals here.
+  const L = Object.fromEntries(LAYOUT_NAMES.map((n, i) => [n, ex.avd_layout(i)]));
+  if (Object.values(L).some((v) => !(v > 0))) throw new Error('avd_layout() returned an invalid size: ' + JSON.stringify(L));
+  A.abiVersion = abi;
+  A.layout = L;
   const enc = new TextEncoder(), dec = new TextDecoder();
   A.text = (len) => dec.decode(new Uint8Array(memory.buffer, ex.avd_text(0), len));
+  // "<git short hash>[-dirty] <date>" baked by web/build_wasi.sh ("dev" otherwise).
+  A.buildId = () => A.text(ex.avd_build_id());
   A.load = (json) => {
     const b = enc.encode(json);
     new Uint8Array(memory.buffer, ex.avd_text(b.length + 1), b.length).set(b);
@@ -42,34 +66,34 @@ export default async function createAvdModule(wasmBytes) {
     for (let i = 0; i < n; ++i) errors.push(A.text(ex.avd_error_text(i)));
     return errors;
   };
-  A.state = () => new Float64Array(memory.buffer, ex.avd_state(), 64);
-  A.cockpitState = () => new Float64Array(memory.buffer, ex.avd_cockpit(), 96);
-  A.markings = () => Array.from(new Float64Array(memory.buffer, ex.avd_markings(), 96));
-  A.compassCard = () => Array.from(new Float64Array(memory.buffer, ex.avd_compass_card(), 12));
-  A.flow = () => new Float64Array(memory.buffer, ex.avd_flow(), 16 + 64 * 20 + 4 * 14);
-  A.jet = () => new Float64Array(memory.buffer, ex.avd_jet(), 96);
+  A.state = () => new Float64Array(memory.buffer, ex.avd_state(), L.state);
+  A.cockpitState = () => new Float64Array(memory.buffer, ex.avd_cockpit(), L.cockpit);
+  A.markings = () => Array.from(new Float64Array(memory.buffer, ex.avd_markings(), L.markings));
+  A.compassCard = () => Array.from(new Float64Array(memory.buffer, ex.avd_compass_card(), L.compassCard));
+  A.flow = () => new Float64Array(memory.buffer, ex.avd_flow(), L.flow);
+  A.jet = () => new Float64Array(memory.buffer, ex.avd_jet(), L.jet);
   // One engine's throttle lever (0-based; -1: every lever). Split levers hold
   // until the next avd_set_input, which sets them all again.
   A.setThrottle = (engine, v) => ex.avd_set_throttle(engine, v);
-  A.runway = () => Array.from(new Float64Array(memory.buffer, ex.avd_runway(), 6));
+  A.runway = () => Array.from(new Float64Array(memory.buffer, ex.avd_runway(), L.runway));
   A.windGrid = (hx, hy, hz, nx, ny, nz) => new Float64Array(memory.buffer, ex.avd_wind_grid(hx, hy, hz, nx, ny, nz), 3 * nx * ny * nz);
   // The wake's vortex segments: { n, gmax, ground, seg } with 9 numbers a
   // segment (a and b ENU m, circulation m^2/s, core radius m, age s). A view
   // into the module's memory: copy what you keep.
   A.wake = () => {
-    const h = new Float64Array(memory.buffer, ex.avd_wake(), 8);
+    const h = new Float64Array(memory.buffer, ex.avd_wake(), L.wakeHeader);
     const n = h[0] | 0;
-    return { n, gmax: h[1], ground: h[2], seg: new Float64Array(memory.buffer, h.byteOffset + 64, n * 9) };
+    return { n, gmax: h[1], ground: h[2], seg: new Float64Array(memory.buffer, h.byteOffset + 8 * L.wakeHeader, n * L.wakeStride) };
   };
   // The wind (ENU m/s) on a grid over centre +- half size (ENU m), x fastest.
   A.windBox = (c, h, nx, ny, nz) => new Float64Array(memory.buffer, ex.avd_wind_box(c[0], c[1], c[2], h[0], h[1], h[2], nx, ny, nz), 3 * nx * ny * nz);
   // Bluff bodies (gear legs, spoiler panels): { n, b } with 10 numbers a body.
-  A.bodies = () => { const h = new Float64Array(memory.buffer, ex.avd_bodies(), 1 + 32 * 10); return { n: h[0] | 0, b: h.subarray(1) }; };
+  A.bodies = () => { const h = new Float64Array(memory.buffer, ex.avd_bodies(), L.bodies); return { n: h[0] | 0, b: h.subarray(1) }; };
   A.airport = () => { const [icao, name, runway, reciprocal] = A.text(ex.avd_airport_text()).split('|'); return { icao, name, runway, reciprocal }; };
   // Weight and balance: planned (next spawn) or current. Masses in kg, x in
   // the structural frame (m, forward positive), fuel in litres.
   A.loadsheet = (planned = true) => {
-    const b = Array.from(new Float64Array(memory.buffer, ex.avd_loadsheet(planned ? 1 : 0), 256));
+    const b = Array.from(new Float64Array(memory.buffer, ex.avd_loadsheet(planned ? 1 : 0), L.loadsheet));
     const [sn, tn, gn] = A.text(ex.avd_loadsheet_names()).split('|').map((x) => (x ? x.split(';') : []));
     let k = 24;
     const take = (n) => b.slice(k, (k += n));
@@ -90,7 +114,7 @@ export default async function createAvdModule(wasmBytes) {
   });
   // Every runway end of the region (world frame) per airport, in avd_destinations order.
   A.region = () => {
-    const b = new Float64Array(memory.buffer, ex.avd_region(), 1024), out = [];
+    const b = new Float64Array(memory.buffer, ex.avd_region(), L.region), out = [];
     for (let k = 1, i = 0; i < b[0]; ++i) {
       const elevation = b[k++], n = b[k++], ends = [];
       for (let j = 0; j < n; ++j, k += 6) ends.push({ east: b[k], north: b[k + 1], heading: b[k + 2], length: b[k + 3], width: b[k + 4], displaced: b[k + 5] });
@@ -100,7 +124,7 @@ export default async function createAvdModule(wasmBytes) {
   };
   // The GPS route: { active, faf, wp: [{ ident, east, north, alt }] } (alt m, -1 none).
   A.route = () => {
-    const b = new Float64Array(memory.buffer, ex.avd_route(), 51), names = A.text(ex.avd_route_text()).split(';');
+    const b = new Float64Array(memory.buffer, ex.avd_route(), L.route), names = A.text(ex.avd_route_text()).split(';');
     return { active: b[1], faf: b[2], wp: Array.from({ length: b[0] }, (_, i) => ({ ident: names[i], east: b[3 + 3 * i], north: b[4 + 3 * i], alt: b[5 + 3 * i] })) };
   };
   // A destination anywhere in Brazil: a record of airports_br.json and the
@@ -110,7 +134,7 @@ export default async function createAvdModule(wasmBytes) {
     new Uint8Array(memory.buffer, ex.avd_text(b.length + 1), b.length).set(b);
     return ex.avd_set_destination_record(b.length, runway);
   };
-  A.gps = () => new Float64Array(memory.buffer, ex.avd_gps(), 16);
+  A.gps = () => new Float64Array(memory.buffer, ex.avd_gps(), L.gps);
   A.events = () => { const n = ex.avd_events(); return n ? A.text(n).split('\n').filter(Boolean) : []; };
   A.cockpit = () => {
     const out = [];

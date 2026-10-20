@@ -167,7 +167,7 @@ Provenance provenanceFrom(const std::string& s, Obj& o) {
     return Provenance::Estimated;
 }
 
-constexpr Real kPsi = 6894.757;
+using units::kPsi;
 Real fToK(Real f) { return (f - 32) * 5.0 / 9.0 + 273.15; }
 
 void readRange(Obj& o, const std::string& key, Range& r, Real scale, Real offset = 0) {
@@ -523,8 +523,8 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("p_factor_gain", e.pFactorGain);
         o.num("slipstream_swirl_factor", e.slipstreamSwirlFactor);
         o.num("alternator_min_rpm", e.alternatorMinRpm);
-        o.num("oil_pump_psi_per_rpm", e.oilPumpPressurePerRpm, 6894.757);
-        o.num("oil_relief_psi", e.oilReliefPressure, 6894.757);
+        o.num("oil_pump_psi_per_rpm", e.oilPumpPressurePerRpm, kPsi);
+        o.num("oil_relief_psi", e.oilReliefPressure, kPsi);
         o.num("oil_viscosity_temperature_scale_k", e.oilViscosityTemperatureScale);
         {
             Obj pr = o.child("propeller", true);
@@ -569,8 +569,8 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("idle_fuel_flow_kg_per_h", e.idleFuelFlow, 1.0 / 3600);
         o.num("itt_idle_k", e.ittIdle);
         o.num("itt_takeoff_k", e.ittTakeoff);
-        o.num("oil_pressure_idle_psi", e.oilPressureIdle, 6894.757);
-        o.num("oil_pressure_max_psi", e.oilPressureMax, 6894.757);
+        o.num("oil_pressure_idle_psi", e.oilPressureIdle, kPsi);
+        o.num("oil_pressure_max_psi", e.oilPressureMax, kPsi);
         o.integer("fuel_feed", e.fuelFeed);
         o.num("fan_diameter_m", e.fanDiameter);
         o.num("windmill_drag_area_m2", e.windmillDragArea);
@@ -697,7 +697,7 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("cornering_stiffness_n_per_rad", g.corneringStiffness);
         o.num("relaxation_length_m", g.relaxationLength);
         o.num("longitudinal_stiffness_n_per_m", g.longitudinalStiffness);
-        o.num("tyre_pressure_psi", g.tyrePressure, 6894.757);
+        o.num("tyre_pressure_psi", g.tyrePressure, kPsi);
         d.gear.push_back(g);
     });
     r.each("contacts", [&](Obj& o, std::size_t) {

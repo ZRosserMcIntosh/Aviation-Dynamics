@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <unordered_set>
 
 namespace avd::json {
 
@@ -83,12 +84,13 @@ private:
         Value v = Value::object();
         ws();
         if (peek() == '}') { ++i_; return v; }
+        std::unordered_set<std::string> keys;  // duplicate check in O(1) per key (find() is linear)
         while (ok()) {
             ws();
             if (peek() != '"') return fail("expected object key");
             std::string k = string();
             if (!ok()) break;
-            if (v.find(k)) return fail("duplicate key \"" + k + "\"");
+            if (!keys.insert(k).second) return fail("duplicate key \"" + k + "\"");
             ws();
             if (!expect(':')) break;
             ws();
@@ -138,14 +140,26 @@ private:
                 case 'r': s += '\r'; break;
                 case 't': s += '\t'; break;
                 case 'u': {
-                    if (i_ + 4 > t_.size()) { fail("bad \\u escape"); return {}; }
-                    unsigned cp = static_cast<unsigned>(std::strtoul(t_.substr(i_, 4).c_str(), nullptr, 16));
+                    // Exactly four hex digits (strtoul would also take a
+                    // sign, blanks or "0x", and read past a short escape).
+                    unsigned cp = 0;
+                    if (!hex4(i_, cp)) { fail("bad \\u escape"); return {}; }
                     i_ += 4;
-                    // Encode as UTF-8 (surrogate pairs are combined when present).
-                    if (cp >= 0xD800 && cp <= 0xDBFF && t_.compare(i_, 2, "\\u") == 0) {
-                        const unsigned lo = static_cast<unsigned>(std::strtoul(t_.substr(i_ + 2, 4).c_str(), nullptr, 16));
+                    // Encode as UTF-8. A high surrogate must be followed by a
+                    // low one (\\uDC00-\\uDFFF) and combined; a lone or
+                    // misordered surrogate is an error, not a code point (the
+                    // old `lo - 0xDC00` underflowed on a bad low surrogate).
+                    if (cp >= 0xD800 && cp <= 0xDBFF) {
+                        unsigned lo = 0;
+                        if (t_.compare(i_, 2, "\\u") != 0 || !hex4(i_ + 2, lo) || lo < 0xDC00 || lo > 0xDFFF) {
+                            fail("bad surrogate pair in \\u escape");
+                            return {};
+                        }
                         i_ += 6;
                         cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                    } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
+                        fail("lone low surrogate in \\u escape");
+                        return {};
                     }
                     if (cp < 0x80) s += static_cast<char>(cp);
                     else if (cp < 0x800) { s += static_cast<char>(0xC0 | (cp >> 6)); s += static_cast<char>(0x80 | (cp & 0x3F)); }
@@ -167,16 +181,43 @@ private:
         return {};
     }
 
+    // Four hex digits at `at` into `out`; false if fewer or not hex.
+    bool hex4(std::size_t at, unsigned& out) const {
+        if (at + 4 > t_.size()) return false;
+        unsigned v = 0;
+        for (std::size_t k = at; k < at + 4; ++k) {
+            const char c = t_[k];
+            unsigned d;
+            if (c >= '0' && c <= '9') d = static_cast<unsigned>(c - '0');
+            else if (c >= 'a' && c <= 'f') d = static_cast<unsigned>(c - 'a' + 10);
+            else if (c >= 'A' && c <= 'F') d = static_cast<unsigned>(c - 'A' + 10);
+            else return false;
+            v = (v << 4) | d;
+        }
+        out = v;
+        return true;
+    }
+
     Value number() {
         const std::size_t start = i_;
         if (peek() == '-') ++i_;
-        if (!(peek() >= '0' && peek() <= '9')) return fail("bad number");
-        while (peek() >= '0' && peek() <= '9') ++i_;
-        if (peek() == '.') { ++i_; while (peek() >= '0' && peek() <= '9') ++i_; }
+        // RFC 8259 grammar: no leading zeros, digits after the point and
+        // the exponent (strtod alone would take "01", "1." and "1e").
+        auto digit = [&] { return peek() >= '0' && peek() <= '9'; };
+        if (!digit()) return fail("bad number");
+        if (peek() == '0') ++i_;
+        else while (digit()) ++i_;
+        if (digit()) return fail("bad number (leading zero)");
+        if (peek() == '.') {
+            ++i_;
+            if (!digit()) return fail("bad number (digit expected after '.')");
+            while (digit()) ++i_;
+        }
         if (peek() == 'e' || peek() == 'E') {
             ++i_;
             if (peek() == '+' || peek() == '-') ++i_;
-            while (peek() >= '0' && peek() <= '9') ++i_;
+            if (!digit()) return fail("bad number (exponent digits expected)");
+            while (digit()) ++i_;
         }
         const double d = std::strtod(t_.substr(start, i_ - start).c_str(), nullptr);
         if (!std::isfinite(d)) return fail("number out of range");

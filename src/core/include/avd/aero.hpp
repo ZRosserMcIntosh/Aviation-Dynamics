@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "avd/aircraft_def.hpp"
+#include "avd/atmosphere.hpp"
 #include "avd/math.hpp"
 
 namespace avd {
@@ -79,7 +80,7 @@ struct AeroInputs {
     Vec3 omegaBody;            // rad/s
     Vec3 windBody;             // air velocity at the CG, body axes
     Mat3 windGradientBody = Mat3::zero();  // d(wind)/d(position), body axes
-    Real density = 1.225;
+    Real density = isa::kSeaLevelDensity;
     Real speedOfSound = 340.3;
     Vec3 cg;                   // structural frame
     ControlDeflections controls;

@@ -4,10 +4,12 @@
 
 #include <cmath>
 
+#include "avd/units.hpp"
+
 namespace avd {
 
 namespace {
-constexpr Real kPsi = 6894.757;   // Pa
+using units::kPsi;  // Pa
 constexpr Real kKnot = 1852.0 / 3600.0;  // m/s
 // 14 CFR 25.109(c)(1): mu = a (V/100)^3 + b (V/100)^2 + c (V/100) + d.
 struct WetCurve { Real psi, a, b, c, d; };

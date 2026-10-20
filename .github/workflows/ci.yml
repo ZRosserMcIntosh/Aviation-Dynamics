@@ -48,9 +48,23 @@ jobs:
       - name: Build
         run: cmake --build build
       - name: Test
+        env:
+          AVD_VALIDATION_JSON: ${{ github.workspace }}/build/validation.json
         run: ctest --test-dir build --output-on-failure
       - name: Validation report
         run: ./build/avdemo validate
+      # The validation tables in the docs are generated from the test output;
+      # a stale table fails the build (regenerate with tools/update_validation_docs.py).
+      - name: Generated validation docs are current
+        if: matrix.name == 'linux-gcc'
+        run: |
+          python3 tools/update_validation_docs.py build/validation.json
+          git diff --exit-code -- README.md docs web/README.md
+      # Goldens (tests/golden/*.csv) are replayed by avd_tests; this prints the
+      # full per-channel report when a trace differs or is missing.
+      - name: Golden traces
+        if: matrix.name == 'linux-gcc'
+        run: ./build/tools/avdtrace --check || test $? -eq 2
 
   windows:
     name: windows-msvc
@@ -81,6 +95,8 @@ jobs:
         run: sh web/build_wasi.sh
       - name: Smoke test
         run: node web/smoke_test.mjs
+      - name: ABI version and README layout tables
+        run: node web/abi_check.mjs
       - name: Bundle cockpit page
         run: node web/cockpit/build_page.mjs
       - name: Browser test (headless Chromium)
@@ -92,3 +108,21 @@ jobs:
         with:
           name: avd-web
           path: web/dist/
+
+  fuzz:
+    name: fuzz (loader, libFuzzer + ASan/UBSan)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ninja and clang
+        run: sudo apt-get update && sudo apt-get install -y ninja-build clang libclang-rt-dev
+      - name: Configure
+        run: >
+          cmake -S . -B build-fuzz -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_CXX_COMPILER=clang++ -DAVD_FUZZ=ON -DAVD_BUILD_TESTS=OFF -DAVD_BUILD_TOOLS=OFF
+      - name: Build
+        run: cmake --build build-fuzz --target avd_fuzz_loader
+      - name: Fuzz for a minute from the aircraft files
+        run: |
+          mkdir -p corpus && cp data/aircraft/*.json corpus/
+          ./build-fuzz/avd_fuzz_loader corpus -max_total_time=60 -timeout=10 -rss_limit_mb=2048

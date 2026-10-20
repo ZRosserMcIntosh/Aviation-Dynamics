@@ -2,6 +2,7 @@ set(AVD_TEST_SOURCES
   test_main.cpp
   test_foundations.cpp
   test_loader.cpp
+  test_json_robustness.cpp
   test_components.cpp
   test_flight.cpp
   test_systems_scenarios.cpp
@@ -16,6 +17,7 @@ set(AVD_TEST_SOURCES
   test_wake.cpp
   test_lifting_line.cpp
   test_engine_out.cpp
+  test_golden.cpp
 )
 add_executable(avd_tests ${AVD_TEST_SOURCES})
 target_link_libraries(avd_tests PRIVATE avd_scenarios)

@@ -9,6 +9,8 @@ const errors = A.load(json);
 if (errors.length) { console.error(errors); process.exit(1); }
 let failures = 0;
 const check = (ok, msg) => { console.log((ok ? 'ok   ' : 'FAIL ') + msg); if (!ok) failures++; };
+check(A.abiVersion === A.avd_abi_version() && A.layout.state === 64 && A.layout.flow === 1352, `ABI version ${A.abiVersion}, layout ${JSON.stringify(A.layout)}`);
+check(A.buildId().length > 0, `build id "${A.buildId()}"`);
 
 A.avd_set_airport(0);                // Campo de Marte runway 12 (Congonhas is the default; checked below)
 A.avd_reset(1);                      // engine running on runway 12 at Campo de Marte
