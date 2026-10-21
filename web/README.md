@@ -277,3 +277,13 @@ simulated time). **Replay** plays it back through the same panel at ¼×, 1×
 or 4×, with scrubbing. **Load CSV** replays a native flight written by
 `avdemo instruments csv` (the `InstrumentRecorder` channels, including
 `east_m` and `north_m` for the outside view).
+
+## Glass cockpit
+
+The glass cockpit for the `business_jet_glass` aircraft is in
+[Glass](https://github.com/ZRosserMcIntosh/Glass): the PFD, ND and EICAS, and the avionics that compute what they show
+(air data computer, speed-tape limits and low-speed bands, wind triangle,
+crew alerting). It pins this repository as a git submodule and reads
+`avd_state`, `avd_cockpit`, `avd_jet` and `avd_gps` through this ABI. A change
+to one of those tables (a `kAbiVersion` bump) needs the index tables in Glass's
+`src/avionics/readout.js` updated too.
