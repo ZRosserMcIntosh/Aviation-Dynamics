@@ -21,7 +21,16 @@
 //    choked, the air flow fixed and MAP ~ 1/rpm when the propeller windmills
 //    the engine, which then absorbs power (friction plus the pumping loop).
 //  - Altitude lapse check: Gagg-Farrar P/P0 = 1.132 sigma - 0.132 (the
-//    Lycoming sea-level/altitude curve), which the friction share reproduces.
+//    Lycoming sea-level/altitude curve), which the friction share reproduces
+//    with an ideal-gas charge. The charge is heated in the induction tract,
+//    port and valve (Heywood 6.2.3), the more so the colder the air, so the
+//    air flow at a given manifold pressure goes as T^-n with n below 1
+//    (the sqrt(T_std/T) temperature correction of the Lycoming operator's
+//    manuals and of SAE J1349, CF = 1.18 (p_s/p) sqrt(T/T_s) - 0.18 in the
+//    same friction-share form, is n = 1/2; the 172's climb chart gives
+//    about 0.7). The heating is normalised out at sea-level ISA, so the ISA
+//    lapse sits a few percent below Gagg-Farrar above 4,000 ft and the power
+//    on a hot or cold day at a pressure altitude follows the handbook.
 //  - Turbofan ratings: Mattingly, "Elements of Gas Turbine Propulsion", eq.
 //    2.54a (installed thrust lapse, flat rating to the throttle ratio TR); the
 //    lower ratings hold a fixed fraction of the temperature-limited branch.
@@ -311,6 +320,8 @@ PistonEngine::PistonEngine(const PistonEngineDef& def) : def_(def) {
     // rated rpm (full-throttle air flow through the incompressible-to-choked
     // orifice law).
     const Real omegaR = def_.ratedRpm * kTwoPi / 60;
+    // chargeTemperature(T0) = T0: the volumetric efficiency is referred to
+    // the manifold density at sea-level ISA, charge heating included.
     const Real mAirRated = def_.volumetricEfficiency * wot * p0 / (R * T0) * def_.displacement * omegaR / (4 * kPi);
     throttleAreaFull_ = mAirRated * std::sqrt(R * T0) / (p0 * orificeFlowFunction(wot));
     // Idle orifice (closed plate's crack and idle air bleed): MAP =
@@ -328,6 +339,21 @@ PistonEngine::PistonEngine(const PistonEngineDef& def) : def_(def) {
     const Real chem = mAirRated * def_.stoichiometricFar * def_.fuelHeatingValue *
                       def_.powerVsPhi(bestPowerPhi(def_.powerVsPhi));
     etaIndicated_ = chem > 0 ? pInd / chem : 0.3;
+}
+
+Real PistonEngine::chargeTemperature(Real ambientTemperature) const {
+    // The charge fills the cylinder at T_amb + dT, dT = chargeHeating
+    // (T_wall - T_amb) / (T_wall - T0): the heat picked up from the tract,
+    // port and valve grows with the wall-to-air difference. The volumetric
+    // efficiency is referred to the manifold density at sea-level ISA, so the
+    // result is normalised to T0 there: T_eff = T0 (T_amb + dT) / (T0 + dT0),
+    // and only the sensitivity to temperature changes (d ln rho / d ln T =
+    // -(1 - eps) T_amb / (T_amb + dT) instead of -1).
+    const Real T = std::max(ambientTemperature, 150.0), T0 = isa::kSeaLevelTemperature;
+    const Real span = def_.chargeWallTemperature - T0;
+    if (def_.chargeHeating <= 0 || span <= 1.0) return T;
+    const Real dT = std::max(def_.chargeHeating * (def_.chargeWallTemperature - T) / span, 0.0);
+    return T0 * (T + dT) / (T0 + def_.chargeHeating);
 }
 
 Real PistonEngine::frictionTorque(Real omega) const {
@@ -355,14 +381,15 @@ Real PistonEngine::volumetricEfficiency(Real manifoldPressure, Real ambientPress
 
 Real PistonEngine::manifoldPressure(Real throttle, Real omega, Real ambientPressure, Real ambientTemperature) const {
     // Per unit ambient pressure, with x = MAP / ambient:
-    //   pump:    m_dot / p = eta_v(x) x D omega / (4 pi R T)  (rises linearly in x from the residual floor x = 1/r_c)
-    //   orifice: m_dot / p = Cd A Psi(x) / sqrt(R T)          (falls from the choked value to 0 at x = 1)
+    //   pump:    m_dot / p = eta_v(x) x D omega / (4 pi R T_c)  (rises linearly in x from the residual floor x = 1/r_c;
+    //                                                          T_c the heated charge temperature)
+    //   orifice: m_dot / p = Cd A Psi(x) / sqrt(R T)            (falls from the choked value to 0 at x = 1)
     // One crossing; bisection on [1/r_c, 1].
     const Real R = isa::kGasConstantDryAir, T = std::max(ambientTemperature, 150.0);
     const Real rc = std::max(def_.compressionRatio, 2.0);
     // eta_v(x) x = eta_v(1) (r_c x - 1) / (r_c - 1), the speed factor folded into eta_v(1).
     const Real etaUnthrottled = volumetricEfficiency(ambientPressure, ambientPressure, omega);
-    const Real pumpScale = etaUnthrottled / (rc - 1) * def_.displacement * std::max(omega, 0.0) / (4 * kPi * R * T);
+    const Real pumpScale = etaUnthrottled / (rc - 1) * def_.displacement * std::max(omega, 0.0) / (4 * kPi * R * chargeTemperature(T));
     const Real orificeScale = throttleArea(throttle) / std::sqrt(R * T);
     Real lo = 1 / rc, hi = 1;
     for (int it = 0; it < 44; ++it) {
@@ -380,7 +407,7 @@ PistonEngineState PistonEngine::evaluate(const PistonEngineInputs& in, Real omeg
     const Real throttle = clamp(in.throttle, 0.0, 1.0);
     s.manifoldPressure = manifoldPressure(throttle, omega, in.ambientPressure, in.ambientTemperature);
 
-    const Real rhoIntake = s.manifoldPressure / (isa::kGasConstantDryAir * in.ambientTemperature);
+    const Real rhoIntake = s.manifoldPressure / (isa::kGasConstantDryAir * chargeTemperature(in.ambientTemperature));
     const Real airPerRad = volumetricEfficiency(s.manifoldPressure, in.ambientPressure, omega) * rhoIntake * def_.displacement /
                            (4 * kPi);  // kg/rad
     const Real mAir = airPerRad * omega;

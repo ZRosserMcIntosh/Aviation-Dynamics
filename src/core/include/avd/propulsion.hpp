@@ -112,6 +112,10 @@ public:
     // 6.2), times the port-flow loss with speed (1 - loss (omega/omega_R)^2),
     // both normalised to the definition's value at full throttle, rated rpm.
     Real volumetricEfficiency(Real manifoldPressure, Real ambientPressure, Real omega) const;
+    // Temperature (K) at which the charge fills the cylinder: ambient plus
+    // the induction-tract heating (Heywood 6.2.3), which grows as the ambient
+    // falls below the tract's wall temperature; see PistonEngineDef::chargeHeating.
+    Real chargeTemperature(Real ambientTemperature) const;
     // Mechanical friction torque (N m), rubbing and accessories; pumping
     // (ambient minus manifold pressure over the displacement) is added in evaluate().
     Real frictionTorque(Real omega) const;

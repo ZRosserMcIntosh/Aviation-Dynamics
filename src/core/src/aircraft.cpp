@@ -224,6 +224,7 @@ void Aircraft::rebuildCockpit() {
                                 (n.empty() ? "Generator " + std::to_string(k + 1) : n) + " Switch", {"OFF", "ON"}, 0});
         }
     cockpit_.push_back({"electrical.avionics", "Avionics Master Switch", {"OFF", "ON"}, 0});
+    cockpit_.push_back({"electrical.load_shed", "Load Shed (essential bus only)", {"NORMAL", "SHED"}, 0});
     for (std::size_t i = 0; i < def_.engines.size(); ++i) {
         const std::string n = "engine" + std::to_string(i + 1);
         cockpit_.push_back({n + ".ignition", "Engine " + std::to_string(i + 1) + " Ignition Switch (hold START to crank)",
@@ -282,6 +283,7 @@ int Aircraft::cockpitControl(const std::string& id) const {
     if (id == "electrical.battery") return electrical_.batterySwitch();
     if (id == "electrical.alternator") return electrical_.alternatorSwitch();
     if (id == "electrical.avionics") return electrical_.avionicsSwitch();
+    if (id == "electrical.load_shed") return electrical_.manualLoadShed();
     if (id == "fuel.selector") return fuel_.selector();
     if (id == "fuel.shutoff") return fuel_.shutoffOpen();
     if (id == "fuel.auxpump") return fuel_.auxPumpOn();
@@ -316,6 +318,7 @@ bool Aircraft::setCockpitControl(const std::string& id, int position) {
     if (id == "electrical.battery") electrical_.setBatterySwitch(position == 1);
     else if (id == "electrical.alternator") electrical_.setAlternatorSwitch(position == 1);
     else if (id == "electrical.avionics") electrical_.setAvionicsSwitch(position == 1);
+    else if (id == "electrical.load_shed") electrical_.setLoadShed(position == 1);
     else if (id == "fuel.selector") fuel_.setSelector(position);
     else if (id == "fuel.shutoff") fuel_.setShutoffOpen(position == 1);
     else if (id == "fuel.auxpump") fuel_.setAuxPump(position == 1);
@@ -1419,6 +1422,10 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
     }
     if (electrical_.batteryDepleted() && !batteryDepletedWas_ && electrical_.batterySwitch()) pushEvent(FlightEventType::BatteryDepleted);
     batteryDepletedWas_ = electrical_.batteryDepleted();
+    // value: 1 the bus controller's automatic shed, 0 the pilot's.
+    if (electrical_.loadShed() != loadShedWas_)
+        pushEvent(electrical_.loadShed() ? FlightEventType::LoadShed : FlightEventType::LoadRestored, electrical_.autoLoadShed() ? 1 : 0);
+    loadShedWas_ = electrical_.loadShed();
     for (std::size_t i = 0; i < def_.contacts.size(); ++i) {
         // Edge-triggered: one event per new contact.
         if (contactTouched_[i] && !contactWas_[i]) {
@@ -1464,6 +1471,7 @@ SensorInputs Aircraft::sensorInputs() const {
     in.busVoltage = electrical_.busVoltage();
     in.batteryCurrent = electrical_.batteryCurrent();
     in.alternatorOnline = electrical_.alternatorOnline();
+    in.loadShed = electrical_.loadShed();
     const InstrumentPanelDef& p = def_.panel;
     const bool bus = electrical_.powered();
     in.turnCoordinatorPowered = loadPowered(p.turnCoordinator.electricalLoad, bus);

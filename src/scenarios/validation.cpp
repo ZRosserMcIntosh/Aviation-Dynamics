@@ -206,11 +206,12 @@ Rows c172FullThrottle8000() {
 }
 
 Rows c172ClimbRates() {
-    // The handbook's method: the climb integrated from the rate-of-climb
-    // data at each altitude (Figure 5-7 is derived from Figure 5-6), here
-    // from trims every 500 ft at the Vy schedule (74 KIAS at sea level to
-    // 72 KIAS at 8,000 ft and above), full throttle, best power, the mass
-    // falling with the fuel burned.
+    // The handbook's method: Figure 5-7 tabulates the rate of climb at
+    // 2,550 lb at each pressure altitude (the standard-temperature column of
+    // Figure 5-6) and integrates time, fuel and distance from those rates,
+    // at that weight throughout. Here: trims every 500 ft at the Vy schedule
+    // (74 KIAS at sea level to 72 KIAS at 8,000 ft and above), full
+    // throttle, best power, all at 2,550 lb.
     Rows rows;
     Aircraft ac = grossC172();
     SimpleWeather atm;
@@ -229,26 +230,26 @@ Rows c172ClimbRates() {
         r.solveFlightPath = true;
         const TrimResult t = trim(ac, r, atm);
         pts.push_back({h, t.converged ? t.tas * std::sin(t.flightPath) : 0, t.fuelFlow, t.tas * std::cos(t.flightPath)});
-        if (h + 500 <= 12000 && pts.back().roc > 0.1) {
-            // Burn the fuel of this 500 ft segment before the next trim.
-            const Real dt = ftToM(500) / pts.back().roc;
-            const Real burn = t.fuelFlow * dt;  // kg
-            burnFuel(ac, burn);
-        }
     }
     auto at = [&](Real h) {
         for (const Pt& p : pts)
             if (std::abs(p.altFt - h) < 1) return p;
         return Pt{};
     };
+    // Figure 5-7, standard temperature: 730 / 695 / 655 / 620 / 600 / 550 /
+    // 505 / 455 / 410 / 365 / 315 / 265 / 220 fpm from sea level to 12,000 ft
+    // by 1,000 ft (Figure 5-6's columns give 405 / 345 fpm at 0 / 20 degC at
+    // 8,000 ft and 195 / 135 at 12,000, i.e. 410 and 220 at ISA; the 14,000 ft
+    // service ceiling of Section 1 agrees). The 8,000 and 12,000 ft rows
+    // carried 455 and 310 fpm, quoted from memory, until October 2026.
     const struct { Real alt; Real poh; const char* id; } refs[] = {
-        {0, 730, "c172s.climb.sl"}, {4000, 600, "c172s.climb.4000"}, {8000, 455, "c172s.climb.8000"}, {12000, 310, "c172s.climb.12000"}};
+        {0, 730, "c172s.climb.sl"}, {4000, 600, "c172s.climb.4000"}, {8000, 410, "c172s.climb.8000"}, {12000, 220, "c172s.climb.12000"}};
     for (const auto& x : refs) {
         std::ostringstream q;
         q << "Rate of climb, " << (x.alt == 0 ? std::string("sea level") : fmt(x.alt, 0) + " ft") << ", Vy";
         rows.push_back(tolerance(x.id, q.str(), fmt(x.poh, 0) + " fpm", x.poh, msToFpm(at(x.alt).roc), 15, "fpm",
                                  std::string(kPoh) + ", Figure 5-7 (2,550 lb, standard temperature)",
-                                 x.alt == 0 ? "74 KIAS, full throttle, full rich (POH: lean above 3,000 ft)" : "72-74 KIAS, full throttle, mixture leaned for best power"));
+                                 x.alt == 0 ? "74 KIAS, full throttle, full rich (POH: lean above 3,000 ft), 2,550 lb" : "72-74 KIAS, full throttle, mixture leaned for best power, 2,550 lb"));
     }
     // Time, fuel and distance from sea level to 8,000 ft (trapezoids over the 500 ft segments).
     Real time = 0, fuel = 0, dist = 0;
@@ -261,7 +262,8 @@ Rows c172ClimbRates() {
         dist += 0.5 * (pts[i].vh + pts[i + 1].vh) * dt;
     }
     const std::string src7 = std::string(kPoh) + ", Figure 5-7 (time, fuel and distance to climb; no start/taxi allowance)";
-    rows.push_back(tolerance("c172s.climb.to8000.time", "Time to climb, sea level to 8,000 ft", "14 min", 14, time / 60, 15, "min", src7));
+    rows.push_back(tolerance("c172s.climb.to8000.time", "Time to climb, sea level to 8,000 ft", "14 min", 14, time / 60, 15, "min", src7,
+                             "integrated from the 2,550 lb rates, as the handbook's figure is"));
     rows.push_back(tolerance("c172s.climb.to8000.fuel", "Fuel to climb, sea level to 8,000 ft", "3.0 gal", 3.0, m3ToGal(fuel / d.fuel.density), 15, "gal", src7,
                              "the handbook adds 1.4 gal for start, taxi and take-off, not counted here"));
     rows.push_back(tolerance("c172s.climb.to8000.distance", "Distance to climb, sea level to 8,000 ft", "19 NM", 19, dist / kNauticalMile, 15, "NM", src7, "zero wind"));

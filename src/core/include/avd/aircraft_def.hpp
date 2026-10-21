@@ -152,6 +152,22 @@ struct LiftingSurfaceDef {
     // together, ground images) instead of independent strips with the
     // Helmbold slope: tip stall, swept-wing pitch-up, winglets, roll damping.
     bool liftingLine = false;
+    // Stall progression along a swept span. The boundary layer of a swept-back
+    // wing drifts outboard: the outboard sections run in a thickened boundary
+    // layer and stall below the section's clmax, the inboard ones in a thinned
+    // layer and stall above it, and past the stall the inboard sections keep
+    // carrying high loads while the separated outboard flow is drained toward
+    // the tips (Harper & Maki, NACA TN 2947; Furlong & McHugh, NACA Rep.
+    // 1339). The section's lift limits (clmax, clmin) and its separated
+    // normal force (Viterna's CDmax, the post-stall level) are scaled by
+    // 1 - k sin(sweep) (eta - 1/2) with eta the spanwise station (0 root, 1
+    // tip) and the local sweep, so both are redistributed about the
+    // mid-semispan: tips first and weaker (lift lost aft on a swept wing: the
+    // pitch-up past the stall, DATCOM 4.1.3.4), roots last and stronger
+    // (lift kept forward into the deep stall). k = 0 (default) leaves the
+    // polar uniform; canted panels (winglets) are untouched; an unswept wing
+    // is untouched at any k.
+    Real sweepStallGradient = 0;      // k, per unit eta per unit sin(sweep)
     bool trimmableStabilizer = false;  // its incidence follows the stabiliser trim
 };
 
@@ -226,6 +242,17 @@ struct PistonEngineDef {
     Real idleManifoldRatio = 0.33;    // MAP / ambient at closed throttle at idleRpm
     Real idleRpm = 650;               // rpm the idle orifice is sized at
     Real intakeLossRatio = 0.03;      // MAP loss at full throttle, rated rpm
+    // Heating of the inducted charge by the induction tract, port and valve
+    // (Heywood 6.2.3): the charge fills the cylinder at T_amb + dT with
+    // dT = chargeHeating x (wallTemperature - T_amb) / (wallTemperature - T0),
+    // i.e. a colder day heats the charge more, so the air flow at a given
+    // manifold pressure goes as T^-n with n between 1 (ideal gas, no
+    // heating) and about 1/2 (the sqrt(T_std/T) temperature correction of the
+    // Lycoming operator's manuals and of SAE J1349). volumetricEfficiency
+    // stays referred to the manifold density at sea-level ISA (the heating
+    // is normalised out there). 0: ideal-gas charge at ambient temperature.
+    Real chargeHeating = 0;           // K, charge temperature rise at sea-level ISA
+    Real chargeWallTemperature = 420; // K, effective induction tract / port wall temperature
     Real engineInertia = 0.6;         // kg m^2 crankshaft etc. (propeller separate)
     Real starterTorque = 60;          // N m at the crankshaft
     Real starterCurrent = 150;        // A
@@ -384,6 +411,9 @@ struct ElectricalLoadDef {
     Real minimumVoltage = 18;
     bool onAvionicsBus = false;
     bool initiallyOn = true;          // switch position on a fresh airframe
+    // On the essential bus: stays powered through a load shed (automatic on
+    // battery power with `autoLoadShed`, or the pilot's "electrical.load_shed").
+    bool essential = false;
 };
 
 // An engine-driven generator (alternator, starter-generator) on the main bus.
@@ -413,6 +443,12 @@ struct ElectricalDef {
     // 24 V system, 9 V on a 12 V one).
     Real busMinimumVoltage = -1;
     std::vector<ElectricalLoadDef> loads;
+    // Bus controller: with no generator on line and the battery carrying the
+    // bus for `loadShedDelay`, the non-essential loads are shed (they draw
+    // nothing and read unpowered) until a generator comes back on line. A
+    // light aircraft (false) sheds by hand: cockpit control "electrical.load_shed".
+    bool autoLoadShed = false;
+    Real loadShedDelay = 2.0;         // s on the battery alone before the automatic shed
     Real busMinimum() const { return busMinimumVoltage >= 0 ? busMinimumVoltage : 0.75 * batteryVoltage; }
 };
 

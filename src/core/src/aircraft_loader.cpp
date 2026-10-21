@@ -435,6 +435,12 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         }
         o.boolean("ground_effect", s.groundEffect);
         o.boolean("lifting_line", s.liftingLine);
+        // Sweep stall progression, k in clmax(eta) = clmax (1 - k sin(sweep)
+        // (eta - 1/2)), the same factor on the separated section's normal
+        // force: the outboard sections of a swept wing stall below the
+        // section's clmax and carry less when separated, the inboard above it
+        // and more (default 0: uniform).
+        o.num("sweep_stall_gradient", s.sweepStallGradient);
         o.boolean("trimmable_stabilizer", s.trimmableStabilizer);
         o.num("thickness_ratio", s.thicknessRatio);
         o.num("korn_factor", s.kornFactor);
@@ -523,6 +529,8 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("idle_manifold_ratio", e.idleManifoldRatio);
         o.num("idle_rpm", e.idleRpm);
         o.num("intake_loss_ratio", e.intakeLossRatio);
+        o.num("charge_heating_k", e.chargeHeating);
+        o.num("charge_wall_temperature_k", e.chargeWallTemperature);
         o.num("engine_inertia_kgm2", e.engineInertia);
         o.num("starter_torque_nm", e.starterTorque);
         o.num("starter_current_a", e.starterCurrent);
@@ -642,6 +650,8 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         e.num("alternator_voltage_v", d.electrical.alternatorVoltage);
         e.num("alternator_max_current_a", d.electrical.alternatorMaxCurrent);
         e.num("bus_minimum_v", d.electrical.busMinimumVoltage);
+        e.boolean("auto_load_shed", d.electrical.autoLoadShed);
+        e.num("load_shed_delay_s", d.electrical.loadShedDelay);
         e.each("generators", [&](Obj& o, std::size_t) {
             GeneratorDef g;
             o.str("name", g.name);
@@ -658,6 +668,7 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
             o.num("current_a", l.current, 1, true);
             o.num("minimum_voltage_v", l.minimumVoltage);
             o.boolean("avionics_bus", l.onAvionicsBus);
+            o.boolean("essential", l.essential);
             d.electrical.loads.push_back(l);
         });
     }

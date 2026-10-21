@@ -5,7 +5,7 @@
 
 // The ABI version this loader was written for: kAbiVersion in web/avd_web.cpp.
 // A module with another version is refused (web/README.md, "ABI version").
-export const EXPECTED_ABI = 1;
+export const EXPECTED_ABI = 2;
 // avd_layout(which), in this order (abi::layout in avd_web.cpp).
 export const LAYOUT_NAMES = [
   'state', 'cockpit', 'jet', 'loadsheet', 'flowHeader', 'flowStride', 'flowStrips', 'flowEngineStride', 'flowEngines', 'flow',

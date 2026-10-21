@@ -176,8 +176,13 @@ Real ElectricalSystem::chargeAcceptanceResistance() const {
     return def_.batteryResistance + 1.2 * (def_.batteryVoltage / 24.0) * std::pow(soc, 12.0);
 }
 
+bool ElectricalSystem::loadShedded(int i) const {
+    if (i < 0 || i >= static_cast<int>(def_.loads.size())) return false;
+    return loadShed() && !def_.loads[static_cast<std::size_t>(i)].essential;
+}
+
 bool ElectricalSystem::loadPowered(int i) const {
-    if (i < 0 || i >= static_cast<int>(def_.loads.size()) || !loadOn_[i]) return false;
+    if (i < 0 || i >= static_cast<int>(def_.loads.size()) || !loadOn_[i] || loadShedded(i)) return false;
     const ElectricalLoadDef& l = def_.loads[i];
     const Real v = l.onAvionicsBus ? avionicsBusVoltage() : busVoltage_;
     return v >= l.minimumVoltage;
@@ -186,10 +191,11 @@ bool ElectricalSystem::loadPowered(int i) const {
 void ElectricalSystem::step(Real dt, const ElectricalInputs& in) {
     // Bus load current at nominal voltage (constant-current loads). The fuel
     // pump's breaker carries the pump's own current only while it runs.
+    // A shed non-essential load (bus controller or pilot) draws nothing.
     Real loadCurrent = in.starterCurrent + in.flapMotorCurrent + in.hydraulicPumpCurrent;
-    if (pumpLoad_ < 0 || loadOn_[static_cast<std::size_t>(pumpLoad_)]) loadCurrent += in.auxPumpCurrent;
+    if (pumpLoad_ < 0 || (loadOn_[static_cast<std::size_t>(pumpLoad_)] && !loadShedded(pumpLoad_))) loadCurrent += in.auxPumpCurrent;
     for (std::size_t i = 0; i < def_.loads.size(); ++i) {
-        if (!loadOn_[i] || static_cast<int>(i) == pumpLoad_) continue;
+        if (!loadOn_[i] || static_cast<int>(i) == pumpLoad_ || loadShedded(static_cast<int>(i))) continue;
         if (def_.loads[i].onAvionicsBus && !avionics_) continue;
         loadCurrent += def_.loads[i].current;
     }
@@ -206,6 +212,16 @@ void ElectricalSystem::step(Real dt, const ElectricalInputs& in) {
     }
     const bool online = alternatorOnline();
     const Real ocv = openCircuitVoltage();
+    // Bus controller: the battery alone on the bus for the delay sheds the
+    // non-essential loads; a generator back on line restores them. The
+    // current above was drawn with the shed as it stood at step start.
+    if (online || !bat_ || charge_ <= 0) {
+        batteryOnlyTime_ = 0;
+        autoShed_ = false;
+    } else {
+        batteryOnlyTime_ += dt;
+        if (def_.autoLoadShed && batteryOnlyTime_ >= def_.loadShedDelay) autoShed_ = true;
+    }
 
     if (online) {
         // Regulated bus; the battery charges with the taper of its state of

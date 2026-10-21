@@ -13,6 +13,16 @@ the published data pins down (the engine lapse to the maximum cruise speed,
 the flap lift to the approach speed where one is published) and writes the
 result.
 
+Systems (electrical, hydraulics) are not laid out field by field: the
+template's `electrical` and `hydraulics` blocks come over whole (the whole
+template is deep-copied) and only the few values that scale with the type
+are overridden (generator ratings and their sum, battery capacity, load
+currents, electric hydraulic pump current and which systems have one). Any
+field added to the template later (a load's `essential` flag, a load-shed
+setting, a new actuator source list) therefore reaches every generated jet
+without a change here. The load names stay the template's: the instruments
+and the web layer key on them.
+
     python3 tools/jetgen/jetgen.py            # all types
     python3 tools/jetgen/jetgen.py crj700     # one
 
@@ -53,6 +63,9 @@ SPECS = {
         thrust_lbf=3478, bpr=2.6, tsfc=0.44, engines='aft', reversers=False,
         speedbrake=dict(detents=2), vmo=320, mmo=0.80, vle=250, flaps=[0, 8, 26, 37], vfe=[180, 170, 150],
         cruise=dict(ktas=464, fl=300), ceiling_ft=45000, vref=None,
+        systems=dict(generator_a=300, battery_ah=44, load_scale=0.8, electric_pumps=[0],
+                     generators='the Phenom 300 has two 300 A starter-generators',
+                     hydraulics='the Phenom 300 has a single engine-pump system with an electric auxiliary pump; two systems is the template layout'),
         colors=dict(primary='#0f3a5c', accent='#c9a227'),
         windows=dict(count=6, first=-4.6, pitch=0.82, half_w=0.2, half_h=0.15),
         sources=[
@@ -70,6 +83,9 @@ SPECS = {
         thrust_lbf=3621, bpr=3.3, tsfc=0.46, engines='aft', reversers=False,
         speedbrake=dict(detents=3), vmo=305, mmo=0.77, vle=250, flaps=[0, 15, 35], vfe=[200, 161],
         cruise=dict(ktas=451, fl=300), ceiling_ft=45000, vref=None,
+        systems=dict(generator_a=300, battery_ah=44, load_scale=0.8, electric_pumps=[0],
+                     generators='two 300 A starter-generators, typical of the light-jet class',
+                     hydraulics='the CJ4 has one engine-pump system; two systems is the template layout'),
         colors=dict(primary='#1d2a33', accent='#b6202a'),
         windows=dict(count=6, first=-4.7, pitch=0.85, half_w=0.18, half_h=0.15),
         sources=[
@@ -86,6 +102,9 @@ SPECS = {
         thrust_lbf=3500, bpr=3.1, tsfc=0.41, engines='aft', reversers=True,
         speedbrake=dict(detents=3), vmo=330, mmo=0.81, vle=260, flaps=[0, 8, 20, 40], vfe=[250, 200, 150],
         cruise=dict(ktas=465, fl=330), ceiling_ft=51000, vref=None,
+        systems=dict(generator_a=300, battery_ah=40, load_scale=0.9, electric_pumps=[0],
+                     generators='two 300 A starter-generators (the type has two 24 V batteries, modelled as one)',
+                     hydraulics='the Learjet 45 has one engine-pump system with an electric auxiliary pump; two systems is the template layout'),
         colors=dict(primary='#2b2f36', accent='#c8102e'),
         windows=dict(count=7, first=-4.9, pitch=0.84, half_w=0.2, half_h=0.16),
         sources=[
@@ -100,6 +119,9 @@ SPECS = {
         thrust_lbf=13790, bpr=5.0, tsfc=0.36, engines='aft', reversers=True,
         speedbrake=dict(detents=3), vmo=335, mmo=0.85, vle=220, flaps=[0, 1, 8, 20, 30, 45], vfe=[230, 230, 220, 185, 170],
         cruise=dict(ktas=473, fl=370), ceiling_ft=41000, vref=dict(kias=135, weight_lb=67000, flap=45),
+        systems=dict(generator_a=400, battery_ah=43, load_scale=1.3, electric_pumps=[0],
+                     generators='the CRJ700 has two 30 kVA 115 V AC IDGs, modelled as their 28 V DC bus equivalent',
+                     hydraulics='the CRJ700 has three systems (1 and 2 engine-driven with AC pumps, 3 on AC pumps only); two engine-driven systems is a simplification'),
         colors=dict(primary='#1e3f73', accent='#d7262e'),
         windows=dict(count=19, first=-5.6, pitch=0.82, half_w=0.15, half_h=0.2),
         sources=[
@@ -116,6 +138,9 @@ SPECS = {
         thrust_lbf=26300, bpr=5.1, tsfc=0.36, engines='wing', reversers=True,
         speedbrake=dict(detents=3), vmo=340, mmo=0.82, vle=270, flaps=[0, 1, 5, 15, 25, 30, 40], vfe=[250, 250, 200, 190, 175, 162],
         cruise=dict(ktas=460, fl=350), ceiling_ft=41000, vref=None,
+        systems=dict(generator_a=600, battery_ah=48, load_scale=1.6, electric_pumps=[0, 1],
+                     generators='the 737-800 has two 90 kVA 115 V AC IDGs, modelled as their 28 V DC bus equivalent',
+                     hydraulics='the 737 has an engine pump and an electric pump on each of A and B, as here; the standby system is not modelled'),
         colors=dict(primary='#123a6b', accent='#e0a526'),
         windows=dict(count=26, first=-6.2, pitch=0.51, half_w=0.12, half_h=0.17),
         sources=[
@@ -299,6 +324,11 @@ def build(key, spec, top):
         e['start_time_s'] = 35.0 if thrust_kn < 30 else 45.0
         e['acceleration_time_s'] = 5.0 if thrust_kn < 30 else 6.0
         e['lapse_mach_coefficient'] = s.get('lapse', 0.18)
+        # The fan with the nacelle radius, the windmilling drag area with its square.
+        if 'fan_diameter_m' in e:
+            e['fan_diameter_m'] = round(e['fan_diameter_m'] * rn / 0.79, 2)
+        if 'windmill_drag_area_m2' in e:
+            e['windmill_drag_area_m2'] = round(e['windmill_drag_area_m2'] * dn, 3)
         if s['reversers']:
             e['thrust_reverser'] = {'effectiveness': 0.4, 'transit_time_s': 2.0, 'reverse_n1': 0.8, 'stow_kias': 60,
                                     'cascade_forward_of_nozzle_m': round(1.5 * rn / 0.79, 2), 'cowl_radius_m': round(rn, 3)}
@@ -313,6 +343,29 @@ def build(key, spec, top):
         t['unusable_l'] = round(40 * fuel_l / 27328, 1)
         t['initial_l'] = round(0.45 * fuel_l / 2, 1)
     d['fuel']['density_kg_per_l'] = s['fuel_density']
+
+    # ---- Electrical and hydraulics: the template's blocks, the scaled values overridden ----
+    ps = s['systems']
+    el = d['electrical']
+    for g in el['generators']:
+        g['max_current_a'] = ps['generator_a']
+    el['alternator_max_current_a'] = ps['generator_a'] * len(el['generators'])  # the single-alternator fallback
+    el['battery_capacity_ah'] = float(ps['battery_ah'])
+    for l in el['loads']:
+        l['current_a'] = round(l['current_a'] * ps['load_scale'], 1)
+    hyd = d['hydraulics']
+    pump = copy.deepcopy(next(h['electric_pump'] for h in hyd['systems'] if 'electric_pump' in h))
+    pump['current_a'] = round(pump['current_a'] * ps['generator_a'] / 300)
+    for i, h in enumerate(hyd['systems']):
+        if i in ps['electric_pumps']:
+            if 'electric_pump' in h:
+                h['electric_pump'] = copy.deepcopy(pump)
+            else:  # in the template's key order (after the engines)
+                items = list(h.items())
+                items.insert(2, ('electric_pump', copy.deepcopy(pump)))
+                hyd['systems'][i] = dict(items)
+        else:
+            h.pop('electric_pump', None)
 
     # ---- Gear: the nose leg forward, the mains at the Top G's % MAC; legs and wheels scaled ----
     kmass = mtow / TOP['mtow']
@@ -415,7 +468,15 @@ def build(key, spec, top):
          'note': 'Yaw damper (these types have one): washed-out yaw rate (3 s) to the rudder, 2 per rad/s at 160 KEAS scheduled with 1/EAS^2, 30 % authority.'},
         {'field': 'mass.empty_cg_m, mass.cg_*_limit, gear', 'kind': 'estimated', 'source': 'EST',
          'note': 'Empty CG 27 % MAC, CG limits 7-11 % to 36 % MAC, main gear at 45 % MAC (the Top G arrangement); inertia scaled by mass and size.'},
-        {'field': 'drag_items', 'kind': 'estimated', 'source': 'ROSKAM', 'note': 'The Top G build-up scaled with fuselage wetted area, nacelle size and wing area.'},
+        {'field': 'drag_items, turbofans[*].fan_diameter_m, turbofans[*].windmill_drag_area_m2', 'kind': 'estimated', 'source': 'ROSKAM',
+         'note': 'The Top G build-up scaled with fuselage wetted area, nacelle size and wing area; the fan and its windmilling drag area with the nacelle.'},
+        {'field': 'electrical', 'kind': 'estimated', 'source': 'EST',
+         'note': f"Two engine-driven generators (GEN 1, GEN 2) of {ps['generator_a']} A each at 28 V, on line from 45 % N2 ({ps['generators']}); "
+                 f"battery {ps['battery_ah']} Ah; the Top G's loads (same names) at {ps['load_scale']} x its currents for this airframe class."},
+        {'field': 'hydraulics', 'kind': 'estimated', 'source': 'EST',
+         'note': f"The Top G's two-system layout at 3,000 psi: A on engine 1, B on engine 2, an electric pump of {pump['current_a']} A on generator power on "
+                 f"{'both' if len(ps['electric_pumps']) > 1 else 'A'}; gear, flaps, speedbrake, steering and brakes on either system, a brake accumulator for "
+                 f"{hyd['brake_accumulator_applications']} applications, gear free fall at {round(100 * hyd['free_fall_rate_fraction'])} % rate ({ps['hydraulics']})."},
         {'field': 'controls.speedbrake, turbofans[*].thrust_reverser', 'kind': 'published', 'source': s['sources'][-1][0],
          'note': f"Speedbrake with automatic ground spoilers; {reverser_note}."},
         {'field': 'limits, controls.flap_detents_deg', 'kind': 'published', 'source': s['sources'][-1][0],
