@@ -594,6 +594,13 @@ void Wake::forEachSegment(Real minAge, bool images, const Vec3* near, Emit&& emi
         int edges = 0;
         bool havePrev = false;
         bool prevRolled = false;
+        bool prevPlaced = true;  // prevP / prevCore hold the previous row's edges
+        auto placeRow = [&](const Gate& g, Real a, std::array<Vec3, kMaxEdges>& p, std::array<Real, kMaxEdges>& c) {
+            for (int e = 0; e < edges; ++e) {
+                p[static_cast<std::size_t>(e)] = edgePosition(g, e, a);
+                c[static_cast<std::size_t>(e)] = edgeCoreAt(g, e, a);
+            }
+        };
         if (li >= 0) {
             const Attached& A = attached_[static_cast<std::size_t>(li)];
             edges = A.edgeCount;
@@ -628,10 +635,6 @@ void Wake::forEachSegment(Real minAge, bool images, const Vec3* near, Emit&& emi
             std::array<Vec3, kMaxEdges> P{};
             std::array<Real, kMaxEdges> C{};
             for (int j = 0; j + 1 < edges; ++j) S[static_cast<std::size_t>(j)] = gt.g[static_cast<std::size_t>(j)] * d;
-            for (int e = 0; e < edges; ++e) {
-                P[static_cast<std::size_t>(e)] = edgePosition(gt, e, age);
-                C[static_cast<std::size_t>(e)] = edgeCoreAt(gt, e, age);
-            }
             const bool isRolled = gt.vortexCount > 0 && rolled(gt, age) > 0.999;
             if (near) {
                 Vec3 lo = gt.lo, hi = gt.hi;
@@ -640,6 +643,16 @@ void Wake::forEachSegment(Real minAge, bool images, const Vec3* near, Emit&& emi
                     hi = {std::max(hi.x, prev->hi.x), std::max(hi.y, prev->hi.y), std::max(hi.z, prev->hi.z)};
                 }
                 skip = boxDistance(*near, lo, hi) > 10 * gt.b0 + (prev ? 0 : refSpan_);
+            }
+            // The edge positions (the costly part) only for rows that are
+            // drawn on: this one unless it is skipped, and the row before it
+            // if that one was skipped itself.
+            if (!skip) {
+                for (int e = 0; e < edges; ++e) {
+                    P[static_cast<std::size_t>(e)] = edgePosition(gt, e, age);
+                    C[static_cast<std::size_t>(e)] = edgeCoreAt(gt, e, age);
+                }
+                if (havePrev && !prevPlaced) placeRow(*prev, prevAge, prevP, prevCore);
             }
             if (havePrev) {
                 // Trailing filaments from the newer row to this one, strength
@@ -685,11 +698,13 @@ void Wake::forEachSegment(Real minAge, bool images, const Vec3* near, Emit&& emi
             prevP = P;
             prevCore = C;
             prevRolled = isRolled;
+            prevPlaced = !skip;
             havePrev = true;
         }
         // The back of the oldest ring.
         if (havePrev && prev) {
             if (near) skip = boxDistance(*near, prev->lo, prev->hi) > 10 * prev->b0;
+            if (!skip && !prevPlaced) placeRow(*prev, prevAge, prevP, prevCore);
             for (int j = 0; j + 1 < edges; ++j)
                 out(prevP[static_cast<std::size_t>(j + 1)], prevP[static_cast<std::size_t>(j)], prevS[static_cast<std::size_t>(j)],
                     0.5 * (prevCore[static_cast<std::size_t>(j)] + prevCore[static_cast<std::size_t>(j + 1)]), prevAge, prev->groundZ);

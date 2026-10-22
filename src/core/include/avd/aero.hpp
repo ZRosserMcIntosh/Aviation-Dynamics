@@ -129,6 +129,12 @@ struct AeroOutputs {
     std::vector<Vec3> llInfluence;         // per surface, n x n: air velocity at i per unit circulation of j
     std::vector<Real> llJacobian, llResidual, llGamma, llSeparated;
     std::vector<Vec3> llGrad;
+    // Per surface: the Newton Jacobian, LU-factored (at the influence block's
+    // offset) with its row pivots (at the surface's first strip), kept from
+    // one solve to the next while it still converges fast (a chord iteration).
+    std::vector<Real> llLu;
+    std::vector<int> llPivot;
+    std::array<bool, 8> llLuValid{};
     // Per strip: zero-lift shift, clmax increment / slope, cm, cd, chord
     // extension, spoiled lift fraction.
     std::vector<std::array<Real, 6>> llControl;
