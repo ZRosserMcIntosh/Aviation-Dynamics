@@ -27,7 +27,7 @@ exports plus these helpers:
 
 The module and the loader must agree on the layout of every array below.
 `avd_abi_version()` returns the module's layout version (`kAbiVersion` in
-`avd_web.cpp`, currently **2**); `createAvdModule` throws if it is not the
+`avd_web.cpp`, currently **3**); `createAvdModule` throws if it is not the
 loader's `EXPECTED_ABI`, so a stale `avd.wasm` next to a newer `avd.mjs` (or
 the reverse) fails at load instead of reading garbage. **Bump `kAbiVersion`
 on any change to a size, a stride or the meaning of an index** in the tables
@@ -67,6 +67,8 @@ the loader sizes its views with, so the page never carries a literal:
 | 24 | `windGridMax` | 4,608 | `avd_wind_grid()` largest grid (3 · 16 · 12 · 8) |
 | 25 | `textSlack` | 1,024 | `avd_text(n)` returns at least n + 1 bytes; the buffer grows by this |
 | 26 | `eventsMax` | 4,096 | bytes `avd_events()` keeps at most |
+| 27 | `traffic` | 32 | `avd_traffic_state()` |
+| 28 | `airPointsMax` | 4,096 | `avd_points(n)` / `avd_air_velocity(n)` points at most |
 
 `avd_build_id()` puts the build's identity in the text buffer and returns its
 length (`A.buildId()`): `"<git short hash>[-dirty] <UTC date>"` as baked by
@@ -105,6 +107,15 @@ call is clamped to 0.25 s. It returns the number of steps run.
 | `avd_wind_box(cE, cN, cU, hE, hN, hU, nx, ny, nz)` | The wind (ENU m/s, the air's own velocity) on an nx·ny·nz grid (≤ 24·24·12) over the ENU box centre ± half sizes, x fastest; each value averaged over the grid spacing so smaller eddies do not alias. Moves the airflow view's smoke. `A.windBox(c, h, nx, ny, nz)` |
 | `avd_set_wake(on)` | The aircraft's wake (default on): shed into the air and felt when flown into (its own gates older than 4 s, e.g. after a 360). Off: neither |
 | `avd_wake()` | The wake's vortex segments: [0] count, [1] largest \|Γ\| m²/s, [2] ground height (ENU up m, −1e9 without), then from [8] nine doubles a segment: ends a and b (ENU m), circulation (m²/s, right-handed about a→b), Lamb–Oseen core radius m, age s; bound, attached, shed and ground-image segments, at most 4,096. `A.wake()` returns `{ n, gmax, ground, seg }` (a view: copy what you keep) |
+| `avd_reset_final(distance, kias)` | As `avd_reset(2)` (trimmed on the 3° final for the runway in use, hands off), `distance` m (500–30,000) before the threshold, at `kias` (0: the type's approach speed) |
+| `avd_traffic_load(len)` | Load a second aircraft's definition (JSON in the text buffer) for traffic; returns the error count (`avd_error_text`). `A.trafficLoad(json)` |
+| `avd_traffic_spawn(e, n, h, track, path, kias, flap, gear)` | Spawn the traffic trimmed at world ENU (e, n) m, h m above the field, true track and flight path deg (− descending), IAS kt, flap detent, gear down 1 / up 0; a line pilot flies it down that line from there (wings and line held on the truth state, the speed on the throttle). It steps before the aircraft in every `avd_advance`, and the aircraft flies in its whole wake. Returns 1 when it flies |
+| `avd_traffic_go_around(along)` | The traffic goes around (take-off thrust, a 5° climb, the course held): at once (along < 0), or once that far along its line (m) |
+| `avd_traffic_clear()` | Remove the traffic and its wake |
+| `avd_traffic_state()` | 32 doubles: [0] flying, [1–3] position ENU m, [4–7] attitude quaternion w, x, y, z (body FLU → world ENU), [8] roll, [9] pitch, [10] true heading deg, [11] IAS, [12] TAS kt, [13] vertical speed ft/min, [14] going around, [15] m along its line, [16] m right of it, [17] m above it, [18] flap deg, [19] gear position, [20] distance to the aircraft m, [21] horizontal, [22] vertical (+ traffic above), [23] closest so far m, [24] horizontal and [25] vertical then, [26] when (the aircraft's clock s), [27] its wake's largest pair circulation m²/s, [28] wing span m, [29] mass kg, [30] its clock s, [31] reserved. `A.traffic()` |
+| `avd_traffic_wake()` | The traffic's vortex segments, as `avd_wake()`. `A.trafficWake()` |
+| `avd_points(n)` / `avd_air_velocity(n)` | The air's own velocity (ENU m/s: the wind and every wake) at up to 4,096 points: write 3n ENU positions (m) to `avd_points(n)`, then `avd_air_velocity(n)` overwrites them with velocities (smoke advection). `A.airVelocity(pts)` |
+| `avd_line_pilot(on, kias)` | The aircraft flown by a line pilot down its present track and flight path at `kias` (0: its present IAS), hands off; off returns it to `avd_set_input` |
 | `avd_set_level_hold(on)` | Straight-and-level hold (auto-trim that keeps the airplane straight and level with the stick released), with any preset; kept when the preset changes |
 | `avd_quick_start()` / `avd_procedure_status()` | Run the Quick Start checklist through the cockpit (turbofan aircraft: power up, then each engine's fuel control switch to RUN in turn). Status: 0 idle, 1 running, 2 done, 3 failed; the message is in the text buffer |
 | `avd_cockpit_count()` / `avd_cockpit_text(i)` / `avd_cockpit_cycle(i)` | Switch registry: `id\|label\|pos0;pos1…\|current`. Electrical: `electrical.battery`, `electrical.alternator` (every generator), `electrical.generator<N>`, `electrical.avionics`, `electrical.load_shed` (NORMAL / SHED: the pilot's shed of the non-essential loads, held until reset), `electrical.load.<name>` breakers |

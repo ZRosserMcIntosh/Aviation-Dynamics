@@ -11,6 +11,7 @@
 #include <string>
 
 #include "airports.hpp"
+#include "line_pilot.hpp"
 #include "scenarios.hpp"
 #include "avd/aircraft_loader.hpp"
 #include "avd/assists.hpp"
@@ -42,7 +43,7 @@ constexpr int kStateSize = 64;
 // whose avd_abi_version() is not its EXPECTED_ABI, and web/abi_check.mjs
 // checks the README's tables against avd_layout(). The static_asserts at the
 // end of this file tie these numbers to the arrays themselves.
-constexpr int kAbiVersion = 2;
+constexpr int kAbiVersion = 3;
 namespace abi {
 constexpr int state = kStateSize;          // avd_state()
 constexpr int cockpit = 96;                // avd_cockpit(); avd_markings() shares the buffer
@@ -62,10 +63,12 @@ constexpr int windGridMax = 3 * 16 * 12 * 8;   // avd_wind_grid(): the largest g
 constexpr int windBoxMax = 3 * 24 * 24 * 12;   // avd_wind_box()
 constexpr int textSlack = 1024;            // avd_text(n) returns at least n + 1 bytes; the buffer grows by this
 constexpr int eventsMax = 4096;            // avd_events() keeps at most this many bytes
+constexpr int traffic = 32;                // avd_traffic_state()
+constexpr int airPointsMax = 4096;         // avd_points(n) / avd_air_velocity(n): points at most
 // The order avd_layout(which) returns them in (web/README.md, "ABI version").
 constexpr int layout[] = {state, cockpit, jet, loadsheet, flowHeader, flowStride, flowStrips, flowEngineStride, flowEngines, flow,
                           cockpit /* markings */, compassCard, runway, region, route, routeMax, gps, wakeHeader, wakeStride, wakeMax,
-                          bodiesMax, bodyStride, bodies, windBoxMax, windGridMax, textSlack, eventsMax};
+                          bodiesMax, bodyStride, bodies, windBoxMax, windGridMax, textSlack, eventsMax, traffic, airPointsMax};
 }  // namespace abi
 #ifndef AVD_BUILD_ID
 #define AVD_BUILD_ID "dev"  // web/build_wasi.sh bakes "<git short hash>[-dirty] <date>"
@@ -110,6 +113,20 @@ struct Sim {
     std::unique_ptr<Wake> wake;
     std::unique_ptr<WakeField> air;  // the weather with the wake in it
     bool wakeOn = true;
+    // A second aircraft in the scene (traffic), flown by a line pilot; the
+    // aircraft flies in its wake (avd_traffic_*).
+    struct Traffic {
+        AircraftDefinition def;
+        bool loaded = false, active = false;
+        std::unique_ptr<Aircraft> ac;
+        std::unique_ptr<Wake> wake;
+        scenarios::LinePilot pilot;
+        Real closest = 1e9, closestH = 0, closestV = 0, closestTime = 0;
+    } traffic;
+    // The aircraft itself flown by a line pilot (avd_line_pilot): a
+    // demonstration's pilot, holding its final against whatever the air does.
+    bool linePilotOn = false;
+    scenarios::LinePilot linePilot;
 };
 constexpr Real kOwnWakeAge = 4.0;
 
@@ -150,6 +167,7 @@ const scenarios::Airport& regionAirport(int i) { return g_airports[static_cast<s
 int regionCount() { return static_cast<int>(g_airports.size()); }
 
 void rebuildWeather();
+void rebuildAir();
 
 void buildAirport() {
     g->airport = regionAirport(g_airportId == 0 ? 1 : 0);
@@ -365,6 +383,7 @@ void rebuildWeather() {
     g->weather = std::make_unique<SimpleWeather>(wp);
     if (g->air) g->air->setBase(*g->weather);
     if (g->wake) g->wake->setEddyDissipation(eddyDissipation());
+    if (g->traffic.wake) g->traffic.wake->setEddyDissipation(eddyDissipation());
 }
 
 }  // namespace
@@ -465,14 +484,21 @@ void newAircraft() {
     wp.maxBinsPerSurface = 12;  // the near wake for display and encounters; fewer segments
     wp.eddyDissipation = eddyDissipation();
     g->wake = std::make_unique<Wake>(g->ac->aeroModel(), wp);
-    g->air = std::make_unique<WakeField>(*g->weather);
-    g->air->add(*g->wake, kOwnWakeAge);
+    g->linePilotOn = false;
+    rebuildAir();
 }
 
-// The air the aircraft flies in: the weather, with its wake when that is on.
+// The air the aircraft flies in: the weather, with its wake when that is on,
+// and the traffic's wake (all of it: another aircraft's bound vortices and
+// near wake are its real field too).
 const AtmosphereField& flightAir() {
-    if (g->wakeOn && g->air) return *g->air;
+    if ((g->wakeOn || g->traffic.active) && g->air) return *g->air;
     return *g->weather;
+}
+void rebuildAir() {
+    g->air = std::make_unique<WakeField>(*g->weather);
+    if (g->wake) g->air->add(*g->wake, kOwnWakeAge);
+    if (g->traffic.active && g->traffic.wake) g->air->add(*g->traffic.wake, 0);
 }
 
 // Trimmed airborne spawn: solve the free-air trim in calm air at the spawn
@@ -482,10 +508,10 @@ const AtmosphereField& flightAir() {
 // air-relative velocity gets the wind. `path` is the flight-path angle over
 // the ground (a 3 deg glide path stays 3 deg in a headwind). Hands-off on
 // arrival: the trimmed elevator goes into the trim wheel.
-void placeTrimmed(Vec3 posNed, Real altMsl, Real track, Real kias, int flapDetent, Real path) {
-    g->ac->setEngineRunning(true, 2000);
-    // Retractable gear: down on the approach (landing flap), up otherwise.
-    g->ac->setGearImmediately(flapDetent >= 2);
+scenarios::TrimResult placeTrimmedOn(Aircraft& ac, Vec3 posNed, Real altMsl, Real track, Real kias, int flapDetent, Real path,
+                                     bool gearDown) {
+    ac.setEngineRunning(true, 2000);
+    ac.setGearImmediately(gearDown);
     // Trim in still air: no mean wind, turbulence, thermals or hazards (the
     // spawn then gets the wind at its position on top of the trimmed state).
     SimpleWeatherParams calm = g->weatherParams;
@@ -518,20 +544,25 @@ void placeTrimmed(Vec3 posNed, Real altMsl, Real track, Real kias, int flapDeten
         airPath = std::asin(clamp((gs * std::tan(path) + w.z) / req.tas, -0.5, 0.5));  // w.z: down
     }
     req.flightPath = airPath;
-    const scenarios::TrimResult tr = scenarios::trim(*g->ac, req, trimAir);
+    const scenarios::TrimResult tr = scenarios::trim(ac, req, trimAir);
     DynamicState s = tr.state;
     const Quat toHeading = Quat::fromEuler(0, 0, heading);
     s.body.attitude = toHeading * s.body.attitude;
     s.body.attitude.normalize();
     s.body.position = posNed;
     s.body.velocity = toHeading.rotate(s.body.velocity) + g->weather->sample(posNed, altMsl, 0).wind;
-    g->ac->setState(s);
-    g->ac->setCockpitControl("brakes.parking", 0);
+    ac.setState(s);
+    ac.setCockpitControl("brakes.parking", 0);
     // The air sample and ground planes must describe the new position
     // before the downwash and the instruments are initialised from them.
-    g->ac->prepareContext(tr.input, *g->ground, *g->weather);
-    g->ac->settleDownwash();
-    g->ac->setElevatorTrim(tr.trim);
+    ac.prepareContext(tr.input, *g->ground, *g->weather);
+    ac.settleDownwash();
+    ac.setElevatorTrim(tr.trim);
+    return tr;
+}
+void placeTrimmed(Vec3 posNed, Real altMsl, Real track, Real kias, int flapDetent, Real path) {
+    // Retractable gear: down on the approach (landing flap), up otherwise.
+    const scenarios::TrimResult tr = placeTrimmedOn(*g->ac, posNed, altMsl, track, kias, flapDetent, path, flapDetent >= 2);
     g->trimThrottle = tr.input.throttle;
     g->trimMixture = tr.input.mixture;
 }
@@ -631,6 +662,21 @@ AVD_EXPORT void avd_reset(int mode) {
         placeTrimmed(scenarios::runwayPoint(rw, dist), alt, rw.headingTrue, kias, final ? landingFlap : 0, path);
     }
     finishReset(mode >= 1);
+}
+
+// On the 3 deg final for the runway in use, `distance` m before the landing
+// threshold, at `kias` (0: as avd_reset(2)): mode 2 at any distance.
+AVD_EXPORT void avd_reset_final(double distance, double kias) {
+    if (!g) return;
+    newAircraft();
+    const RunwayDef& rw = g->airport.runways[0];
+    const bool jet = g->ac->turbofanCount() > 0;
+    const int landingFlap = jet ? static_cast<int>(g->def.controls.flapDetents.size()) - 1 : 2;
+    const Real dist = -std::clamp(distance, 500.0, 30000.0);
+    const Real alt = g->airport.elevation + (-dist + rw.displaced + 300.0) * std::tan(degToRad(3.0));
+    placeTrimmed(scenarios::runwayPoint(rw, dist), alt, rw.headingTrue, kias > 0 ? kias : (jet ? jetApproachKias() : 65.0),
+                 landingFlap, degToRad(-3.0));
+    finishReset(true);
 }
 
 // Trimmed, level, hands-off spawn anywhere in the world: world ENU position
@@ -980,10 +1026,26 @@ AVD_EXPORT int avd_advance(double seconds) {
     g->accumulator += std::clamp(seconds, 0.0, 0.25);
     int n = 0;
     while (g->accumulator >= kDt) {
-        PilotInput in = g->assist.apply(g->raw, *g->ac, kDt);
-        g->procedure.update(*g->ac, in, kDt);
+        // The traffic first: its wake is in the air the aircraft then flies in.
+        Sim::Traffic& T = g->traffic;
+        if (T.active) {
+            T.ac->step(kDt, T.pilot.update(*T.ac, kDt), *g->ground, *g->weather);
+            T.wake->update(*T.ac, *g->weather, g->ground.get());
+        }
+        PilotInput in = g->linePilotOn ? g->linePilot.update(*g->ac, kDt) : g->assist.apply(g->raw, *g->ac, kDt);
+        if (!g->linePilotOn) g->procedure.update(*g->ac, in, kDt);
         g->ac->step(kDt, in, *g->ground, flightAir());
         if (g->wakeOn) g->wake->update(*g->ac, *g->weather, g->ground.get());
+        if (T.active) {
+            const Vec3 d = T.ac->state().body.position - g->ac->state().body.position;
+            const Real dist = length(d);
+            if (dist < T.closest) {
+                T.closest = dist;
+                T.closestH = std::hypot(d.x, d.y);
+                T.closestV = -d.z;
+                T.closestTime = g->ac->time();
+            }
+        }
         g->accumulator -= kDt;
         ++n;
         const Vec3 w = g->ac->telemetry().air.wind;
@@ -1336,6 +1398,190 @@ AVD_EXPORT double* avd_wake() {
     return g_wake;
 }
 
+// ---- Traffic -----------------------------------------------------------------
+// A second aircraft in the scene, flown by a line pilot down a straight line
+// in space (a final approach, then a go-around if asked); the aircraft flies
+// in its wake. Load its definition (avd_traffic_load), spawn it trimmed on its
+// line (avd_traffic_spawn), and it flies with every avd_advance.
+
+// Load the traffic's definition (JSON already written to avd_text); returns
+// the number of errors (avd_error_text). Keeps any traffic flying.
+AVD_EXPORT int avd_traffic_load(int length) {
+    if (!g) return 1;
+    const LoadResult r = loadAircraftFromJson(std::string(g_text, static_cast<std::size_t>(length)));
+    g_errors = r.errors;
+    if (!r.ok()) return static_cast<int>(g_errors.size());
+    g->traffic.def = r.definition;
+    g->traffic.loaded = true;
+    return 0;
+}
+
+// Spawn the traffic trimmed on its line: world ENU position (m from the world
+// anchor), height above the field (m), true track and flight path angle (deg,
+// - descending), indicated airspeed (kt), flap detent, gear down (1) or up
+// (0). Its line pilot flies that line on from there. Returns 1 when it flies.
+AVD_EXPORT int avd_traffic_spawn(double east, double north, double heightAboveField, double trackDeg, double pathDeg,
+                                 double kias, int flapDetent, int gearDown) {
+    if (!g || !g->traffic.loaded) return 0;
+    Sim::Traffic& T = g->traffic;
+    T.active = false;
+    T.ac = std::make_unique<Aircraft>(T.def, g->frame);
+    T.ac->setNavEnvironment(&navEnvironment());
+    const std::vector<Real>& det = T.def.controls.flapDetents;
+    const int flap = std::clamp(flapDetent, 0, static_cast<int>(det.size()) - 1);
+    const Vec3 ned = world::nedFromEnu({east, north, 0});
+    const Real altMsl = g->airport.elevation + std::max(heightAboveField, 10.0);
+    const scenarios::TrimResult tr = placeTrimmedOn(*T.ac, ned, altMsl, degToRad(trackDeg), kias, flap, degToRad(pathDeg), gearDown != 0);
+    T.ac->step(kDt, tr.input, *g->ground, *g->weather);
+    T.ac->resetInstrumentsToTruth();
+    T.ac->drainEvents();
+    scenarios::LinePilot p;
+    p.origin = T.ac->state().body.position;
+    p.course = degToRad(trackDeg);
+    p.path = degToRad(pathDeg);
+    p.targetIas = ktToMs(kias);
+    p.baseThrottle = tr.input.throttle;
+    p.pitchRef = tr.theta;
+    p.controls = tr.input;
+    p.controls.pitch = 0;
+    T.pilot = p;
+    WakeParams wp;
+    wp.maxBinsPerSurface = 12;
+    wp.eddyDissipation = eddyDissipation();
+    T.wake = std::make_unique<Wake>(T.ac->aeroModel(), wp);
+    T.closest = 1e9;
+    T.active = true;
+    rebuildAir();
+    return 1;
+}
+
+// Go around: at once (along < 0), or once this far along its line (m past
+// where it was spawned).
+AVD_EXPORT void avd_traffic_go_around(double along) {
+    if (!g || !g->traffic.active) return;
+    if (along < 0) g->traffic.pilot.goAround();
+    else g->traffic.pilot.goAroundAt = along;
+}
+
+AVD_EXPORT void avd_traffic_clear() {
+    if (!g) return;
+    g->traffic.active = false;
+    rebuildAir();
+    g->traffic.ac.reset();
+    g->traffic.wake.reset();
+}
+
+// The traffic (32 doubles, web/README.md): [0] flying, [1-3] position ENU,
+// [4-7] attitude quaternion w, x, y, z (body FLU -> world ENU), [8] roll,
+// [9] pitch, [10] true heading (deg), [11] IAS, [12] TAS (kt), [13] vertical
+// speed (ft/min), [14] going around, [15] m along its line, [16] m right of
+// it, [17] m above it, [18] flap (deg), [19] gear position, [20] distance to
+// the aircraft (m), [21] of it horizontal, [22] vertical (+ the traffic
+// above), [23] closest so far (m), [24] horizontal and [25] vertical then,
+// [26] when (the aircraft's clock, s), [27] its wake's largest circulation
+// (m^2/s), [28] wing span (m), [29] mass (kg), [30] its clock (s).
+double g_traffic[abi::traffic];
+AVD_EXPORT double* avd_traffic_state() {
+    std::fill(std::begin(g_traffic), std::end(g_traffic), 0.0);
+    if (!g || !g->traffic.active) return g_traffic;
+    const Sim::Traffic& T = g->traffic;
+    const Aircraft& ac = *T.ac;
+    const AircraftTelemetry& t = ac.telemetry();
+    double* s = g_traffic;
+    const Vec3 enu = world::enuFromNed(ac.datumPosition());
+    const Quat q = world::enuFluFromNedFrd(ac.state().body.attitude);
+    s[0] = 1;
+    s[1] = enu.x; s[2] = enu.y; s[3] = enu.z;
+    s[4] = q.w; s[5] = q.x; s[6] = q.y; s[7] = q.z;
+    s[8] = radToDeg(t.roll); s[9] = radToDeg(t.pitch); s[10] = std::fmod(radToDeg(t.heading) + 360.0, 360.0);
+    s[11] = msToKt(ac.instruments().readings().indicatedAirspeed); s[12] = msToKt(t.trueAirspeed);
+    s[13] = msToFpm(t.verticalSpeed);
+    s[14] = T.pilot.goingAround() ? 1 : 0;
+    s[15] = T.pilot.along(); s[16] = T.pilot.right(); s[17] = T.pilot.above();
+    s[18] = radToDeg(t.flapAngle); s[19] = ac.gearPosition();
+    const Vec3 d = ac.state().body.position - g->ac->state().body.position;
+    s[20] = length(d); s[21] = std::hypot(d.x, d.y); s[22] = -d.z;
+    s[23] = T.closest; s[24] = T.closestH; s[25] = T.closestV; s[26] = T.closestTime;
+    Real gmax = 0;
+    for (Real age = 1; age < 120; age += 2) {
+        const Wake::PairInfo p = T.wake->pair(age);
+        if (p.valid) gmax = std::max(gmax, p.gamma);
+    }
+    s[27] = gmax;
+    s[28] = ac.aeroModel().surfaceSpan(0);
+    s[29] = t.mass;
+    s[30] = ac.time();
+    return s;
+}
+
+// The traffic's wake: as avd_wake() (same layout and limits).
+double g_trafficWake[kWakeHeader + kWakeMax * kWakeStride];
+AVD_EXPORT double* avd_traffic_wake() {
+    g_trafficWake[0] = g_trafficWake[1] = 0;
+    g_trafficWake[2] = -1e9;
+    if (!g || !g->traffic.active) return g_trafficWake;
+    g->traffic.wake->segments(g_wakeSegments);
+    const GroundHit h = g->ground->below(g->traffic.ac->state().body.position);
+    if (h.hit) g_trafficWake[2] = -h.point.z;
+    int n = 0;
+    Real gmax = 0;
+    for (const WakeSegment& w : g_wakeSegments) {
+        if (n >= kWakeMax) break;
+        const Vec3 a = world::enuFromNed(w.a), b = world::enuFromNed(w.b);
+        double* o = g_trafficWake + kWakeHeader + n * kWakeStride;
+        o[0] = a.x; o[1] = a.y; o[2] = a.z;
+        o[3] = b.x; o[4] = b.y; o[5] = b.z;
+        o[6] = w.gamma; o[7] = w.core; o[8] = w.age;
+        gmax = std::max(gmax, std::abs(w.gamma));
+        ++n;
+    }
+    g_trafficWake[0] = n;
+    g_trafficWake[1] = gmax;
+    return g_trafficWake;
+}
+
+// The air's own velocity (ENU m/s: the wind and every wake in it) at up to
+// abi::airPointsMax points: write 3n ENU positions (m) into avd_points(n),
+// then avd_air_velocity(n) overwrites them with the velocities (smoke).
+double g_points[3 * abi::airPointsMax];
+AVD_EXPORT double* avd_points(int) { return g_points; }
+AVD_EXPORT double* avd_air_velocity(int n) {
+    if (!g) return g_points;
+    n = std::clamp(n, 0, abi::airPointsMax);
+    const Real t = g->ac->time();
+    const Real msl0 = g->ac->altitudeMsl() + g->ac->state().body.position.z;  // MSL altitude of NED z = 0
+    const AtmosphereField& air = flightAir();
+    for (int i = 0; i < n; ++i) {
+        double* p = g_points + 3 * i;
+        const Vec3 ned = world::nedFromEnu({p[0], p[1], p[2]});
+        const Vec3 w = world::enuFromNed(air.sample(ned, msl0 - ned.z, t).wind);
+        p[0] = w.x; p[1] = w.y; p[2] = w.z;
+    }
+    return g_points;
+}
+
+// The aircraft flown by a line pilot (on) from where it is, down its present
+// track and flight path at `kias` (on a trimmed final: the glide path), its
+// pilot holding the wings level and the line against whatever the air does;
+// off hands it back to avd_set_input.
+AVD_EXPORT void avd_line_pilot(int on, double kias) {
+    if (!g) return;
+    g->linePilotOn = on != 0;
+    if (!g->linePilotOn) return;
+    const AircraftTelemetry& t = g->ac->telemetry();
+    scenarios::LinePilot p;
+    p.origin = g->ac->state().body.position;
+    const Vec3 v = g->ac->state().body.velocity;
+    p.course = std::hypot(v.x, v.y) > 1 ? std::atan2(v.y, v.x) : t.heading;
+    p.path = std::atan2(-v.z, std::max(std::hypot(v.x, v.y), 1.0));
+    p.targetIas = ktToMs(kias > 0 ? kias : msToKt(g->ac->instruments().readings().indicatedAirspeed));
+    p.baseThrottle = g->trimThrottle > 0 ? g->trimThrottle : g->raw.throttle;
+    p.pitchRef = t.pitch;
+    p.controls.throttle = p.baseThrottle;
+    p.controls.mixture = g->trimMixture;
+    g->linePilot = p;
+}
+
 // The wind (ENU, m/s, the air's own velocity) on an nx x ny x nz grid over
 // the box centre (cE, cN, cU) +- (hE, hN, hU), ENU metres, x fastest. Each
 // value is averaged over the grid spacing (smaller eddies would alias).
@@ -1585,5 +1831,7 @@ static_assert(sizeof(g_gps) / sizeof(double) == abi::gps, "avd_gps layout: bump 
 static_assert(kWakeHeader == abi::wakeHeader && kWakeStride == abi::wakeStride && kWakeMax == abi::wakeMax &&
                   sizeof(g_wake) / sizeof(double) == abi::wake,
               "avd_wake layout: bump kAbiVersion");
+static_assert(sizeof(g_traffic) / sizeof(double) == abi::traffic, "avd_traffic_state layout: bump kAbiVersion");
+static_assert(sizeof(g_points) / sizeof(double) == 3 * abi::airPointsMax, "avd_points layout: bump kAbiVersion");
 static_assert(sizeof(g_windBox) / sizeof(double) == abi::windBoxMax, "avd_wind_box layout: bump kAbiVersion");
 static_assert(sizeof(g_bodies) / sizeof(double) == abi::bodies, "avd_bodies layout: bump kAbiVersion");
