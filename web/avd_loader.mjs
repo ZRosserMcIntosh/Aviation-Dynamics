@@ -5,12 +5,12 @@
 
 // The ABI version this loader was written for: kAbiVersion in web/avd_web.cpp.
 // A module with another version is refused (web/README.md, "ABI version").
-export const EXPECTED_ABI = 2;
+export const EXPECTED_ABI = 3;
 // avd_layout(which), in this order (abi::layout in avd_web.cpp).
 export const LAYOUT_NAMES = [
   'state', 'cockpit', 'jet', 'loadsheet', 'flowHeader', 'flowStride', 'flowStrips', 'flowEngineStride', 'flowEngines', 'flow',
   'markings', 'compassCard', 'runway', 'region', 'route', 'routeMax', 'gps', 'wakeHeader', 'wakeStride', 'wakeMax',
-  'bodiesMax', 'bodyStride', 'bodies', 'windBoxMax', 'windGridMax', 'textSlack', 'eventsMax',
+  'bodiesMax', 'bodyStride', 'bodies', 'windBoxMax', 'windGridMax', 'textSlack', 'eventsMax', 'traffic', 'airPointsMax',
 ];
 
 export default async function createAvdModule(wasmBytes) {
@@ -85,6 +85,35 @@ export default async function createAvdModule(wasmBytes) {
     const n = h[0] | 0;
     return { n, gmax: h[1], ground: h[2], seg: new Float64Array(memory.buffer, h.byteOffset + 8 * L.wakeHeader, n * L.wakeStride) };
   };
+  // Traffic: a second aircraft flown by a line pilot, its wake in the air the
+  // aircraft flies in. trafficLoad(json) returns its errors; trafficSpawn(...)
+  // true when it flies.
+  A.trafficLoad = (json) => {
+    const b = enc.encode(json);
+    new Uint8Array(memory.buffer, ex.avd_text(b.length + 1), b.length).set(b);
+    const n = ex.avd_traffic_load(b.length);
+    const errors = [];
+    for (let i = 0; i < n; ++i) errors.push(A.text(ex.avd_error_text(i)));
+    return errors;
+  };
+  A.trafficSpawn = (east, north, height, trackDeg, pathDeg, kias, flap, gearDown = true) =>
+    ex.avd_traffic_spawn(east, north, height, trackDeg, pathDeg, kias, flap, gearDown ? 1 : 0) === 1;
+  A.trafficGoAround = (along = -1) => ex.avd_traffic_go_around(along);
+  A.trafficClear = () => ex.avd_traffic_clear();
+  A.traffic = () => new Float64Array(memory.buffer, ex.avd_traffic_state(), L.traffic);
+  A.trafficWake = () => {
+    const h = new Float64Array(memory.buffer, ex.avd_traffic_wake(), L.wakeHeader);
+    const n = h[0] | 0;
+    return { n, gmax: h[1], ground: h[2], seg: new Float64Array(memory.buffer, h.byteOffset + 8 * L.wakeHeader, n * L.wakeStride) };
+  };
+  // The air's velocity (ENU m/s: wind and every wake) at n ENU points (a
+  // Float64Array of 3n, n <= layout.airPointsMax); returns a view of 3n.
+  A.airVelocity = (pts, n = pts.length / 3) => {
+    n = Math.min(n, L.airPointsMax);
+    new Float64Array(memory.buffer, ex.avd_points(n), 3 * n).set(pts.subarray ? pts.subarray(0, 3 * n) : pts.slice(0, 3 * n));
+    return new Float64Array(memory.buffer, ex.avd_air_velocity(n), 3 * n);
+  };
+  A.linePilot = (on, kias = 0, pathDeg = 0) => ex.avd_line_pilot(on ? 1 : 0, kias, pathDeg);
   // The wind (ENU m/s) on a grid over centre +- half size (ENU m), x fastest.
   A.windBox = (c, h, nx, ny, nz) => new Float64Array(memory.buffer, ex.avd_wind_box(c[0], c[1], c[2], h[0], h[1], h[2], nx, ny, nz), 3 * nx * ny * nz);
   // Bluff bodies (gear legs, spoiler panels): { n, b } with 10 numbers a body.
