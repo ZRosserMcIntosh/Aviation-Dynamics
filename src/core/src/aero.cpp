@@ -428,7 +428,10 @@ void AeroModel::prepare(AeroOutputs& out) const {
     out.llSeparated.assign(static_cast<std::size_t>(nMax), 0);
     out.llGrad.assign(static_cast<std::size_t>(nMax), {});
     out.llControl.assign(strips_.size(), {});
+    out.llLu.assign(static_cast<std::size_t>(llOffset_[surfaces_.size()]), 0);
+    out.llPivot.assign(strips_.size(), 0);
     out.llValid.fill(false);
+    out.llLuValid.fill(false);
 }
 
 namespace {
@@ -450,30 +453,42 @@ Vec3 horseshoe(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& u) {
     return v / (4 * kPi);
 }
 
-// Solve the dense system J x = r in place (partial pivoting); false if singular.
-bool solveDense(Real* J, Real* r, int n) {
+// LU factorisation with partial pivoting in place (J n x n, row-major; piv:
+// the row swapped into each column), and the solve of J x = r with it (r
+// overwritten by x). Factor returns false for a singular matrix.
+bool luFactor(Real* J, int* piv, int n) {
     for (int c = 0; c < n; ++c) {
         int p = c;
         for (int i = c + 1; i < n; ++i)
             if (std::abs(J[i * n + c]) > std::abs(J[p * n + c])) p = i;
         if (std::abs(J[p * n + c]) < 1e-12) return false;
-        if (p != c) {
+        piv[c] = p;
+        if (p != c)
             for (int k = 0; k < n; ++k) std::swap(J[c * n + k], J[p * n + k]);
-            std::swap(r[c], r[p]);
-        }
         for (int i = c + 1; i < n; ++i) {
             const Real f = J[i * n + c] / J[c * n + c];
+            J[i * n + c] = f;
             if (f == 0) continue;
-            for (int k = c; k < n; ++k) J[i * n + k] -= f * J[c * n + k];
-            r[i] -= f * r[c];
+            for (int k = c + 1; k < n; ++k) J[i * n + k] -= f * J[c * n + k];
         }
     }
+    return true;
+}
+void luSolve(const Real* LU, const int* piv, Real* r, int n) {
+    // Every row swap first (the multipliers moved with their rows), then the
+    // forward substitution: the elimination's own operations, in its order.
+    for (int c = 0; c < n; ++c)
+        if (piv[c] != c) std::swap(r[c], r[piv[c]]);
+    for (int c = 0; c < n; ++c)
+        for (int i = c + 1; i < n; ++i) {
+            const Real f = LU[i * n + c];
+            if (f != 0) r[i] -= f * r[c];
+        }
     for (int i = n - 1; i >= 0; --i) {
         Real sum = r[i];
-        for (int k = i + 1; k < n; ++k) sum -= J[i * n + k] * r[k];
-        r[i] = sum / J[i * n + i];
+        for (int k = i + 1; k < n; ++k) sum -= LU[i * n + k] * r[k];
+        r[i] = sum / LU[i * n + i];
     }
-    return true;
 }
 
 }  // namespace
@@ -526,6 +541,7 @@ void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, Ae
         out.llDir[s] = u;
         out.llHeight[s] = h;
         out.llValid[s] = true;
+        out.llLuValid[s] = false;
     }
     // Newton on R_i = G_i - g_i(v_i - sum_j V_ij G_j), from the last solution.
     Real* G = out.llGamma.data();
@@ -541,11 +557,15 @@ void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, Ae
         return w;
     };
     std::array<Vec3, 64> wSave{};
+    int staleIters = 0;       // steps made with the Jacobian in hand
+    bool lastNewton = true;   // the last step's Jacobian was built for it (the start: as before)
+    Real prevR = 0;
     // A warm start converges in a few iterations; a cold one from the
     // transonic regime, where the un-induced sections sit past their reduced
     // lift limits, needs the room (24 left the forces 7 % short at M0.92).
     for (int it = 0; it < 64; ++it) {
         Real rMax = 0, gMax = 1e-3;
+        bool separated = false;
         for (int i = 0; i < n; ++i) {
             if (!strips_[static_cast<std::size_t>(n0 + i)].attached) {
                 R[i] = G[i];
@@ -561,6 +581,7 @@ void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, Ae
             // upwash of a single strip (the lifting line has no unique
             // post-stall solution without it). Attached flow is untouched.
             sep[i] = kViscosity * (1 - att);
+            separated = separated || sep[i] > 0;
             const Strip& sti = strips_[static_cast<std::size_t>(n0 + i)];
             const Real ga = sti.neighbourA >= 0 ? G[sti.neighbourA - n0] : 0, gb = sti.neighbourB >= 0 ? G[sti.neighbourB - n0] : 0;
             R[i] = G[i] - g - sep[i] * (ga + gb - 2 * G[i]);
@@ -569,31 +590,56 @@ void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, Ae
         }
         out.llIterations = it;
         // Tight: the result must not depend on the warm start (trim and
-        // linearisation difference the forces).
-        if (rMax < 1e-9 * gMax + 1e-10) break;
-        // Jacobian dR_i/dG_j = delta_ij + grad(g_i) . V_ij (g's gradient in the
-        // strip's flow by finite differences).
-        for (int i = 0; i < n; ++i) {
-            if (!strips_[static_cast<std::size_t>(n0 + i)].attached) {
-                grad[i] = {};
-                continue;
+        // linearisation difference the forces). After a chord step (a
+        // Jacobian kept from before) the convergence is linear, not
+        // quadratic: it goes on to 1e-12, about where a Newton step from 1e-9
+        // lands, so that keeping the Jacobian does not loosen the solution.
+        if (lastNewton ? rMax < 1e-9 * gMax + 1e-10 : rMax < 1e-14 * gMax + 1e-14) break;
+        // The Jacobian is the costly part (three more section evaluations a
+        // strip and a factorisation). From one solve to the next it hardly
+        // changes, so the last one is kept while the residual still falls
+        // fast with it (a chord iteration); it is rebuilt at once when it does
+        // not. Only in attached flow, whose solution is unique: once a strip
+        // separates, every step is a full Newton step as it always was (the
+        // post-stall solution leans on the viscosity, and the path to it
+        // matters).
+        Real* LU = out.llLu.data() + llOffset_[s];
+        int* piv = out.llPivot.data() + n0;
+        if (separated || staleIters >= 8 || (staleIters > 0 && rMax > 0.2 * prevR)) out.llLuValid[s] = false;
+        prevR = rMax;
+        if (!out.llLuValid[s]) {
+            // Jacobian dR_i/dG_j = delta_ij + grad(g_i) . V_ij (g's gradient
+            // in the strip's flow by finite differences).
+            for (int i = 0; i < n; ++i) {
+                if (!strips_[static_cast<std::size_t>(n0 + i)].attached) {
+                    grad[i] = {};
+                    continue;
+                }
+                const Vec3 w = i < 64 ? wSave[static_cast<std::size_t>(i)] : flowAt(i);
+                const Real g = gammaOf(i, w, nullptr);
+                const Real dh = 1e-3 * std::max(length(w), 1.0);
+                grad[i] = Vec3{gammaOf(i, w + Vec3{dh, 0, 0}, nullptr) - g, gammaOf(i, w + Vec3{0, dh, 0}, nullptr) - g, gammaOf(i, w + Vec3{0, 0, dh}, nullptr) - g} / dh;
             }
-            const Vec3 w = i < 64 ? wSave[static_cast<std::size_t>(i)] : flowAt(i);
-            const Real g = gammaOf(i, w, nullptr);
-            const Real dh = 1e-3 * std::max(length(w), 1.0);
-            grad[i] = Vec3{gammaOf(i, w + Vec3{dh, 0, 0}, nullptr) - g, gammaOf(i, w + Vec3{0, dh, 0}, nullptr) - g, gammaOf(i, w + Vec3{0, 0, dh}, nullptr) - g} / dh;
-        }
-        for (int i = 0; i < n; ++i) {
-            for (int j = 0; j < n; ++j) J[i * n + j] = (i == j ? 1.0 : 0.0) + dot(grad[i], V[i * n + j]);
-            if (sep[i] > 0) {
-                const Strip& sti = strips_[static_cast<std::size_t>(n0 + i)];
-                J[i * n + i] += 2 * sep[i];
-                if (sti.neighbourA >= 0) J[i * n + sti.neighbourA - n0] -= sep[i];
-                if (sti.neighbourB >= 0) J[i * n + sti.neighbourB - n0] -= sep[i];
+            for (int i = 0; i < n; ++i) {
+                for (int j = 0; j < n; ++j) J[i * n + j] = (i == j ? 1.0 : 0.0) + dot(grad[i], V[i * n + j]);
+                if (sep[i] > 0) {
+                    const Strip& sti = strips_[static_cast<std::size_t>(n0 + i)];
+                    J[i * n + i] += 2 * sep[i];
+                    if (sti.neighbourA >= 0) J[i * n + sti.neighbourA - n0] -= sep[i];
+                    if (sti.neighbourB >= 0) J[i * n + sti.neighbourB - n0] -= sep[i];
+                }
             }
+            if (luFactor(J, piv, n)) {
+                std::copy(J, J + n * n, LU);
+                out.llLuValid[s] = true;
+            }
+            staleIters = 0;
         }
-        Real stepMax = 0;
-        if (solveDense(J, R, n)) {
+        lastNewton = staleIters == 0;
+        if (out.llLuValid[s]) {
+            ++staleIters;
+            luSolve(LU, piv, R, n);
+            Real stepMax = 0;
             for (int i = 0; i < n; ++i) stepMax = std::max(stepMax, std::abs(R[i]));
             // Damped where the polar's negative post-stall slope would overshoot.
             const Real scale = stepMax > 0.5 * gMax + 1 ? (0.5 * gMax + 1) / stepMax : 1.0;

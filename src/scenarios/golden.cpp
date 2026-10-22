@@ -206,7 +206,7 @@ Trace c172Stall() {
     pilot.vertical = TestPilot::Vertical::Airspeed;
     pilot.controls.throttle = 0.0;
     pilot.targetPitch = 0.0;
-    Real target = ktToMs(70), stallTime = -1;
+    Real target = ktToMs(70), stallTime = -1, highAlphaSince = -1;
     int phase = 0;  // 0 decelerating, 1 released (break), 2 nose down, 3 climbing away
     for (int i = 0; i < static_cast<int>(150 / kDt); ++i) {
         const Real t = i * kDt;
@@ -248,7 +248,14 @@ Trace c172Stall() {
         ac.step(kDt, in, ground, atm);
         rec.step(ac, in);
         const AircraftTelemetry& tel = ac.telemetry();
-        if (stallTime < 0 && (ac.aero().surfaces[0].stalledStrips >= 6 || (tel.omega.y < -0.12 && tel.alpha > 0.15))) stallTime = t;
+        // The stall: the break (the nose dropping, or most of the wing
+        // stalled), or a mushing stall that does not break (the wing holding
+        // past 16.5 deg for 2 s, sinking with the nose up). Which one the
+        // stall is turns on the last bits of the solution at the break.
+        highAlphaSince = tel.alpha > degToRad(16.5) ? (highAlphaSince < 0 ? t : highAlphaSince) : -1;
+        if (stallTime < 0 && (ac.aero().surfaces[0].stalledStrips >= 6 || (tel.omega.y < -0.12 && tel.alpha > 0.15) ||
+                              (highAlphaSince >= 0 && t - highAlphaSince > 2)))
+            stallTime = t;
         if (stallTime >= 0 && t > stallTime + 20) break;
     }
     return rec.take();
