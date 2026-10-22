@@ -113,7 +113,7 @@ export default async function createAvdModule(wasmBytes) {
     new Float64Array(memory.buffer, ex.avd_points(n), 3 * n).set(pts.subarray ? pts.subarray(0, 3 * n) : pts.slice(0, 3 * n));
     return new Float64Array(memory.buffer, ex.avd_air_velocity(n), 3 * n);
   };
-  A.linePilot = (on, kias = 0) => ex.avd_line_pilot(on ? 1 : 0, kias);
+  A.linePilot = (on, kias = 0, pathDeg = 0) => ex.avd_line_pilot(on ? 1 : 0, kias, pathDeg);
   // The wind (ENU m/s) on a grid over centre +- half size (ENU m), x fastest.
   A.windBox = (c, h, nx, ny, nz) => new Float64Array(memory.buffer, ex.avd_wind_box(c[0], c[1], c[2], h[0], h[1], h[2], nx, ny, nz), 3 * nx * ny * nz);
   // Bluff bodies (gear legs, spoiler panels): { n, b } with 10 numbers a body.

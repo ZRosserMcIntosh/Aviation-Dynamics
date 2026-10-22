@@ -1561,10 +1561,12 @@ AVD_EXPORT double* avd_air_velocity(int n) {
 }
 
 // The aircraft flown by a line pilot (on) from where it is, down its present
-// track and flight path at `kias` (on a trimmed final: the glide path), its
-// pilot holding the wings level and the line against whatever the air does;
-// off hands it back to avd_set_input.
-AVD_EXPORT void avd_line_pilot(int on, double kias) {
+// track at `kias`, on a line `pathDeg` steep over the ground (- descending; 0:
+// its present flight path over the ground, which a wind makes shallower or
+// steeper than the path through the air), its pilot holding the wings level
+// and the line against whatever the air does; off hands it back to
+// avd_set_input.
+AVD_EXPORT void avd_line_pilot(int on, double kias, double pathDeg) {
     if (!g) return;
     g->linePilotOn = on != 0;
     if (!g->linePilotOn) return;
@@ -1573,7 +1575,7 @@ AVD_EXPORT void avd_line_pilot(int on, double kias) {
     p.origin = g->ac->state().body.position;
     const Vec3 v = g->ac->state().body.velocity;
     p.course = std::hypot(v.x, v.y) > 1 ? std::atan2(v.y, v.x) : t.heading;
-    p.path = std::atan2(-v.z, std::max(std::hypot(v.x, v.y), 1.0));
+    p.path = pathDeg != 0 ? degToRad(pathDeg) : std::atan2(-v.z, std::max(std::hypot(v.x, v.y), 1.0));
     p.targetIas = ktToMs(kias > 0 ? kias : msToKt(g->ac->instruments().readings().indicatedAirspeed));
     p.baseThrottle = g->trimThrottle > 0 ? g->trimThrottle : g->raw.throttle;
     p.pitchRef = t.pitch;
