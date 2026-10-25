@@ -34,6 +34,7 @@
 #include "avd/ground.hpp"
 #include "avd/instruments.hpp"
 #include "avd/mass.hpp"
+#include "avd/occupant.hpp"
 #include "avd/propulsion.hpp"
 #include "avd/systems.hpp"
 
@@ -94,6 +95,8 @@ enum class FlightEventType {
     BatteryDepleted, AlternatorOffline, AlternatorOnline, CockpitControlChanged,
     MachOverspeed, GearOverspeed,
     LoadShed, LoadRestored,  // non-essential loads shed (bus controller or pilot) / back
+    GearCollapse,            // a leg failed (index: the leg; value: its closure speed, m/s)
+    StructuralFailure,       // past the ultimate load factor (value: the load factor)
 };
 
 struct FlightEvent {
@@ -115,6 +118,8 @@ struct GearTelemetry {
     bool contact = false;
     Real compression = 0;
     Real normalForce = 0;
+    Real closureSpeed = 0;       // m/s, the strut closing (+ compressing)
+    bool failed = false;         // collapsed (GearCollapse)
     Real steerAngle = 0;         // the wheel's heading (a castoring wheel's own, else the command)
     int surfaceId = 0;
     Real wheelOmega = 0;         // rad/s
@@ -230,6 +235,15 @@ public:
     const NavEnvironment* navEnvironment() const { return nav_; }
     Real time() const { return time_; }
     bool faulted() const { return faulted_; }
+    // A crash-test dummy in the first payload station's seat (the pilot's): its
+    // readings since the aircraft was made (OccupantMonitor).
+    const OccupantReport& occupant() const { return occupant_.report(); }
+    // A landing-gear leg collapsed (struck the ground closing faster than its
+    // collapseSpeed); the airframe then rests on its hard points.
+    bool gearFailed(int leg) const { return leg >= 0 && leg < kMaxGear && gearFailed_[static_cast<std::size_t>(leg)]; }
+    // Past the ultimate load factor (1.5 x the limit) for 50 ms: the structure
+    // has failed (reported; the airframe flies on as it was).
+    bool structurallyFailed() const { return structuralFailure_; }
     Real altitudeMsl() const { return frame_.origin().height - s_.body.position.z; }
     // Datum (structural origin) in the local NED frame.
     Vec3 datumPosition() const;
@@ -304,7 +318,8 @@ public:
     Derivatives evaluate(const DynamicState& s) const;
     // Prepare the environment/controls context without stepping (for trim).
     void prepareContext(const PilotInput& in, const GroundQuery& ground, const AtmosphereField& atm);
-    void setState(const DynamicState& s) { s_ = s; }
+    // A new state (a spawn, a reset): the crash dummy's readings start over.
+    void setState(const DynamicState& s) { s_ = s; occupant_.reset(); }
     // Trim/linearisation use quasi-steady downwash (no transport lag);
     // settleDownwash() then initialises the lag states for a following run.
     void setQuasiSteadyDownwash(bool on) { quasiSteadyDownwash_ = on; }
@@ -443,6 +458,10 @@ private:
     std::array<bool, kMaxEngines> runningWas_{};
     bool starvingWas_ = false, stallVane_ = false;
     Real lastSinkRate_ = 0;
+    OccupantMonitor occupant_;
+    std::array<bool, kMaxGear> gearFailed_{};
+    bool structuralFailure_ = false;
+    Real overUltimate_ = 0;  // s past the ultimate load factor
 
     std::vector<CockpitControl> cockpit_;
     std::vector<FlightEvent> events_;

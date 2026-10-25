@@ -5,6 +5,7 @@
 // only renders and reads input. World positions are returned in the São Paulo
 // World frame (ENU metres from MASP); see web/README.md for the buffer layout.
 #include <algorithm>
+#include <cstdio>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -315,6 +316,8 @@ const char* eventText(FlightEventType t) {
         case FlightEventType::AlternatorOnline: return g && !g->def.turbofans.empty() ? "Generator online" : "Alternator online";
         case FlightEventType::LoadShed: return "LOAD SHED: essential bus only";
         case FlightEventType::LoadRestored: return "Load shed reset: all buses powered";
+        case FlightEventType::GearCollapse: return "GEAR COLLAPSE";
+        case FlightEventType::StructuralFailure: return "STRUCTURAL FAILURE";
         case FlightEventType::CockpitControlChanged: return "";
     }
     return "";
@@ -336,6 +339,13 @@ void collectEvents() {
         if (e.type == FlightEventType::HardPointContact && static_cast<int>(e.value) == surfaces::kBuilding.id) s = "Building strike";
         if (e.type == FlightEventType::HardPointContact || e.type == FlightEventType::PropStrike)
             s += " (" + g->def.contacts[static_cast<std::size_t>(e.index)].name + ")";
+        if (e.type == FlightEventType::GearCollapse)
+            s += " (" + g->def.gear[static_cast<std::size_t>(e.index)].name + ", " + std::to_string(static_cast<int>(msToFpm(e.value))) + " fpm)";
+        if (e.type == FlightEventType::StructuralFailure) {
+            char b[32];
+            std::snprintf(b, sizeof b, " (%.1f g)", e.value);
+            s += b;
+        }
         if (!s.empty()) g->events += s + "\n";
     }
     if (g->events.size() > 4096) g->events.erase(0, g->events.size() - 4096);
@@ -1743,6 +1753,27 @@ AVD_EXPORT double* avd_autoland_status() {
     g_autoland[4] = msToKt(g->autolandVapp);
     g_autoland[5] = g->autolandFlap;
     return g_autoland;
+}
+
+// The crash dummy in the pilot's seat (avd/occupant.hpp) and the airframe's
+// damage: [peak g, peak spinal g, spinal DRI, estimated lumbar load (N),
+// HIC(36), collapsed gear legs (a bit per leg), structural failure].
+double g_occupant[7];
+AVD_EXPORT double* avd_occupant() {
+    std::fill(std::begin(g_occupant), std::end(g_occupant), 0.0);
+    if (!g || !g->ac) return g_occupant;
+    const OccupantReport& o = g->ac->occupant();
+    g_occupant[0] = o.peakG;
+    g_occupant[1] = o.peakSpinalG;
+    g_occupant[2] = o.dri;
+    g_occupant[3] = o.lumbarN;
+    g_occupant[4] = o.hic;
+    int mask = 0;
+    for (int i = 0; i < static_cast<int>(g->def.gear.size()) && i < 16; ++i)
+        if (g->ac->gearFailed(i)) mask |= 1 << i;
+    g_occupant[5] = mask;
+    g_occupant[6] = g->ac->structurallyFailed();
+    return g_occupant;
 }
 
 // The wind (ENU, m/s, the air's own velocity) on an nx x ny x nz grid over

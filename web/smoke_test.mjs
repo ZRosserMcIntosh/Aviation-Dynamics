@@ -236,6 +236,10 @@ check(cg[32] === 109.7 && cg[37] === 1 && cg[40] === 1 && Math.abs(cg[38]) < 0.1
   check(engaged === 1 && st.phase === 4 && sawFlare && !s6[48] && Math.abs(right) < 4 && along > 300 && along < rw[4],
     `autoland: engaged ${engaged}, phase ${st.phase} after ${t.toFixed(0)} s, stopped ${along.toFixed(0)} m down 35L, ${right.toFixed(1)} m right`);
   check(B.autoland(false) === 0 && !B.autolandStatus().on, 'autoland off');
+  // The dummy in the pilot's seat rode an ordinary landing: no limit near, nothing broken.
+  const o = B.occupant();
+  check(o.peakG > 1 && o.peakG < 3 && o.dri > 1 && o.dri < 6 && o.hic < 50 && !o.collapsed.some((c) => c) && !o.structural,
+    `occupant after the autoland: peak ${o.peakG.toFixed(2)} g, DRI ${o.dri.toFixed(2)}, HIC ${o.hic.toFixed(1)}, lumbar ${o.lumbarN.toFixed(0)} N`);
 }
 // Anywhere in Brazil (data/world/airports_br.json): Galeão 15's ILS (IGL)
 // at its 10 NM fix, 360 km away; a region airport's record maps onto the

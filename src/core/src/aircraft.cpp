@@ -475,6 +475,7 @@ void Aircraft::placeOnGround(Real north, Real east, Real heading, const GroundQu
     parkingBrake_ = pb;
     time_ = savedTime;
     events_.clear();
+    occupant_.reset();  // the settling is not the occupant's
     wasOnGround_ = true;
     groundStateTimer_ = 0;
     syncCockpitPositions();
@@ -791,7 +792,8 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
         d.tyreLongitudinalRate[i] = -s.tyreLongitudinal[i] * 20;
         d.wheelAlpha[i] = -s.wheelOmega[i] * 0.05;
         d.wheelSteerRate[i] = castoring ? (c.steer[i] - s.wheelSteer[i]) * 5 : 0.0;
-        const bool legDown = !def_.controls.gear.retractable || gearPos_ > 0.98;
+        const bool legDown = (!def_.controls.gear.retractable || gearPos_ > 0.98) && !gearFailed_[i];
+        gt.failed = gearFailed_[i];
         if (gp.valid && legDown) {
             const Vec3 rb = g.attach - cg;
             const Vec3 pAttach = s.body.position + q.rotate(rb);
@@ -929,6 +931,7 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
                 gt.contact = N > 0;
                 gt.compression = x;
                 gt.normalForce = N;
+                gt.closureSpeed = xdot;
                 gt.surfaceId = gp.surface.id;
                 gt.rollingSpeed = vLong;
                 gt.slipRatio = vSlip / std::max(std::abs(vLong), 1.0);
@@ -1404,6 +1407,30 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
     const bool overG = tel_.loadFactor > nLim - gHyst || tel_.loadFactor < def_.limits.limitLoadNegative + gHyst;
     if (overG && !overGWas_) pushEvent(FlightEventType::OverG, tel_.loadFactor);
     overGWas_ = overG;
+    // Structure: past the ultimate load factor (1.5 x the limit, 14 CFR 23/25.303)
+    // for 50 ms, it has failed.
+    const bool overUltimate = tel_.loadFactor > 1.5 * nLim || tel_.loadFactor < 1.5 * def_.limits.limitLoadNegative;
+    overUltimate_ = overUltimate ? overUltimate_ + dt : 0.0;
+    if (!structuralFailure_ && overUltimate_ >= 0.05) {
+        structuralFailure_ = true;
+        pushEvent(FlightEventType::StructuralFailure, tel_.loadFactor);
+    }
+    // Landing gear: a leg struck the ground closing faster than it can absorb.
+    for (std::size_t i = 0; i < def_.gear.size() && i < static_cast<std::size_t>(kMaxGear); ++i) {
+        const GearDef& g = def_.gear[i];
+        const Real limit = g.collapseSpeed > 0 ? g.collapseSpeed : (turbofanCount() > 0 ? 4.27 : 3.66);
+        if (!gearFailed_[i] && gearTel_[i].contact && gearTel_[i].closureSpeed > limit) {
+            gearFailed_[i] = true;
+            gearTel_[i].failed = true;
+            pushEvent(FlightEventType::GearCollapse, gearTel_[i].closureSpeed, static_cast<int>(i));
+        }
+    }
+    // The crash-test dummy in the pilot's seat.
+    {
+        const Vec3 seat = def_.stations.empty() ? tel_.cg : def_.stations[0].position;
+        const Vec3 wDot = (s_.body.omega - prev.body.omega) / dt;
+        occupant_.update(dt, tel_.specificForceBody, s_.body.omega, wDot, seat - tel_.cg);
+    }
     const Real vfe = !def_.limits.flapExtendedIasVsFlap.empty() ? def_.limits.flapExtendedIasVsFlap(flapAngle_)
                                                                 : def_.limits.flapExtendedIas;
     const bool flapOver = flapAngle_ > 0.01 && vfe > 0 && ias > vfe - (flapOverspeedWas_ ? hyst : 0.0);

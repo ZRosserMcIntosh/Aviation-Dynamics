@@ -40,7 +40,7 @@ Legend: ✅ implemented and tested · 🟡 partial or simplified · ⛔ not star
 | GPS navigation | 🟡 | `GpsNavigator`: route legs, turn-anticipated sequencing, Garmin-style CDI scaling (±2 / 1 / 0.3 NM, angular on final), LPV-style 3° vertical path from the FAF; generated approach routes (IAF when needed, IF 10 NM, FAF 5 NM) to any runway of 1,150 Brazilian airports (`data/world/airports_br.json`), NAV 1 tuned to the destination ILS | `tests/test_destinations.cpp`: a route flown end to end, CDI/VDI sense and scaling; web smoke test | No published procedures (fixes, STARs, missed approaches, minimums) |
 | Glass cockpit (G1000) | ⛔ | — | — | Separate profile on the same `CockpitState` pattern |
 | Autopilot | 🟡 | Assists (wing leveller, straight-and-level hold through stick and trim); `scenarios::ApproachPilot`: coupled ILS/GPS approach, autoland flare and retard, decrab and rollout, from the cockpit instruments only; the browser's autoland flies it down the GPS route from anywhere | Assist tests; [validation/blind-landings.md](validation/blind-landings.md): all seven aircraft land blind on ILS and RNAV, calm and in a 6 kt crosswind (the CRJ700 and 737-800 also in 10 kt) | No modes or panel in the aircraft, no servo model; outside the CAT III limits from ~12 kt crosswind |
-| Damage and failures | 🟡 | Injectable instrument and system failures; component loss flag in aero | Failure tests | No structural loads, no damage model |
+| Damage and failures | 🟡 | Injectable instrument and system failures; component loss flag in aero. Crashes (`avd/occupant.hpp`): an occupant monitor in the pilot's seat (seat specific force = the CG's + ω̇×r + ω×(ω×r); the spinal DRI, Stech & Payne ωn 52.9 rad/s, ζ 0.224; lumbar load ≈ 45 kg·g·DRI; HIC(36) from the resultant); gear legs that collapse when the strut closes faster than `collapse_speed_mps` (default 3.66 m/s light, 4.27 m/s jets: estimates above the 10 ft/s design sink rates of 14 CFR 23.473 / 25.473, with the reserve energy of 23.723 / 25.723), the airframe then on its hard points (GearCollapse event); structural failure past 1.5 × the limit load factor for 50 ms (StructuralFailure event) | Failure tests; `tests/test_crash.cpp`: 1.0 g and DRI 1 at rest; a 2.5 m/s drop absorbed, a 6 m/s drop collapses the gear onto the belly (172 peak 18 g, DRI 12.9; Top G 7.0 g, DRI 8.0); full aft stick at 100 kt stalls at 3.9 g, at 155 kt reaches 9.2 g and fails the structure | No structural model (one load factor for the whole airframe, no per-component loads, no asymmetric or fatigue failure); the dummy moves with the seat (no belt slack, head strike or seat stroke); a failed structure ends the flight rather than breaking the airframe apart |
 | Fire, bailout | ⛔ | — | — | — |
 | Assists | ✅ | Arcade, Sport, Simulation acting on controls | Assist tests | — |
 | Procedures | ✅ | Quick Start through cockpit controls | Procedure tests | Only one checklist |
@@ -56,7 +56,7 @@ Generated from the test output (`tests/test_validation.cpp`, rows in
 sources and the discussion of every row outside its band are in
 [validation/c172s-validation.md](validation/c172s-validation.md) and
 [validation/top-g-validation.md](validation/top-g-validation.md). The
-whole suite has <!-- validation:begin tests -->244<!-- validation:end --> test cases.
+whole suite has <!-- validation:begin tests -->247<!-- validation:end --> test cases.
 
 ### Tupi T-180 against the Cessna 172S POH
 
@@ -114,7 +114,7 @@ whole suite has <!-- validation:begin tests -->244<!-- validation:end --> test c
 | Fuel flow at Mach 0.85, FL450, mid weight<br><small>83 % of the maximum-cruise rating (14.5 kN per engine)</small> | about 2,600-3,400 lb/h (class figures) | 1,456 kg/h | — | 998–1,724 kg/h | within | published long-range cruise burn of the class |
 | Vref (1.23 Vs1g, landing flap) at 27.5 t<br><small>sea level ISA; trimmed CLmax, flaps 39; the square-root-of-weight law, not an independent published point</small> | about 103 KIAS (published 121 kt at MLW scaled by sqrt(W)) | 102 KIAS | — | 100–110 KIAS | within | derived: brokers' MLW Vref (about 121 kt at 37.9 t) x sqrt(27.5 / 37.9) = 103 KIAS; +-5 kt |
 | Vref (1.23 Vs1g, landing flap) at the maximum landing weight, 37.9 t<br><small>sea level ISA; trimmed CLmax, flaps 39</small> | 110-125 KIAS (representative; published values 110-121 kt) | 121 KIAS | — | 110–125 KIAS | within | representative, estimated (G650ER class) |
-| Landing distance from 50 ft, maximum landing weight (37.9 t)<br><small>Vref 121 KIAS (121 at 50 ft), touchdown 450 m past the 50 ft point at 545 fpm; full wheel braking (1 s to the pedals, 1 s ramp), ground spoilers, no reverse credit, dry runway</small> | 3,000 ft (914 m), SL, ISA, MLW | 834 m | -8.8 % | ±15 % | within | Gulfstream G650ER specification sheet (landing distance, SL, ISA, MLW); brokers quote 2,450-3,000 ft |
+| Landing distance from 50 ft, maximum landing weight (37.9 t)<br><small>Vref 121 KIAS (121 at 50 ft), touchdown 450 m past the 50 ft point at 545 fpm; full wheel braking (1 s to the pedals, 1 s ramp), ground spoilers, no reverse credit, dry runway</small> | 3,000 ft (914 m), SL, ISA, MLW | 833 m | -8.8 % | ±15 % | within | Gulfstream G650ER specification sheet (landing distance, SL, ISA, MLW); brokers quote 2,450-3,000 ft |
 <!-- validation:end -->
 
 <!-- validation:begin summary aircraft=top_g -->

@@ -72,41 +72,42 @@ flown to a full stop. The pass criteria:
 | Touchdown lateral | within 8.2 m (27 ft) of the centreline | AC 120-28D, CAT III touchdown |
 | Sink rate at touchdown | under 600 fpm | 10 ft/s, the landing-gear design sink rate |
 | Stop | on the runway, main gear 3 m inside its edge | — |
+| The pilot's seat | gear intact, spinal DRI under 5 | DRI 18 is the ejection-seat design limit; the crash-test dummy of `avd/occupant.hpp` |
 
 ## Results (October 2026)
 
 ILS 10L at Guarulhos, calm, zero visibility:
 
-| Aircraft | Touchdown | Off centreline | Sink | Stopped at |
-|---|---|---|---|---|
-| Tupi T-180 (172) | 427 m | 1.2 m | 148 fpm | 670 m |
-| Top G | 498 m | 0.2 m | 399 fpm | 908 m |
-| Phenom 300E | 476 m | 0.4 m | 319 fpm | 782 m |
-| Citation CJ4 | 503 m | 0.8 m | 288 fpm | 817 m |
-| Learjet 45 | 467 m | 1.2 m | 346 fpm | 779 m |
-| CRJ700 | 579 m | 0.9 m | 347 fpm | 1,184 m |
-| 737-800 | 527 m | 0.1 m | 391 fpm | 1,180 m |
+| Aircraft | Touchdown | Off centreline | Sink | Stopped at | Seat | DRI |
+|---|---|---|---|---|---|---|
+| Tupi T-180 (172) | 427 m | 1.2 m | 148 fpm | 668 m | 1.9 g | 1.9 |
+| Top G | 498 m | 0.2 m | 399 fpm | 904 m | 1.8 g | 2.2 |
+| Phenom 300E | 476 m | 0.4 m | 319 fpm | 779 m | 2.0 g | 2.2 |
+| Citation CJ4 | 503 m | 0.8 m | 288 fpm | 816 m | 2.2 g | 2.4 |
+| Learjet 45 | 467 m | 1.2 m | 346 fpm | 762 m | 1.9 g | 2.2 |
+| CRJ700 | 579 m | 0.9 m | 347 fpm | 1,181 m | 2.0 g | 2.3 |
+| 737-800 | 527 m | 0.1 m | 391 fpm | 1,178 m | 2.5 g | 2.9 |
 
 ILS 35L at Congonhas (1,940 m), the wind from 060 (almost straight across),
 with the mechanical turbulence it makes over the city:
 
-| Aircraft | Wind | Touchdown | Off centreline | Sink | Stopped at |
-|---|---|---|---|---|---|
-| Tupi T-180 | 6 kt | 425 m | 0.7 m | 121 fpm | 654 m |
-| Top G | 6 kt | 476 m | 2.8 m | 417 fpm | 884 m |
-| CRJ700 | 6 kt | 585 m | 2.9 m | 387 fpm | 1,129 m |
-| 737-800 | 6 kt | 478 m | 2.5 m | 360 fpm | 1,124 m |
-| CRJ700 | 10 kt | 524 m | 2.2 m | 447 fpm | 1,051 m |
-| 737-800 | 10 kt | 496 m | 2.9 m | 363 fpm | 1,150 m |
+| Aircraft | Wind | Touchdown | Off centreline | Sink | Stopped at | Seat | DRI |
+|---|---|---|---|---|---|---|---|
+| Tupi T-180 | 6 kt | 425 m | 0.7 m | 121 fpm | 652 m | 1.7 g | 1.8 |
+| Top G | 6 kt | 476 m | 2.8 m | 417 fpm | 882 m | 2.1 g | 2.2 |
+| CRJ700 | 6 kt | 585 m | 2.9 m | 387 fpm | 1,128 m | 1.9 g | 2.3 |
+| 737-800 | 6 kt | 478 m | 2.5 m | 360 fpm | 1,121 m | 2.5 g | 2.7 |
+| CRJ700 | 10 kt | 524 m | 2.2 m | 447 fpm | 1,050 m | 2.1 g | 2.2 |
+| 737-800 | 10 kt | 496 m | 2.9 m | 363 fpm | 1,147 m | 2.2 g | 2.5 |
 
 RNAV (GPS) approaches, the GPS vertical path to the threshold:
 
-| Aircraft | Approach | Touchdown | Off centreline | Sink | Stopped at |
-|---|---|---|---|---|---|
-| Tupi T-180 | São José dos Campos 16, calm | 416 m | 1.1 m | 144 fpm | 654 m |
-| Top G | São José dos Campos 16, calm | 436 m | 0.4 m | 409 fpm | 842 m |
-| CRJ700 | São José dos Campos 16, calm | 519 m | 1.3 m | 354 fpm | 1,119 m |
-| 737-800 | Guarulhos 28L, 6 kt from 200 | 421 m | 0.2 m | 447 fpm | 1,014 m |
+| Aircraft | Approach | Touchdown | Off centreline | Sink | Stopped at | Seat | DRI |
+|---|---|---|---|---|---|---|---|
+| Tupi T-180 | São José dos Campos 16, calm | 416 m | 1.1 m | 144 fpm | 652 m | 1.9 g | 1.9 |
+| Top G | São José dos Campos 16, calm | 436 m | 0.4 m | 409 fpm | 839 m | 1.8 g | 2.2 |
+| CRJ700 | São José dos Campos 16, calm | 519 m | 1.3 m | 354 fpm | 1,117 m | 2.0 g | 2.3 |
+| 737-800 | Guarulhos 28L, 6 kt from 200 | 421 m | 0.2 m | 447 fpm | 1,011 m | 2.2 g | 2.6 |
 
 ## What it took (found and fixed)
 
@@ -144,6 +145,15 @@ RNAV (GPS) approaches, the GPS vertical path to the threshold:
     floated it at idle and dropped it in at 677 fpm.
   - The flare now uses the radio altimeter's rate, as an autoland does:
     387 fpm, and 8–10 kt crosswinds pass.
+- **The nose let fall.**
+  - On the rollout the pilot pushed the nose to its ground attitude at
+    once; with the mains' spin-up and the ground spoilers pitching it down
+    as well, the nose came down at 20°/s.
+  - The crash-test dummy in the pilot's seat showed it: 3.9 g at a
+    Learjet 45's cockpit (DRI 4.7) with 1.1 g at the CG.
+  - The nose is now flown down at 2°/s, back pressure against its rate:
+    1.9 g, DRI 2.2. What is left is the main gear's touchdown (the CG at
+    2.2–2.8 g in a jet's 300–450 fpm arrival).
 
 ## The autoland in the browser
 

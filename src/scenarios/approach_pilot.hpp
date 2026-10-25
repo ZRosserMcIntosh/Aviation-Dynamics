@@ -57,7 +57,8 @@ private:
     bool havePrev_ = false, havePitchTarget_ = false, haveRa_ = false;
     Real raPrev_ = 0, vsRa_ = 0;
     Real retardFrom_ = 0, flareMax_ = 0, vsFast_ = 0, lastThrottle_ = 1, flareInt_ = 0, flarePitch_ = 0, hdgErr_ = 0, rollRate_ = 0, pitchRate_ = 0, flareH_ = 12, pitchTarget_ = 0, altPrev_ = 0, vsFilt_ = 0, iasPrev_ = 0, iasRate_ = 0;
-    bool haveAlt_ = false, haveIas_ = false, retarded_ = false;
+    bool haveAlt_ = false, haveIas_ = false, retarded_ = false, derotating_ = false;
+    Real derotPitch_ = 0;
     Pid pitchPid_{3.2, 1.6, 0.0, -0.5, 0.5};
     Pid vsPid_{0.015, 0.003, 0.0, -0.08, 0.08};
     Pid iasPid_{0.05, 0.006, 0.0, -0.4, 0.6};

@@ -499,6 +499,11 @@ struct GearDef {
     Real dampingCompression = 3e3;    // N s/m
     Real dampingRebound = 6e3;
     Real maxCompression = 0.25;       // m; beyond this the stiffness rises 20x (bottoming)
+    // The leg fails striking the ground closing faster than this (m/s; 0: by
+    // type, 3.7 m/s (12 ft/s) for a light aircraft, 4.3 m/s (14 ft/s) for a jet:
+    // past the reserve-energy descent velocity the gear is shown to absorb,
+    // 14 CFR 25.723 (12 ft/s) and 23.725 (1.2 x a light aircraft's limit)).
+    Real collapseSpeed = 0;
     Real wheelRadius = 0.2;
     Real rollingResistance = 0.02;    // coefficient on a paved surface
     Real maxBrakeForceCoefficient = 0;  // brake force / static load; sets brakeTorque when that is 0 (0 = no brake)
