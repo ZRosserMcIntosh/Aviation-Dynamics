@@ -145,6 +145,16 @@ RNAV (GPS) approaches, the GPS vertical path to the threshold:
   - The flare now uses the radio altimeter's rate, as an autoland does:
     387 fpm, and 8–10 kt crosswinds pass.
 
+## The autoland in the browser
+
+The same pilot is the flight test bed's autoland (`avd_autoland`). It flies the
+GPS route to the destination from wherever it is engaged: it joins the final
+if the 3° path can be flown from there, else it flies the whole procedure. It
+configures the airplane itself (gear, flaps by their limit speeds). From a
+cruise start 8 km out and well above the path, every aircraft landed and
+stopped on Congonhas 35L and Guarulhos 10L: touchdowns 400–522 m past the
+threshold, within 2 m of the centreline (`web/smoke_test.mjs` checks the Top G).
+
 ## Limits
 
 - **Stronger crosswinds and turbulence are not passed yet.**

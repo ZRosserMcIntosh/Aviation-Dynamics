@@ -39,7 +39,7 @@ Legend: ✅ implemented and tested · 🟡 partial or simplified · ⛔ not star
 | Navigation radios | 🟡 | VOR, LOC, GS, radio horizon; the São Paulo region's real ILSs (Congonhas, Guarulhos, Viracopos: published idents and frequencies, antennas sited from the runways, course in the antenna's own frame, GS coverage about the localizer course); a synthetic test VOR and Campo de Marte ILS ([architecture/navigation.md](architecture/navigation.md)) | Geometry tests; every ILS centred on its own 3° path (`tests/test_destinations.cpp`) | Antenna sites estimated; no DME, ADF or marker |
 | GPS navigation | 🟡 | `GpsNavigator`: route legs, turn-anticipated sequencing, Garmin-style CDI scaling (±2 / 1 / 0.3 NM, angular on final), LPV-style 3° vertical path from the FAF; generated approach routes (IAF when needed, IF 10 NM, FAF 5 NM) to any runway of 1,150 Brazilian airports (`data/world/airports_br.json`), NAV 1 tuned to the destination ILS | `tests/test_destinations.cpp`: a route flown end to end, CDI/VDI sense and scaling; web smoke test | No published procedures (fixes, STARs, missed approaches, minimums) |
 | Glass cockpit (G1000) | ⛔ | — | — | Separate profile on the same `CockpitState` pattern |
-| Autopilot | 🟡 | Assists (wing leveller, straight-and-level hold through stick and trim); `scenarios::ApproachPilot`: coupled ILS/GPS approach, autoland flare and retard, decrab and rollout, from the cockpit instruments only | Assist tests; [validation/blind-landings.md](validation/blind-landings.md): all seven aircraft land blind on ILS and RNAV, calm and in a 6 kt crosswind (the CRJ700 and 737-800 also in 10 kt) | No modes or panel in the aircraft, no servo model; outside the CAT III limits from ~12 kt crosswind |
+| Autopilot | 🟡 | Assists (wing leveller, straight-and-level hold through stick and trim); `scenarios::ApproachPilot`: coupled ILS/GPS approach, autoland flare and retard, decrab and rollout, from the cockpit instruments only; the browser's autoland flies it down the GPS route from anywhere | Assist tests; [validation/blind-landings.md](validation/blind-landings.md): all seven aircraft land blind on ILS and RNAV, calm and in a 6 kt crosswind (the CRJ700 and 737-800 also in 10 kt) | No modes or panel in the aircraft, no servo model; outside the CAT III limits from ~12 kt crosswind |
 | Damage and failures | 🟡 | Injectable instrument and system failures; component loss flag in aero | Failure tests | No structural loads, no damage model |
 | Fire, bailout | ⛔ | — | — | — |
 | Assists | ✅ | Arcade, Sport, Simulation acting on controls | Assist tests | — |
@@ -56,7 +56,7 @@ Generated from the test output (`tests/test_validation.cpp`, rows in
 sources and the discussion of every row outside its band are in
 [validation/c172s-validation.md](validation/c172s-validation.md) and
 [validation/top-g-validation.md](validation/top-g-validation.md). The
-whole suite has <!-- validation:begin tests -->242<!-- validation:end --> test cases.
+whole suite has <!-- validation:begin tests -->244<!-- validation:end --> test cases.
 
 ### Tupi T-180 against the Cessna 172S POH
 

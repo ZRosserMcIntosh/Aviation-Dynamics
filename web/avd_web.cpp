@@ -11,6 +11,7 @@
 #include <string>
 
 #include "airports.hpp"
+#include "approach_pilot.hpp"
 #include "line_pilot.hpp"
 #include "scenarios.hpp"
 #include "avd/aircraft_loader.hpp"
@@ -129,6 +130,13 @@ struct Sim {
     // demonstration's pilot, holding its final against whatever the air does.
     bool linePilotOn = false;
     scenarios::LinePilot linePilot;
+    // The autoland (avd_autoland): the instrument-only approach pilot down the
+    // GPS route to the destination runway, its flare and rollout.
+    bool autolandOn = false;
+    scenarios::ApproachPilot autoland;
+    Real autolandVariation = 0;  // the destination's magnetic variation (the route's tracks are true)
+    int autolandFlap = 0;        // landing flap detent
+    Real autolandVapp = 0;       // m/s
 };
 constexpr Real kOwnWakeAge = 4.0;
 
@@ -496,6 +504,7 @@ void newAircraft() {
     wp.eddyDissipation = eddyDissipation();
     g->wake = std::make_unique<Wake>(g->ac->aeroModel(), wp);
     g->linePilotOn = false;
+    g->autolandOn = false;
     rebuildAir();
 }
 
@@ -1031,6 +1040,27 @@ AVD_EXPORT double* avd_jet() {
     return g_jet;
 }
 
+// One step of the autoland: the leg's course from the GPS, the approach pilot's
+// controls; flaps out a detent at a time as the speed falls below each one's
+// limit, the gear down.
+PilotInput autolandInput() {
+    Aircraft& ac = *g->ac;
+    const GpsIndication& gi = g->gps.indication();
+    if (gi.valid) g->autoland.courseMagnetic = wrapPi(gi.desiredTrack - g->autolandVariation);
+    const Real ias = ac.instruments().readings().indicatedAirspeed;
+    const StructuralLimitsDef& lim = g->def.limits;
+    const std::vector<Real>& det = g->def.controls.flapDetents;
+    for (int d = ac.flapDetent() + 1; d <= g->autolandFlap; ++d) {
+        const Real vfe = !lim.flapExtendedIasVsFlap.empty() ? lim.flapExtendedIasVsFlap(det[static_cast<std::size_t>(d)])
+                                                            : (lim.flapExtendedIas > 0 ? lim.flapExtendedIas : 1e9);
+        if (ias > vfe - ktToMs(5)) break;
+        ac.setCockpitControl("flaps.lever", d);
+    }
+    if (g->def.controls.gear.retractable && ac.cockpitControl("gear.lever") == 0 && ias < ktToMs(220))
+        ac.setCockpitControl("gear.lever", 1);
+    return g->autoland.update(ac, kDt);
+}
+
 // Advance by wall-clock seconds at a fixed 240 Hz (at most 0.25 s per call).
 AVD_EXPORT int avd_advance(double seconds) {
     if (!g) return 0;
@@ -1043,8 +1073,9 @@ AVD_EXPORT int avd_advance(double seconds) {
             T.ac->step(kDt, T.pilot.update(*T.ac, kDt), *g->world, *g->weather);
             T.wake->update(*T.ac, *g->weather, g->world.get());
         }
-        PilotInput in = g->linePilotOn ? g->linePilot.update(*g->ac, kDt) : g->assist.apply(g->raw, *g->ac, kDt);
-        if (!g->linePilotOn) g->procedure.update(*g->ac, in, kDt);
+        PilotInput in = g->autolandOn ? autolandInput()
+                        : g->linePilotOn ? g->linePilot.update(*g->ac, kDt) : g->assist.apply(g->raw, *g->ac, kDt);
+        if (!g->linePilotOn && !g->autolandOn) g->procedure.update(*g->ac, in, kDt);
         g->ac->step(kDt, in, *g->world, flightAir());
         if (g->wakeOn) g->wake->update(*g->ac, *g->weather, g->world.get());
         if (T.active) {
@@ -1614,6 +1645,104 @@ AVD_EXPORT void avd_line_pilot(int on, double kias, double pathDeg) {
     p.controls.throttle = p.baseThrottle;
     p.controls.mixture = g->trimMixture;
     g->linePilot = p;
+}
+
+// The autoland: on, the approach pilot flies the aircraft down the GPS route
+// to the destination runway (the runway in use if none is set: it becomes the
+// destination) and its 3 deg path, flares, lands and stops on the centreline,
+// from the instruments alone (scenarios::ApproachPilot, the blind landings'
+// pilot); off hands it back to avd_set_input. The altimeter is set to QNH (the
+// 172 flares on it). Returns 1 engaged, 0 off, -1 no approach to fly, -2 on
+// the ground.
+AVD_EXPORT int avd_autoland(int on) {
+    if (!g || !g->ac) return -1;
+    if (!on) {
+        g->autolandOn = false;
+        return 0;
+    }
+    Aircraft& ac = *g->ac;
+    if (ac.telemetry().onGround) return -2;
+    if (g_destAirport < 0) avd_set_destination(g_airportId == 0 ? 1 : 0, 0);
+    else buildRoute();
+    const std::vector<RouteWaypoint>& route = g->gps.route();
+    const int faf = g->gps.finalApproachFix();
+    if (g_destAirport < 0 || route.size() < 2 || faf < 0) return -1;
+    // Joined on the final (buildRoute does, established on it) only when the
+    // path can be flown from here: more than 50 m above or below it, the whole
+    // procedure instead (the initial fix, the intermediate fix, the FAF), level
+    // at the FAF's altitude until the path comes down to it, as an FMS would.
+    {
+        const AircraftTelemetry& t = ac.telemetry();
+        g->gps.update(ac.state().body.position, t.altitudeMsl, t.groundSpeed);
+        const GpsIndication& gi = g->gps.indication();
+        const scenarios::Airport& dap = regionAirport(g_destAirport);
+        const Real pathAlt = dap.elevation + 15.24 + gi.distanceToDestination * std::tan(degToRad(3.0));
+        if (gi.active >= faf && std::abs(t.altitudeMsl - pathAlt) > 50 && route[0].ident == "PPOS") {
+            g->gps.activate(1);
+            g->gps.update(ac.state().body.position, t.altitudeMsl, t.groundSpeed);
+        }
+    }
+    const scenarios::Airport& ap = regionAirport(g_destAirport);
+    const RunwayDef& rw = ap.runways[static_cast<std::size_t>(g_destRunway)];
+    const bool jet = ac.turbofanCount() > 0;
+    ac.instruments().setAltimeterSetting(g->weather->atmosphere().conditions().seaLevelPressure);
+    g->autolandFlap = static_cast<int>(g->def.controls.flapDetents.size()) - 1;
+    g->autolandVapp = jet ? ktToMs(jetApproachKias()) : ktToMs(65);
+    g->autolandVariation = ap.magneticVariation;
+    // Level at the final approach fix's altitude until the path is captured.
+    const Real alt = route[static_cast<std::size_t>(faf)].altitudeMsl > 0 ? route[static_cast<std::size_t>(faf)].altitudeMsl
+                                                                          : ap.elevation + 15.24 + 5 * 1852 * std::tan(degToRad(3.0));
+    // The references (trimmed pitch and throttle in the landing configuration
+    // at that altitude, the height readings at touchdown) from a scratch
+    // aircraft, as the blind landings take them.
+    Aircraft scratch(g->def, g->frame);
+    scratch.setEngineRunning(true, 1000);
+    const Vec3 onRw = scenarios::runwayPoint(rw, rw.displaced + 400);
+    scratch.placeOnGround(onRw.x, onRw.y, rw.headingTrue, *g->world, *g->weather);
+    scratch.step(kDt, PilotInput{}, *g->world, *g->weather);
+    scratch.instruments().setAltimeterSetting(g->weather->atmosphere().conditions().seaLevelPressure);
+    scratch.resetInstrumentsToTruth();
+    scratch.step(kDt, PilotInput{}, *g->world, *g->weather);
+    const Real raZero = jet ? scratch.telemetry().heightAgl : scratch.instruments().readings().indicatedAltitude - ap.elevation;
+    scratch.setGearImmediately(true);
+    scenarios::TrimRequest req;
+    req.altitude = alt;
+    req.flapDetent = g->autolandFlap;
+    req.tas = scenarios::tasFromCas(g->autolandVapp, g->weather->atmosphere().at(alt));
+    const scenarios::TrimResult tr = scenarios::trim(scratch, req, *g->weather);
+    scenarios::ApproachPilot p;
+    p.source = scenarios::ApproachPilot::Source::Gps;
+    p.gps = &g->gps.indication();
+    p.courseMagnetic = rw.headingTrue - ap.magneticVariation;
+    p.fieldElevation = ap.elevation;
+    p.runwayLength = rw.length - rw.displaced;
+    p.approachIas = g->autolandVapp;
+    p.interceptAltitude = alt;
+    p.radioAltimeter = jet;
+    p.raZero = raZero;
+    p.pitchRef = tr.theta;
+    p.baseThrottle = tr.input.throttle;
+    p.controls = tr.input;
+    p.controls.mixture = g->trimMixture > 0 ? g->trimMixture : 1.0;
+    g->autoland = p;
+    g->autolandOn = true;
+    g->linePilotOn = false;
+    return 1;
+}
+// [on, phase (0 intercept, 1 final, 2 flare, 3 rollout, 4 stopped), metres
+// right of the course, metres above the path, target airspeed (kt), landing
+// flap detent].
+double g_autoland[6];
+AVD_EXPORT double* avd_autoland_status() {
+    std::fill(std::begin(g_autoland), std::end(g_autoland), 0.0);
+    if (!g || !g->autolandOn) return g_autoland;
+    g_autoland[0] = 1;
+    g_autoland[1] = static_cast<int>(g->autoland.phase());
+    g_autoland[2] = g->autoland.lateralMetres();
+    g_autoland[3] = g->autoland.verticalMetres();
+    g_autoland[4] = msToKt(g->autolandVapp);
+    g_autoland[5] = g->autolandFlap;
+    return g_autoland;
 }
 
 // The wind (ENU, m/s, the air's own velocity) on an nx x ny x nz grid over

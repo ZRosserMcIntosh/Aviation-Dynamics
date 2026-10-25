@@ -219,6 +219,24 @@ check(cg[32] === 109.7 && cg[37] === 1 && cg[40] === 1 && Math.abs(cg[38]) < 0.1
   check(landed && !s5[48] && Math.abs(s5[2] - 750.1) < 3, `hands-off 172 on the SBGR 10L final: ${landed ? 'touched down' : 'airborne'} at ${s5[2].toFixed(1)} m, crashed ${s5[48]}`);
   B.avd_set_destination(-1, 0);
 }
+// Autoland: engaged on the Top G's Congonhas 35L final (no destination: the
+// runway in use becomes it), it flies the GPS path, flares and stops on the
+// centreline; refused on the ground.
+{
+  B.avd_set_airport(1);
+  B.avd_reset(1);
+  check(B.autoland(true) === -2, 'autoland refused on the ground');
+  B.avd_reset(2);
+  const engaged = B.autoland(true);
+  let st = B.autolandStatus(), t = 0, sawFlare = false;
+  for (; t < 400 && st.on && st.phase !== 4; t += 0.25) { B.avd_advance(0.25); st = B.autolandStatus(); sawFlare = sawFlare || st.phase === 2; }
+  const s6 = B.state().slice(), rw = B.runway(), h = rw[3] * Math.PI / 180;
+  const dx = s6[0] - rw[0], dy = s6[1] - rw[1];
+  const along = dx * Math.sin(h) + dy * Math.cos(h), right = dx * Math.cos(h) - dy * Math.sin(h);
+  check(engaged === 1 && st.phase === 4 && sawFlare && !s6[48] && Math.abs(right) < 4 && along > 300 && along < rw[4],
+    `autoland: engaged ${engaged}, phase ${st.phase} after ${t.toFixed(0)} s, stopped ${along.toFixed(0)} m down 35L, ${right.toFixed(1)} m right`);
+  check(B.autoland(false) === 0 && !B.autolandStatus().on, 'autoland off');
+}
 // Anywhere in Brazil (data/world/airports_br.json): Galeão 15's ILS (IGL)
 // at its 10 NM fix, 360 km away; a region airport's record maps onto the
 // region's own; Florianópolis (sea level, 490 km) takes a hands-off landing.

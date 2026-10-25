@@ -48,11 +48,11 @@ moment, and they have a yaw damper.
 | Ground | Spring-damper struts, combined-slip bristle tyres (one friction ellipse, sliding friction past the peak, cornering stiffness with load), wheel spin with torque-limited brakes that lock a light wheel, anti-skid where fitted, touchdown spin-up, a castoring nose wheel through a bungee linkage or steering by pedals or a rate-limited tiller, hard-point contacts. Wet runways (14 CFR 25.109), standing water and hydroplaning. The region's airports each at their own elevation; world tiles with terrain, surfaces and buildings (wingtip strikes); São Paulo's 4.4 million buildings (OpenStreetMap at its mapped heights, Google and Microsoft footprints where OSM has none), streamed around the aircraft with solid walls and roofs ([tools/osm_buildings](tools/osm_buildings/README.md)) | `tests/test_ground_handling.cpp`, `tests/test_flight.cpp`, `tests/test_world.cpp` |
 | Instruments | Pitot-static (IAS/CAS/EAS/TAS, position error, blockages, icing and pitot heat), VSI lag, vacuum gyros, turn coordinator and ball. A wet compass with airframe deviation and a swung correction card. Engine and system gauges, annunciators, transponder | `tests/test_instruments.cpp` |
 | Navigation | VOR/LOC/GS receivers with radio horizon; the real ILSs at Congonhas, Guarulhos, Viracopos, Galeão and Brasília. 1,150 Brazilian airports (OurAirports runways). A GPS navigator: route legs, sequencing, Garmin-style CDI scaling, a 3° vertical path from the FAF, and generated approaches to any runway ([navigation.md](docs/architecture/navigation.md)) | `tests/test_destinations.cpp` |
-| Blind landings | An instrument-only approach pilot (`scenarios::ApproachPilot`) flies the ILS or GPS approach with an autoland flare, decrab and rollout. All seven aircraft land in zero visibility within CAT III touchdown limits, calm and in a light crosswind | `tests/test_blind_landing.cpp`, [blind-landings.md](docs/validation/blind-landings.md) |
+| Blind landings | An instrument-only approach pilot (`scenarios::ApproachPilot`) flies the ILS or GPS approach with an autoland flare, decrab and rollout. All seven aircraft land in zero visibility within CAT III touchdown limits, calm and in crosswinds to 10 kt. In the browser it is the autoland (`avd_autoland`): the GPS route from anywhere, the airplane configured, to a stop on the centreline | `tests/test_blind_landing.cpp`, [blind-landings.md](docs/validation/blind-landings.md) |
 | Assists | Easy, Sport and Simulation, plus an auto-trim that holds straight and level. They act only through the pilot's controls; the physics is the same in all three ([ADR 0004](docs/decisions/0004-assistance-is-not-physics.md)) | `tests/test_systems_scenarios.cpp`, `tests/test_jet.cpp` |
 | Browser | WebAssembly build (wasi-sdk, no exceptions or RTTI) with a C ABI. Streams the airflow, wake and body data the 3D site draws (streamlines, smoke, wind tunnel). Node smoke test, a self-contained 2D cockpit page, flight replay | `web/`, `web/smoke_test.mjs` |
 
-Everything in this table is tested: <!-- validation:begin tests -->242<!-- validation:end --> test cases, on Linux (gcc, clang,
+Everything in this table is tested: <!-- validation:begin tests -->244<!-- validation:end --> test cases, on Linux (gcc, clang,
 sanitizers), macOS, Windows and WASM in CI. How far each area is validated,
 and its main gap, is in the [fidelity matrix](docs/fidelity-matrix.md); the
 comparisons with published data, with their sources and every row that is
@@ -64,7 +64,7 @@ and are regenerated from the test output so they cannot drift.
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/tests/avd_tests             # <!-- validation:begin tests -->242<!-- validation:end --> test cases
+./build/tests/avd_tests             # <!-- validation:begin tests -->244<!-- validation:end --> test cases
 ./build/tests/avd_tests "blind"     # a filter: the blind landings
 ./build/avdemo validate [--json f]  # the comparison tables against published data (172S POH, G650ER)
 ./build/tools/avdtrace --record     # record the golden traces (tests/golden/README.md)
