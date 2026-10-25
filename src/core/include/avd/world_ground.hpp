@@ -11,8 +11,10 @@
 // Tile file format ("avd-world-tile/1", JSON): docs/architecture/world-ground.md.
 #pragma once
 
+#include <cstdint>
 #include <map>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -90,6 +92,54 @@ private:
     std::map<std::pair<int, int>, Tile> tiles_;
     Real outsideHeight_;
     SurfaceProperties outside_;
+};
+
+// Buildings standing on another ground: the inner ground's terrain and
+// surfaces, plus building footprints extruded on it, whose walls and roofs the
+// gear and the airframe's hard points meet as they do TiledWorldGround's. The
+// buildings come and go in groups under a key (the 1 km tiles a host streams
+// around the aircraft). The inner ground must outlive the layer.
+class BuildingLayer final : public GroundQuery {
+public:
+    explicit BuildingLayer(const GroundQuery& inner, Real cell = 100) : inner_(&inner), cell_(cell) {}
+    void setInner(const GroundQuery& inner) { inner_ = &inner; }
+
+    // Adds (or replaces) group `key`. Footprints in ENU (m), base and top m MSL.
+    void add(std::int64_t key, std::vector<WorldBuilding> buildings);
+    void remove(std::int64_t key);
+    void clear();
+    std::size_t buildingCount() const { return count_; }
+    std::size_t groupCount() const { return groups_.size(); }
+
+    // An "AVB1" block (the flight test bed's building tiles: footprints in
+    // decimetres from the tile's south-west corner (x0, y0), heights above
+    // the ground) as buildings, each standing on the inner ground under it
+    // (the lowest of its corners and centroid, less `sink`). Returns false on
+    // a malformed block.
+    bool parseAvb1(const std::uint8_t* data, std::size_t size, Real x0, Real y0, std::vector<WorldBuilding>& out,
+                   Real sink = 0.6) const;
+
+    GroundHit raycast(const Vec3& origin, const Vec3& dir, Real maxDistance) const override;
+    GroundHit below(const Vec3& point) const override;
+    bool solidAt(const Vec3& point, GroundHit& contact) const override;
+
+private:
+    struct Entry {
+        const WorldBuilding* b;
+        Real minX, minY, maxX, maxY;
+        std::int64_t group;
+    };
+    std::int64_t cellKey(Real east, Real north) const;
+    template <class F>
+    void forBuildingsAt(Real east, Real north, F&& f) const;
+    template <class F>
+    void forCells(const Entry& e, F&& f) const;
+
+    const GroundQuery* inner_;
+    Real cell_;
+    std::map<std::int64_t, std::vector<WorldBuilding>> groups_;
+    std::unordered_map<std::int64_t, std::vector<Entry>> grid_;
+    std::size_t count_ = 0;
 };
 
 }  // namespace avd

@@ -20,10 +20,19 @@ namespace avd::scenarios {
 // The São Paulo World tile grid uses metres east (x) / north (y) with the
 // origin at MASP (landmark at (-1, 1) in site_data.json). Anchor: MASP,
 // 23.5611 S, 46.6558 W (Wikipedia infobox), height 0 = mean sea level (geoid
-// undulation ~ -5 m ignored). Accuracy of the world-to-geodetic mapping is
-// ~100 m pending confirmation from the world build tools (see
-// docs/architecture/world-integration.md).
+// undulation ~ -5 m ignored). The frame's tangent plane is the physics'
+// (gravity, the Earth's rotation); where on it an airport goes is the map's
+// projection, saoPauloMapNed below.
 LocalFrame saoPauloWorldFrame();
+
+// The São Paulo World map's projection: EPSG:31983 (SIRGAS 2000 / UTM 23S)
+// less the map's origin, as the SaoPauloWorld tiles, the site's photo map and
+// its OpenStreetMap buildings use (fitted to OSM street centrelines: no
+// rotation, 0.3 m residual; tools/osm_buildings). The world's north is UTM
+// grid north, ~0.66 deg east of true north here. Airports in the São Paulo
+// world are placed with it (NED: x north, y east; z = 0).
+inline constexpr Real kMapOriginEast = 330986.00, kMapOriginNorth = 7393310.72;  // EPSG:31983 (m), 15.8 m E and 45.3 m N of MASP
+Vec3 saoPauloMapNed(Real latDeg, Real lonDeg);
 
 // An ILS on one runway end: localizer along the centreline, its antenna
 // 300 m beyond the far end; glideslope antenna 300 m past the landing

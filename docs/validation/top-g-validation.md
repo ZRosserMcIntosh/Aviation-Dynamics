@@ -32,7 +32,7 @@ time-limited after lift-off), as the published figures are.
 | Fuel flow at Mach 0.85, FL450, mid weight<br><small>83 % of the maximum-cruise rating (14.5 kN per engine)</small> | about 2,600-3,400 lb/h (class figures) | 1,456 kg/h | — | 998–1,724 kg/h | within | published long-range cruise burn of the class |
 | Vref (1.23 Vs1g, landing flap) at 27.5 t<br><small>sea level ISA; trimmed CLmax, flaps 39; the square-root-of-weight law, not an independent published point</small> | about 103 KIAS (published 121 kt at MLW scaled by sqrt(W)) | 102 KIAS | — | 100–110 KIAS | within | derived: brokers' MLW Vref (about 121 kt at 37.9 t) x sqrt(27.5 / 37.9) = 103 KIAS; +-5 kt |
 | Vref (1.23 Vs1g, landing flap) at the maximum landing weight, 37.9 t<br><small>sea level ISA; trimmed CLmax, flaps 39</small> | 110-125 KIAS (representative; published values 110-121 kt) | 121 KIAS | — | 110–125 KIAS | within | representative, estimated (G650ER class) |
-| Landing distance from 50 ft, maximum landing weight (37.9 t)<br><small>Vref 121 KIAS (121 at 50 ft), touchdown 456 m past the 50 ft point at 599 fpm; full wheel braking from touchdown, ground spoilers, no reverse credit, dry runway</small> | 3,000 ft (914 m), SL, ISA, MLW | 781 m | -14.6 % | ±15 % | within | Gulfstream G650ER specification sheet (landing distance, SL, ISA, MLW); brokers quote 2,450-3,000 ft |
+| Landing distance from 50 ft, maximum landing weight (37.9 t)<br><small>Vref 121 KIAS (121 at 50 ft), touchdown 450 m past the 50 ft point at 545 fpm; full wheel braking (1 s to the pedals, 1 s ramp), ground spoilers, no reverse credit, dry runway</small> | 3,000 ft (914 m), SL, ISA, MLW | 834 m | -8.8 % | ±15 % | within | Gulfstream G650ER specification sheet (landing distance, SL, ISA, MLW); brokers quote 2,450-3,000 ft |
 <!-- validation:end -->
 
 <!-- validation:begin summary aircraft=top_g -->
@@ -49,7 +49,7 @@ time-limited after lift-off), as the published figures are.
 | Fuel flow, Mach 0.85 at FL450 | about 2,600–3,400 lb/h long-range cruise burn | class figures for the G650 (Rolls-Royce BR725) | Trim at FL450, Mach 0.85, 33.7 t (the band is wider: 2,200–3,800 lb/h) |
 | Vref at 27.5 t | about 103 KIAS (100–110), derived | The published MLW Vref (about 121 kt at 37.9 t) scaled by the square root of the weight: 121 × √(27.5/37.9) = 103. The 115–125 KIAS "at 25–30 t" band the row first carried was inconsistent with the MLW figure it came with and is withdrawn (see below) | 1.23 Vs1g with the landing flap (39°) from the trimmed CLmax the cockpit V-speeds use, sea level ISA |
 | Vref at MLW (37.9 t) | 110–121 kt | brokers' and reference-site values (Vref about 110 kt; about 121 kt at MLW) | as above at the maximum landing weight |
-| Landing distance | 3,000 ft (914 m), SL, ISA, MLW | Gulfstream G650ER specification sheet; brokers quote 2,450–3,000 ft for the same conditions | 14 CFR 25.125 style: from 50 ft over the threshold at Vref on a 3° path to a stop, maximum wheel braking from touchdown, ground spoilers, no reverse-thrust credit, dry runway, MLW. The instrument-only approach pilot flies the path and the flare |
+| Landing distance | 3,000 ft (914 m), SL, ISA, MLW | Gulfstream G650ER specification sheet; brokers quote 2,450–3,000 ft for the same conditions | 14 CFR 25.125 style: from 50 ft over the threshold at Vref on a 3° path to a stop, maximum wheel braking (1 s to the pedals, 1 s ramp), ground spoilers, no reverse-thrust credit, dry runway, MLW. The instrument-only approach pilot flies the path and the flare |
 
 ## Thrust ratings and the climb (October 2026)
 
@@ -110,6 +110,14 @@ figure itself.
 **Landing distance: 791 m (−13 %).** The table's previous 881 m was
 recorded before the tyre model (friction ellipse, torque brakes, anti-skid)
 was merged; the engine work did not move this row.
+
+**Landing distance: 834 m (−9 %), braking as a pilot brakes.** The row had
+drifted to 773 m (−15.4 %, just outside its band). That last step came when
+the autoland flare moved to the radio altimeter's rate, which shortened the
+air distance by 6 m. The cause underneath was the method, which put the
+brakes at full in the first instant on the ground. They now come on as in
+the 172's landing row: 1 s to the pedals, then a 1 s ramp to full. The
+reference and band are unchanged.
 
 ## Behavioural checks
 

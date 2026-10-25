@@ -36,9 +36,18 @@ Runway data:
 Data notes:
 - **Guarulhos renumbered** its runways from 09/27 to 10/28 in September
   2022. Older listings name the same ILSs under the old numbers.
-- **Congonhas** keeps its runway where the map imagery shows it, about
-  112 m east of the survey. Its ILSs are built on that runway, so the
-  beam lines up with the runway the pilot sees.
+- **The map's projection.** In the São Paulo world every airport is placed
+  on the map's grid, EPSG:31983 (UTM 23S) less the map origin
+  (`saoPauloMapNed`). The surveyed coordinates then land on the imagery and
+  OpenStreetMap: Congonhas 35L within 2 m. A tangent plane at MASP put
+  airports 100–300 m off the map, growing with distance, and Congonhas had
+  been shifted 112 m east to compensate. That shift is gone.
+  Other frames keep the tangent plane.
+  - The projection is conformal, so far runways keep their headings. Its
+    scale grows away from 45° W: distances are about 0.1 % long at
+    Brasília, 3.5 % at Manaus and 8 % at Rio Branco. The tangent plane
+    distorted them too: about 3 % short at 2,600 km, with headings several
+    degrees off.
 - **Shared frequency:** Viracopos' real IKP and Campo de Marte's synthetic
   ITMT both use 110.30, 85 km apart. The receiver takes the nearer station
   in range, as a real one would.

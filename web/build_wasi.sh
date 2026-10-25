@@ -19,6 +19,7 @@ for f in avd_text avd_load avd_error_text avd_set_weather avd_reset avd_set_inpu
          avd_set_station avd_set_tank avd_loadsheet avd_loadsheet_names avd_set_airport avd_airport_text \
          avd_set_wind_detail avd_set_wind_hazard \
          avd_set_runway_water avd_wind_grid avd_set_wake avd_wake avd_wind_box avd_bodies \
+         avd_buildings_tile avd_buildings_drop avd_buildings_count \
          avd_traffic_load avd_traffic_spawn avd_traffic_go_around avd_traffic_clear avd_traffic_state \
          avd_traffic_wake avd_points avd_air_velocity avd_line_pilot avd_reset_final \
          avd_set_destination avd_destination avd_destination_runway avd_destinations_text avd_region \

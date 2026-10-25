@@ -19,6 +19,7 @@
 #include "avd/procedures.hpp"
 #include "avd/units.hpp"
 #include "avd/wake.hpp"
+#include "avd/world_ground.hpp"
 #include "avd/world_frame.hpp"
 
 #if defined(__EMSCRIPTEN__)
@@ -79,6 +80,7 @@ struct Sim {
     LocalFrame frame = scenarios::saoPauloWorldFrame();
     scenarios::Airport airport;
     std::unique_ptr<RegionGround> ground;  // every airport of the region at its own elevation
+    std::unique_ptr<BuildingLayer> world;  // the ground with the city's buildings on it (what the aircraft meets)
     GpsNavigator gps;
     std::unique_ptr<SimpleWeather> weather;
     SimpleWeatherParams weatherParams;
@@ -169,10 +171,17 @@ int regionCount() { return static_cast<int>(g_airports.size()); }
 void rebuildWeather();
 void rebuildAir();
 
+// The buildings stand on the region's ground; after it is rebuilt they stand on the new one.
+void groundChanged() {
+    if (g->world) g->world->setInner(*g->ground);
+    else g->world = std::make_unique<BuildingLayer>(*g->ground);
+}
+
 void buildAirport() {
     g->airport = regionAirport(g_airportId == 0 ? 1 : 0);
     g->ground = scenarios::makeRegionGround(g_airports);
     g->ground->setWaterDepth(g->runwayWater);
+    groundChanged();
     rebuildWeather();  // the wind surroundings and hazards are placed around it
 }
 
@@ -315,6 +324,8 @@ void collectEvents() {
         if ((e.type == FlightEventType::AlternatorOffline || e.type == FlightEventType::AlternatorOnline) &&
             g->ac->electrical().generatorCount() > 1)
             s.insert(s.find(' '), " " + std::to_string(e.index + 1));
+        // The surface struck: a building's walls and roofs (avd/world_ground.hpp) name it.
+        if (e.type == FlightEventType::HardPointContact && static_cast<int>(e.value) == surfaces::kBuilding.id) s = "Building strike";
         if (e.type == FlightEventType::HardPointContact || e.type == FlightEventType::PropStrike)
             s += " (" + g->def.contacts[static_cast<std::size_t>(e.index)].name + ")";
         if (!s.empty()) g->events += s + "\n";
@@ -555,7 +566,7 @@ scenarios::TrimResult placeTrimmedOn(Aircraft& ac, Vec3 posNed, Real altMsl, Rea
     ac.setCockpitControl("brakes.parking", 0);
     // The air sample and ground planes must describe the new position
     // before the downwash and the instruments are initialised from them.
-    ac.prepareContext(tr.input, *g->ground, *g->weather);
+    ac.prepareContext(tr.input, *g->world, *g->weather);
     ac.settleDownwash();
     ac.setElevatorTrim(tr.trim);
     return tr;
@@ -574,7 +585,7 @@ void finishReset(bool seedInstruments) {
     PilotInput in;
     in.throttle = g->trimThrottle;
     in.mixture = g->trimMixture;
-    g->ac->step(kDt, in, *g->ground, *g->weather);
+    g->ac->step(kDt, in, *g->world, *g->weather);
     g->ac->instruments().setAltimeterSetting(g->weather->atmosphere().conditions().seaLevelPressure);
     if (seedInstruments) g->ac->resetInstrumentsToTruth();
     // Radios: NAV 1 on the destination's ILS (else the runway in use's), the
@@ -643,7 +654,7 @@ AVD_EXPORT void avd_reset(int mode) {
     if (mode <= 1) {
         const Vec3 p = scenarios::runwayPoint(rw, 30);
         if (mode == 1) g->ac->setEngineRunning(true, 1000);
-        g->ac->placeOnGround(p.x, p.y, rw.headingTrue, *g->ground, *g->weather);
+        g->ac->placeOnGround(p.x, p.y, rw.headingTrue, *g->world, *g->weather);
         if (mode == 0) g->ac->setColdAndDark();
     } else {
         // Mode 2: on the 3 deg final for the runway in use (65 KIAS, flaps 20), exactly
@@ -1029,13 +1040,13 @@ AVD_EXPORT int avd_advance(double seconds) {
         // The traffic first: its wake is in the air the aircraft then flies in.
         Sim::Traffic& T = g->traffic;
         if (T.active) {
-            T.ac->step(kDt, T.pilot.update(*T.ac, kDt), *g->ground, *g->weather);
-            T.wake->update(*T.ac, *g->weather, g->ground.get());
+            T.ac->step(kDt, T.pilot.update(*T.ac, kDt), *g->world, *g->weather);
+            T.wake->update(*T.ac, *g->weather, g->world.get());
         }
         PilotInput in = g->linePilotOn ? g->linePilot.update(*g->ac, kDt) : g->assist.apply(g->raw, *g->ac, kDt);
         if (!g->linePilotOn) g->procedure.update(*g->ac, in, kDt);
-        g->ac->step(kDt, in, *g->ground, flightAir());
-        if (g->wakeOn) g->wake->update(*g->ac, *g->weather, g->ground.get());
+        g->ac->step(kDt, in, *g->world, flightAir());
+        if (g->wakeOn) g->wake->update(*g->ac, *g->weather, g->world.get());
         if (T.active) {
             const Vec3 d = T.ac->state().body.position - g->ac->state().body.position;
             const Real dist = length(d);
@@ -1141,6 +1152,7 @@ AVD_EXPORT int avd_set_destination_record(int length, int runway) {
         if (g) {
             g->ground = scenarios::makeRegionGround(g_airports);
             g->ground->setWaterDepth(g->runwayWater);
+            groundChanged();
         }
     }
     avd_set_destination(ai, ri);
@@ -1317,6 +1329,26 @@ AVD_EXPORT double* avd_state() {
 
 // ---- Runway condition and the wind around the aircraft --------------------
 // Water on the airfield (mm): 0 dry, under 3 wet, 3 and more standing water.
+// ---- The city's buildings in the physics ----
+// One 1 km building tile (i, j) of the flight test bed (an "AVB1" block, the
+// format of flying/buildings/b_<i>_<j>.bin), its bytes written into the text
+// buffer (avd_text(len)): every building stands on the ground and its walls
+// and roofs are solid to the aircraft. Returns the buildings added (-1: a
+// malformed block). Tiles stay until dropped.
+AVD_EXPORT int avd_buildings_tile(int i, int j, int len) {
+    if (!g || !g->world || len < 8 || len > g_textCap) return -1;
+    std::vector<WorldBuilding> list;
+    if (!g->world->parseAvb1(reinterpret_cast<const std::uint8_t*>(g_text), static_cast<std::size_t>(len), i * 1000.0, j * 1000.0, list))
+        return -1;
+    const int n = static_cast<int>(list.size());
+    g->world->add((static_cast<std::int64_t>(i) << 32) ^ (static_cast<std::int64_t>(j) & 0xffffffff), std::move(list));
+    return n;
+}
+AVD_EXPORT void avd_buildings_drop(int i, int j) {
+    if (g && g->world) g->world->remove((static_cast<std::int64_t>(i) << 32) ^ (static_cast<std::int64_t>(j) & 0xffffffff));
+}
+AVD_EXPORT int avd_buildings_count() { return g && g->world ? static_cast<int>(g->world->buildingCount()) : 0; }
+
 AVD_EXPORT void avd_set_runway_water(double mm) {
     if (!g) return;
     g->runwayWater = std::clamp(std::isfinite(mm) ? mm : 0.0, 0.0, 50.0) * 1e-3;
@@ -1432,7 +1464,7 @@ AVD_EXPORT int avd_traffic_spawn(double east, double north, double heightAboveFi
     const Vec3 ned = world::nedFromEnu({east, north, 0});
     const Real altMsl = g->airport.elevation + std::max(heightAboveField, 10.0);
     const scenarios::TrimResult tr = placeTrimmedOn(*T.ac, ned, altMsl, degToRad(trackDeg), kias, flap, degToRad(pathDeg), gearDown != 0);
-    T.ac->step(kDt, tr.input, *g->ground, *g->weather);
+    T.ac->step(kDt, tr.input, *g->world, *g->weather);
     T.ac->resetInstrumentsToTruth();
     T.ac->drainEvents();
     scenarios::LinePilot p;

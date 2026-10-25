@@ -5,6 +5,8 @@
 // for the geodetic latitude iteration start.
 #include "avd/geodesy.hpp"
 
+#include <cmath>
+
 namespace avd {
 namespace wgs84 {
 
@@ -51,6 +53,32 @@ Real normalGravity(Real latitude, Real height) {
     const Real a = kSemiMajor;
     return g0 * (1.0 - 2.0 / a * (1.0 + kFlattening + m - 2.0 * kFlattening * s2) * height +
                  3.0 / (a * a) * height * height);
+}
+
+void transverseMercator(const Geodetic& g, Real lon0, Real k0, Real& east, Real& north) {
+    // Karney (2011), "Transverse Mercator with an accuracy of a few nanometers", eqs. 9-12,
+    // with Krüger's alpha coefficients to n^6.
+    const Real n = kFlattening / (2.0 - kFlattening), n2 = n * n, n3 = n2 * n, n4 = n3 * n, n5 = n4 * n, n6 = n5 * n;
+    const Real A = kSemiMajor / (1 + n) * (1 + n2 / 4 + n4 / 64 + n6 / 256);
+    const Real alpha[7] = {0,
+                           n / 2 - 2 * n2 / 3 + 5 * n3 / 16 + 41 * n4 / 180 - 127 * n5 / 288 + 7891 * n6 / 37800,
+                           13 * n2 / 48 - 3 * n3 / 5 + 557 * n4 / 1440 + 281 * n5 / 630 - 1983433 * n6 / 1935360,
+                           61 * n3 / 240 - 103 * n4 / 140 + 15061 * n5 / 26880 + 167603 * n6 / 181440,
+                           49561 * n4 / 161280 - 179 * n5 / 168 + 6601661 * n6 / 7257600,
+                           34729 * n5 / 80640 - 3418889 * n6 / 1995840,
+                           212378941 * n6 / 319334400};
+    const Real e = std::sqrt(kE2), phi = g.latitude, lam = g.longitude - lon0;
+    // Conformal latitude via tau' (Karney eq. 7).
+    const Real tau = std::tan(phi), sigma = std::sinh(e * std::atanh(e * tau / std::sqrt(1 + tau * tau)));
+    const Real taup = tau * std::sqrt(1 + sigma * sigma) - sigma * std::sqrt(1 + tau * tau);
+    const Real xip = std::atan2(taup, std::cos(lam)), etap = std::asinh(std::sin(lam) / std::sqrt(taup * taup + std::cos(lam) * std::cos(lam)));
+    Real xi = xip, eta = etap;
+    for (int j = 1; j <= 6; ++j) {
+        xi += alpha[j] * std::sin(2 * j * xip) * std::cosh(2 * j * etap);
+        eta += alpha[j] * std::cos(2 * j * xip) * std::sinh(2 * j * etap);
+    }
+    east = k0 * A * eta;
+    north = k0 * A * xi;
 }
 
 }  // namespace wgs84

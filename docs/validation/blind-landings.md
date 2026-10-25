@@ -8,9 +8,9 @@ system.
 **Answer: yes.** All seven aircraft, flown by an instrument-only pilot,
 landed and stopped on the centreline in zero visibility, on both the ILS and
 RNAV approaches. That held in calm air and in a light (6 kt) crosswind with
-the turbulence it makes over the city. Every touchdown was inside the CAT III
-limits below. Above that wind the larger jets begin to land firm (see
-*Limits*).
+the turbulence it makes over the city; the CRJ700 and 737-800 also in 10 kt.
+Every touchdown was inside the CAT III limits below. From about 12 kt the
+jets start to fall outside them (see *Limits*).
 
 ## The pilot: `scenarios::ApproachPilot`
 
@@ -46,6 +46,8 @@ runway's direction beyond the charted course.
 - **Flare and retard.** This is the autoland law, flown on the radio
   altimeter:
   - The flare starts about 5 s from the ground.
+  - Its sink rate is the radio altimeter's rate of change (the 172's, the
+    altimeter's).
   - The sink rate is held in proportion to the height, plus a small
     touchdown sink.
   - While the sink is still too high, the pitch is never lowered more than
@@ -77,32 +79,34 @@ ILS 10L at Guarulhos, calm, zero visibility:
 
 | Aircraft | Touchdown | Off centreline | Sink | Stopped at |
 |---|---|---|---|---|
-| Tupi T-180 (172) | 426 m | 0.9 m | 122 fpm | 729 m |
-| Top G | 520 m | 0.2 m | 432 fpm | 1,089 m |
-| Phenom 300E | 469 m | 1.0 m | 328 fpm | 866 m |
-| Citation CJ4 | 518 m | 0.7 m | 278 fpm | 953 m |
-| Learjet 45 | 468 m | 0.6 m | 348 fpm | 868 m |
-| CRJ700 | 647 m | 0.8 m | 441 fpm | 1,353 m |
-| 737-800 | 532 m | 0.1 m | 162 fpm | 1,433 m |
+| Tupi T-180 (172) | 427 m | 1.2 m | 148 fpm | 670 m |
+| Top G | 498 m | 0.2 m | 399 fpm | 908 m |
+| Phenom 300E | 476 m | 0.4 m | 319 fpm | 782 m |
+| Citation CJ4 | 503 m | 0.8 m | 288 fpm | 817 m |
+| Learjet 45 | 467 m | 1.2 m | 346 fpm | 779 m |
+| CRJ700 | 579 m | 0.9 m | 347 fpm | 1,184 m |
+| 737-800 | 527 m | 0.1 m | 391 fpm | 1,180 m |
 
-ILS 35L at Congonhas (1,940 m), 6 kt from 060 (almost straight across),
-with the mechanical turbulence the wind makes over the city:
+ILS 35L at Congonhas (1,940 m), the wind from 060 (almost straight across),
+with the mechanical turbulence it makes over the city:
 
-| Aircraft | Touchdown | Off centreline | Sink | Stopped at |
-|---|---|---|---|---|
-| Tupi T-180 | 422 m | 0.5 m | 132 fpm | 730 m |
-| Top G | 489 m | 2.7 m | 397 fpm | 1,040 m |
-| CRJ700 | 694 m | 1.1 m | 487 fpm | 1,294 m |
-| 737-800 | 484 m | 1.6 m | 292 fpm | 1,339 m |
+| Aircraft | Wind | Touchdown | Off centreline | Sink | Stopped at |
+|---|---|---|---|---|---|
+| Tupi T-180 | 6 kt | 425 m | 0.7 m | 121 fpm | 654 m |
+| Top G | 6 kt | 476 m | 2.8 m | 417 fpm | 884 m |
+| CRJ700 | 6 kt | 585 m | 2.9 m | 387 fpm | 1,129 m |
+| 737-800 | 6 kt | 478 m | 2.5 m | 360 fpm | 1,124 m |
+| CRJ700 | 10 kt | 524 m | 2.2 m | 447 fpm | 1,051 m |
+| 737-800 | 10 kt | 496 m | 2.9 m | 363 fpm | 1,150 m |
 
 RNAV (GPS) approaches, the GPS vertical path to the threshold:
 
 | Aircraft | Approach | Touchdown | Off centreline | Sink | Stopped at |
 |---|---|---|---|---|---|
-| Tupi T-180 | São José dos Campos 16, calm | 442 m | 0.8 m | 118 fpm | 731 m |
-| Top G | São José dos Campos 16, calm | 461 m | 0.4 m | 437 fpm | 1,089 m |
-| CRJ700 | São José dos Campos 16, calm | 589 m | 1.8 m | 441 fpm | 1,285 m |
-| 737-800 | Guarulhos 28L, 6 kt from 200 | 444 m | 0.7 m | 405 fpm | 1,281 m |
+| Tupi T-180 | São José dos Campos 16, calm | 416 m | 1.1 m | 144 fpm | 654 m |
+| Top G | São José dos Campos 16, calm | 436 m | 0.4 m | 409 fpm | 842 m |
+| CRJ700 | São José dos Campos 16, calm | 519 m | 1.3 m | 354 fpm | 1,119 m |
+| 737-800 | Guarulhos 28L, 6 kt from 200 | 421 m | 0.2 m | 447 fpm | 1,014 m |
 
 ## What it took (found and fixed)
 
@@ -132,15 +136,22 @@ RNAV (GPS) approaches, the GPS vertical path to the threshold:
     starts at level-off.
 - **A soft 737 flare in a gust.** The flare's pitch authority was raised (to
   three times the approach loop's).
+- **A flare on the wrong vertical speed.**
+  - The flare read its sink rate from the barometric altimeter.
+  - The static source's error moves with the angle of attack, so as the
+    flare raised the nose it read the CRJ sinking up to 25 % faster than it
+    was. The law kept pulling, ballooned the CRJ to a climb at 20 ft,
+    floated it at idle and dropped it in at 677 fpm.
+  - The flare now uses the radio altimeter's rate, as an autoland does:
+    387 fpm, and 8–10 kt crosswinds pass.
 
 ## Limits
 
 - **Stronger crosswinds and turbulence are not passed yet.**
-  - In 8 kt across Congonhas, the CRJ700 touched down at 748 fpm.
-  - In 10–12 kt with added turbulence (σ 0.5–1 m/s on top of the city's
-    mechanical turbulence), the 737-800 and CRJ700 landed long or firm in
-    some runs.
-  - The lateral tracking held within a few metres in those runs.
+  - In 12 kt across Congonhas, the CRJ700 touched down 9.2 m off the
+    centreline (the limit is 8.2 m) and the Top G at 581 fpm.
+  - Added turbulence (σ 0.5–1 m/s on top of the city's mechanical
+    turbulence) is not tested since the flare change.
   - Real CAT III autoland is certified to 15–25 kt crosswind. This pilot's
     flare would need gust compensation (a speed additive, a flare on inertial
     vertical speed) to get there.

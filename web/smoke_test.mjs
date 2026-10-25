@@ -296,4 +296,30 @@ check(box.length === 768 && box.every(Number.isFinite), 'wind box around the air
 A.avd_set_wake(0);
 check(A.wake().n === 0, 'wake off: nothing shed');
 A.avd_set_wake(1);
+
+// Buildings in the physics: an AVB1 tile (the flight test bed's format) with a
+// 60 m tower 300 m ahead of the aircraft, flown into at 30 m above its base.
+{
+  const at = A.state(), hdg = at[9] * Math.PI / 180;
+  const te = at[0] + 300 * Math.sin(hdg), tn = at[1] + 300 * Math.cos(hdg);
+  const ti = Math.floor(te / 1000), tj = Math.floor(tn / 1000);
+  const x = Math.round((te - ti * 1000) * 10), y = Math.round((tn - tj * 1000) * 10), r = 300;  // dm; 60 m square
+  const blk = new DataView(new ArrayBuffer(8 + 6 + 2 + 4 * 4));
+  [65, 86, 66, 49].forEach((c, k) => blk.setUint8(k, c));
+  blk.setUint32(4, 1, true);
+  blk.setUint16(8, 600, true); blk.setUint16(10, 0, true); blk.setUint8(12, 3); blk.setUint8(13, 1); blk.setUint16(14, 4, true);
+  [[x - r, y - r], [x + r, y - r], [x + r, y + r], [x - r, y + r]].forEach(([px, py], k) => { blk.setInt16(16 + 4 * k, px, true); blk.setInt16(18 + 4 * k, py, true); });
+  const ground = A.avd_ground_height(te, tn);
+  A.avd_reset_air(at[0], at[1], ground + 30 - (at[13] - at[14]) * 0.3048, at[9], 120, 0);
+  const n = A.buildingsTile(ti, tj, new Uint8Array(blk.buffer));
+  check(n === 1 && A.avd_buildings_count() === 1, `buildings: a tile of ${n} building in the physics`);
+  let strike = '';
+  for (let t = 0; t < 20 && !strike; t += 0.25) {
+    A.avd_set_input(0, 0, 0, 0.8, 1, 0, 0, 0, 0); A.avd_advance(0.25);
+    for (const e of A.events()) if (e.startsWith('Building strike')) strike = e;
+  }
+  check(strike !== '', `buildings: flown into, ${strike || 'no strike'}`);
+  A.avd_buildings_drop(ti, tj);
+  check(A.avd_buildings_count() === 0, 'buildings: the tile dropped');
+}
 process.exit(failures ? 1 : 0);

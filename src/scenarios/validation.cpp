@@ -600,9 +600,10 @@ Rows topGVref() {
 
 Rows topGLandingDistance() {
     // 14 CFR 25.125 style: from 50 ft over the threshold at Vref on a 3 deg
-    // path to a full stop on a dry runway, maximum wheel braking from
-    // touchdown, ground spoilers, no reverse-thrust credit; maximum landing
-    // weight, sea level ISA, no wind. The instrument-only approach pilot
+    // path to a full stop on a dry runway, maximum wheel braking (1 s to the
+    // pedals, a 1 s ramp: the 172 row's technique; braking at full in the
+    // first instant on the ground is no pilot's), ground spoilers, no
+    // reverse-thrust credit; maximum landing weight, sea level ISA, no wind. The instrument-only approach pilot
     // (ApproachPilot) flies the path on a geometric "GPS" indication and
     // flares; the brakes are overridden to full on the ground.
     Rows rows;
@@ -671,7 +672,7 @@ Rows topGLandingDistance() {
     pilot.controls = tr.input;
     GpsIndication gps;
     pilot.gps = &gps;
-    Real x50 = 0, xStop = 0, xTouch = 0, speedAt50 = 0, sink = 0;
+    Real x50 = 0, xStop = 0, xTouch = 0, speedAt50 = 0, sink = 0, onGroundFor = 0;
     bool at50 = false, touched = false, stopped = false;
     for (int i = 0; i < 240 * 300; ++i) {
         const AircraftTelemetry& t = ac.telemetry();
@@ -681,8 +682,9 @@ Rows topGLandingDistance() {
         gps.crossTrack = p.y;
         gps.verticalDeviation = t.altitudeMsl - (15.24 + std::max(-p.x, 0.0) * std::tan(degToRad(3)));
         PilotInput in = pilot.update(ac, kDefaultDt);
-        if (t.onGround) {
-            in.brakeLeft = in.brakeRight = 1.0;  // maximum braking from touchdown
+        if (touched) {
+            onGroundFor += kDefaultDt;
+            in.brakeLeft = in.brakeRight = clamp(onGroundFor - 1.0, 0.0, 1.0);  // maximum braking, 1 s to the pedals, 1 s ramp
             in.throttle = 0;
         }
         ac.step(kDefaultDt, in, ground, atm);
@@ -708,7 +710,7 @@ Rows topGLandingDistance() {
     rows.push_back(tolerance("top_g.landing.distance", "Landing distance from 50 ft, maximum landing weight (37.9 t)", "3,000 ft (914 m), SL, ISA, MLW", 914, distance, 15, "m",
                              "Gulfstream G650ER specification sheet (landing distance, SL, ISA, MLW); brokers quote 2,450-3,000 ft",
                              "Vref " + fmt(msToKt(vref), 0) + " KIAS (" + fmt(msToKt(speedAt50), 0) + " at 50 ft), touchdown " + fmt(xTouch - x50, 0) + " m past the 50 ft point at " +
-                                 fmt(sink, 0) + " fpm; full wheel braking from touchdown, ground spoilers, no reverse credit, dry runway"));
+                                 fmt(sink, 0) + " fpm; full wheel braking (1 s to the pedals, 1 s ramp), ground spoilers, no reverse credit, dry runway"));
     tag(rows, kTopG);
     return rows;
 }

@@ -214,6 +214,8 @@ TEST_CASE("blind landings: ILS in a crosswind; RNAV (GPS) approaches") {
         const bool jet = std::string(id) != "tupi_t180";
         checkLanding(fly(id, "SBSP", 0, true, jet ? 10 : 6, 6, 60), sp.runways[0]);
     }
+    // 10 kt across: the two largest jets, flaring on the radio altimeter's rate.
+    for (const char* id : {"crj700", "b738"}) checkLanding(fly(id, "SBSP", 0, true, 10, 10, 60), sp.runways[0]);
     // GPS approaches (São José dos Campos 16 has no ILS; Guarulhos 28L flown on GPS).
     const Airport& sj = airport("SBSJ");
     for (const char* id : {"tupi_t180", "top_g", "crj700"}) {
