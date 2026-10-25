@@ -667,6 +667,9 @@ void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, Ae
     // away -- a tumbling airframe can put a control point on another strip's
     // trailing leg or its image, where the singular kernel has no bound (a
     // CRJ cartwheeling off a runway reached 8e8 N, then a numerical fault).
+    // So does an induced flow faster than the free stream itself (the
+    // circulation in bounds, but a control point on a leg's singular kernel:
+    // a business jet's wing dug into a runway reached 1e10 N in one step).
     // That step the surface goes without induction (strip theory), and the
     // next solve starts cold.
     bool runaway = false;
@@ -674,16 +677,20 @@ void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, Ae
         const Strip& st = strips_[static_cast<std::size_t>(n0 + i)];
         runaway = !std::isfinite(G[i]) || std::abs(G[i]) > 3.0 * st.chord * length(vFree[i]) + 1.0;
     }
-    if (runaway) {
-        for (int i = 0; i < n; ++i) G[i] = 0;
-        out.llValid[s] = false;
-    }
-    for (int i = 0; i < n; ++i) {
+    for (int i = 0; i < n && !runaway; ++i) {
         Vec3 a;
         for (int j = 0; j < n; ++j) a += V[i * n + j] * G[j];
         induced[i] = a;
-        out.strips[static_cast<std::size_t>(n0 + i)].gamma = G[i];
+        runaway = !isFinite(a) || length(a) > length(vFree[i]) + 5.0;
     }
+    if (runaway) {
+        for (int i = 0; i < n; ++i) {
+            G[i] = 0;
+            induced[i] = {};
+        }
+        out.llValid[s] = false;
+    }
+    for (int i = 0; i < n; ++i) out.strips[static_cast<std::size_t>(n0 + i)].gamma = G[i];
 }
 
 void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
