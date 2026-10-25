@@ -21,7 +21,7 @@ for f in avd_text avd_load avd_error_text avd_set_weather avd_reset avd_set_inpu
          avd_set_runway_water avd_wind_grid avd_set_wake avd_wake avd_wind_box avd_bodies \
          avd_buildings_tile avd_buildings_drop avd_buildings_count \
          avd_traffic_load avd_traffic_spawn avd_traffic_go_around avd_traffic_clear avd_traffic_state \
-         avd_traffic_wake avd_points avd_air_velocity avd_line_pilot avd_autoland avd_autoland_status avd_reset_final \
+         avd_traffic_wake avd_points avd_air_velocity avd_line_pilot avd_autoland avd_autoland_status avd_occupant avd_reset_final \
          avd_set_destination avd_destination avd_destination_runway avd_destinations_text avd_region \
          avd_ground_height avd_route avd_route_text avd_gps avd_set_destination_record \
          avd_abi_version avd_layout avd_build_id; do

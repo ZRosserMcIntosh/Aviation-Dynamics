@@ -9,6 +9,7 @@ set(AVD_TEST_SOURCES
   test_validation.cpp
   test_instruments.cpp
   test_world.cpp
+  test_crash.cpp
   test_jet.cpp
   test_jetgen.cpp
   test_destinations.cpp

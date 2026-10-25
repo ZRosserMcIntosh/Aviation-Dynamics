@@ -714,6 +714,7 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("damping_compression_ns_per_m", g.dampingCompression);
         o.num("damping_rebound_ns_per_m", g.dampingRebound);
         o.num("max_compression_m", g.maxCompression);
+        o.num("collapse_speed_mps", g.collapseSpeed);
         o.num("wheel_radius_m", g.wheelRadius);
         o.num("rolling_resistance", g.rollingResistance);
         o.num("brake_coefficient", g.maxBrakeForceCoefficient);

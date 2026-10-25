@@ -31,6 +31,8 @@ struct Landing {
     bool touched = false, stopped = false, faulted = false;
     Real along = 0, lateral = 0, sinkFpm = 0, rollout = 0, stopLateral = 0, maxBankLow = 0;
     Real lateralAt200 = 0, verticalAt200 = 0;
+    Real seatG = 0, dri = 0;  // the dummy in the pilot's seat
+    bool gearCollapsed = false;
 };
 
 const Airport& airport(const char* icao) {
@@ -179,10 +181,13 @@ Landing fly(const char* id, const char* icao, int rwy, bool ils, Real startNm, R
         L.stopLateral = lateral;
     }
     L.stopped = pilot.phase() == ApproachPilot::Phase::Stopped;
+    L.seatG = ac.occupant().peakG;
+    L.dri = ac.occupant().dri;
+    for (int g = 0; g < static_cast<int>(def.gear.size()); ++g) L.gearCollapsed = L.gearCollapsed || ac.gearFailed(g);
     std::printf("    %-9s %s %-3s %s %4.1f NM wind %2.0f kt turb %.1f: TD %5.0f m past thr, %+5.1f m off, %4.0f fpm; stop %5.0f m, %+5.1f m; "
-                "at 200 ft %+5.1f m / %+5.1f m; bank<200ft %4.1f deg%s\n",
+                "at 200 ft %+5.1f m / %+5.1f m; bank<200ft %4.1f deg; seat %.1f g, DRI %.1f%s\n",
                 id, icao, rw.ident.c_str(), ils ? "ILS " : "RNAV", startNm, windKt, turb, L.along, L.lateral, L.sinkFpm,
-                L.rollout, L.stopLateral, L.lateralAt200, L.verticalAt200, radToDeg(L.maxBankLow), L.faulted ? " FAULT" : "");
+                L.rollout, L.stopLateral, L.lateralAt200, L.verticalAt200, radToDeg(L.maxBankLow), L.seatG, L.dri, L.faulted ? " FAULT" : "");
     return L;
 }
 
@@ -193,6 +198,9 @@ void checkLanding(const Landing& L, const RunwayDef& rw) {
     CHECK(L.sinkFpm < 600);                            // under 10 ft/s, the design sink rate
     CHECK(L.rollout < rw.length - rw.displaced);       // stopped on the runway
     CHECK(std::abs(L.stopLateral) < 0.5 * rw.width - 3);
+    // The pilot's seat rode an ordinary landing: the gear intact, the spine far from its limit (DRI 18).
+    CHECK(!L.gearCollapsed);
+    CHECK(L.dri < 5);
 }
 
 }  // namespace

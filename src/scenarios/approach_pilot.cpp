@@ -116,8 +116,17 @@ PilotInput ApproachPilot::update(const Aircraft& ac, Real dt) {
 
     if (phase_ == Phase::Rollout || phase_ == Phase::Stopped) {
         // Nose down, idle, brakes; steer the centreline on the localizer (or GPS).
+        // The nose is flown down from the touchdown attitude at 2 deg/s, back
+        // pressure against its rate: let fall (the mains' spin-up and the
+        // ground spoilers pitch it down) it struck at 20 deg/s, 3.9 g at a
+        // jet's cockpit.
         in.throttle = 0;
-        in.pitch = clamp(-0.6 * (pitch + 0.02) * 2.0, -0.4, 0.2);
+        if (!derotating_) {
+            derotPitch_ = pitch;
+            derotating_ = true;
+        }
+        derotPitch_ = std::max(derotPitch_ - 0.035 * dt, -0.02);
+        in.pitch = clamp(2.0 * (derotPitch_ - pitch) - 1.0 * pitchRate, -0.4, 0.6);
         in.roll = clamp(-1.5 * roll, -0.5, 0.5);
         // Steer a heading back to the centreline (at most 4 deg off the course), the heading rate damping it.
         const Real hc = courseMagnetic - (latValid ? clamp(0.008 * y_ + 0.04 * yRate, -0.07, 0.07) : 0.0);

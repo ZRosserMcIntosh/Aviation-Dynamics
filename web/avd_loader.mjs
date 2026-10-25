@@ -123,6 +123,13 @@ export default async function createAvdModule(wasmBytes) {
     return new Float64Array(memory.buffer, ex.avd_air_velocity(n), 3 * n);
   };
   A.linePilot = (on, kias = 0, pathDeg = 0) => ex.avd_line_pilot(on ? 1 : 0, kias, pathDeg);
+  // The crash dummy in the pilot's seat and the damage: { peakG, spinalG, dri, lumbarN, hic, collapsed: [bool per leg], structural }.
+  A.occupant = () => {
+    const v = new Float64Array(memory.buffer, ex.avd_occupant(), 7);
+    const collapsed = [];
+    for (let i = 0; i < 16; ++i) collapsed.push(((v[5] | 0) >> i & 1) === 1);
+    return { peakG: v[0], spinalG: v[1], dri: v[2], lumbarN: v[3], hic: v[4], collapsed, structural: v[6] === 1 };
+  };
   // Autoland: 1 engaged, 0 off, -1 no approach to fly, -2 on the ground.
   A.autoland = (on) => ex.avd_autoland(on ? 1 : 0);
   // { on, phase (0 intercept, 1 final, 2 flare, 3 rollout, 4 stopped), right (m), above (m), kias, flap }

@@ -902,17 +902,23 @@ TEST_CASE("top g: ground spoilers and thrust reversers deploy on touchdown, reve
 
     // A landing (after flight) deploys them with the throttles short of idle,
     // too: the automation retards them; a take-off roll at that setting does not.
+    // Flown onto the runway from 8 m on a 2 deg path (2.2 m/s), within what
+    // the gear absorbs.
     Aircraft ac(jet());
     SimpleWeather atm;
     FlatGround ground(0, surfaces::kAsphalt);
-    ac.setEngineRunning(true);
-    ac.placeOnGround(0, 0, 0, ground, atm);
-    ac.setCockpitControl("brakes.parking", 0);
-    DynamicState st = ac.state();
-    st.body.position.z -= 8;
-    st.body.velocity = {ktToMs(125), 0, 1.6};
+    TrimRequest req;
+    req.altitude = 8;
+    req.tas = ktToMs(125);
+    req.flightPath = degToRad(-2);
+    const TrimResult tr = trim(ac, req, atm);
+    DynamicState st = tr.state;
+    st.body.position = {0, 0, -8};
     ac.setState(st);
-    PilotInput in;
+    ac.prepareContext(tr.input, ground, atm);
+    ac.settleDownwash();
+    ac.setElevatorTrim(tr.trim);
+    PilotInput in = tr.input;
     in.throttle = 0.3;
     bool deployed = false;
     for (int i = 0; i < 240 * 12 && !deployed; ++i) {

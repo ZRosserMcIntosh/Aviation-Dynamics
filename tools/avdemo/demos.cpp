@@ -46,6 +46,8 @@ const char* eventText(FlightEventType t) {
         case FlightEventType::GearOverspeed: return "gear extended above VLE";
         case FlightEventType::LoadShed: return "LOAD SHED (essential bus only)";
         case FlightEventType::LoadRestored: return "load shed reset, all buses powered";
+        case FlightEventType::GearCollapse: return "LANDING GEAR COLLAPSED";
+        case FlightEventType::StructuralFailure: return "STRUCTURAL FAILURE (ultimate load exceeded)";
     }
     return "?";
 }
