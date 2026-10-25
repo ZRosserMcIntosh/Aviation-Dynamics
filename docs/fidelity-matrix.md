@@ -39,12 +39,12 @@ Legend: ✅ implemented and tested · 🟡 partial or simplified · ⛔ not star
 | Navigation radios | 🟡 | VOR, LOC, GS, radio horizon; the São Paulo region's real ILSs (Congonhas, Guarulhos, Viracopos: published idents and frequencies, antennas sited from the runways, course in the antenna's own frame, GS coverage about the localizer course); a synthetic test VOR and Campo de Marte ILS ([architecture/navigation.md](architecture/navigation.md)) | Geometry tests; every ILS centred on its own 3° path (`tests/test_destinations.cpp`) | Antenna sites estimated; no DME, ADF or marker |
 | GPS navigation | 🟡 | `GpsNavigator`: route legs, turn-anticipated sequencing, Garmin-style CDI scaling (±2 / 1 / 0.3 NM, angular on final), LPV-style 3° vertical path from the FAF; generated approach routes (IAF when needed, IF 10 NM, FAF 5 NM) to any runway of 1,150 Brazilian airports (`data/world/airports_br.json`), NAV 1 tuned to the destination ILS | `tests/test_destinations.cpp`: a route flown end to end, CDI/VDI sense and scaling; web smoke test | No published procedures (fixes, STARs, missed approaches, minimums) |
 | Glass cockpit (G1000) | ⛔ | — | — | Separate profile on the same `CockpitState` pattern |
-| Autopilot | 🟡 | Assists (wing leveller, straight-and-level hold through stick and trim); `scenarios::ApproachPilot`: coupled ILS/GPS approach, autoland flare and retard, decrab and rollout, from the cockpit instruments only | Assist tests; [validation/blind-landings.md](validation/blind-landings.md): all seven aircraft land blind on ILS and RNAV, calm and in a 6 kt crosswind | No modes or panel in the aircraft, no servo model; firm landings above ~8 kt crosswind |
+| Autopilot | 🟡 | Assists (wing leveller, straight-and-level hold through stick and trim); `scenarios::ApproachPilot`: coupled ILS/GPS approach, autoland flare and retard, decrab and rollout, from the cockpit instruments only | Assist tests; [validation/blind-landings.md](validation/blind-landings.md): all seven aircraft land blind on ILS and RNAV, calm and in a 6 kt crosswind (the CRJ700 and 737-800 also in 10 kt) | No modes or panel in the aircraft, no servo model; outside the CAT III limits from ~12 kt crosswind |
 | Damage and failures | 🟡 | Injectable instrument and system failures; component loss flag in aero | Failure tests | No structural loads, no damage model |
 | Fire, bailout | ⛔ | — | — | — |
 | Assists | ✅ | Arcade, Sport, Simulation acting on controls | Assist tests | — |
 | Procedures | ✅ | Quick Start through cockpit controls | Procedure tests | Only one checklist |
-| World integration | 🟡 | ENU world frame at MASP; six region airports (OurAirports runways); `RegionGround` (each field at its own elevation, blended between); `TiledWorldGround` (terrain, surfaces, buildings, wall strikes) with a documented tile format | Runway geometry; region-ground and world-ground tests | No real terrain between the fields; real São Paulo tile data not exported yet |
+| World integration | 🟡 | ENU world frame at MASP; six region airports (OurAirports runways); `RegionGround` (each field at its own elevation, blended between); `TiledWorldGround` (terrain, surfaces, buildings, wall strikes) with a documented tile format; `BuildingLayer`: São Paulo's 2.07 million OpenStreetMap buildings (`tools/osm_buildings`, at their mapped heights) streamed onto the region's ground, walls and roofs solid to the airframe | Runway geometry; region-ground, world-ground and building-layer tests; the web smoke test's building strike | No real terrain between the fields (the buildings stand on the blended ground) |
 | Browser runtime | ✅ | wasi-sdk WASM (about 640 KB), JS loader with an ABI version handshake and `avd_layout()`-sized views, build id, 2D cockpit | Node smoke test, ABI/README check, headless Chromium check | No 3D cockpit |
 | Multiplayer | ⛔ | — | — | ADR 0003: deterministic per platform only |
 | Audio | 🟡 | Stall horn in the web cockpit | — | No engine, wind or ground audio model |
@@ -56,7 +56,7 @@ Generated from the test output (`tests/test_validation.cpp`, rows in
 sources and the discussion of every row outside its band are in
 [validation/c172s-validation.md](validation/c172s-validation.md) and
 [validation/top-g-validation.md](validation/top-g-validation.md). The
-whole suite has <!-- validation:begin tests -->240<!-- validation:end --> test cases.
+whole suite has <!-- validation:begin tests -->242<!-- validation:end --> test cases.
 
 ### Tupi T-180 against the Cessna 172S POH
 
@@ -114,7 +114,7 @@ whole suite has <!-- validation:begin tests -->240<!-- validation:end --> test c
 | Fuel flow at Mach 0.85, FL450, mid weight<br><small>83 % of the maximum-cruise rating (14.5 kN per engine)</small> | about 2,600-3,400 lb/h (class figures) | 1,456 kg/h | — | 998–1,724 kg/h | within | published long-range cruise burn of the class |
 | Vref (1.23 Vs1g, landing flap) at 27.5 t<br><small>sea level ISA; trimmed CLmax, flaps 39; the square-root-of-weight law, not an independent published point</small> | about 103 KIAS (published 121 kt at MLW scaled by sqrt(W)) | 102 KIAS | — | 100–110 KIAS | within | derived: brokers' MLW Vref (about 121 kt at 37.9 t) x sqrt(27.5 / 37.9) = 103 KIAS; +-5 kt |
 | Vref (1.23 Vs1g, landing flap) at the maximum landing weight, 37.9 t<br><small>sea level ISA; trimmed CLmax, flaps 39</small> | 110-125 KIAS (representative; published values 110-121 kt) | 121 KIAS | — | 110–125 KIAS | within | representative, estimated (G650ER class) |
-| Landing distance from 50 ft, maximum landing weight (37.9 t)<br><small>Vref 121 KIAS (121 at 50 ft), touchdown 456 m past the 50 ft point at 599 fpm; full wheel braking from touchdown, ground spoilers, no reverse credit, dry runway</small> | 3,000 ft (914 m), SL, ISA, MLW | 781 m | -14.6 % | ±15 % | within | Gulfstream G650ER specification sheet (landing distance, SL, ISA, MLW); brokers quote 2,450-3,000 ft |
+| Landing distance from 50 ft, maximum landing weight (37.9 t)<br><small>Vref 121 KIAS (121 at 50 ft), touchdown 450 m past the 50 ft point at 545 fpm; full wheel braking (1 s to the pedals, 1 s ramp), ground spoilers, no reverse credit, dry runway</small> | 3,000 ft (914 m), SL, ISA, MLW | 834 m | -8.8 % | ±15 % | within | Gulfstream G650ER specification sheet (landing distance, SL, ISA, MLW); brokers quote 2,450-3,000 ft |
 <!-- validation:end -->
 
 <!-- validation:begin summary aircraft=top_g -->

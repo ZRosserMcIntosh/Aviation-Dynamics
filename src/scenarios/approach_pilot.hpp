@@ -54,7 +54,8 @@ public:
 private:
     Phase phase_ = Phase::Intercept;
     Real y_ = 0, z_ = 0, yRate_ = 0, hdgRate_ = 0, prevHdg_ = 0, hdgLag_ = 0, drift_ = 0, pastThreshold_ = 0, prevRoll_ = 0, prevPitch_ = 0, prevY_ = 0, flareVs_ = 0;
-    bool havePrev_ = false, havePitchTarget_ = false;
+    bool havePrev_ = false, havePitchTarget_ = false, haveRa_ = false;
+    Real raPrev_ = 0, vsRa_ = 0;
     Real retardFrom_ = 0, flareMax_ = 0, vsFast_ = 0, lastThrottle_ = 1, flareInt_ = 0, flarePitch_ = 0, hdgErr_ = 0, rollRate_ = 0, pitchRate_ = 0, flareH_ = 12, pitchTarget_ = 0, altPrev_ = 0, vsFilt_ = 0, iasPrev_ = 0, iasRate_ = 0;
     bool haveAlt_ = false, haveIas_ = false, retarded_ = false;
     Pid pitchPid_{3.2, 1.6, 0.0, -0.5, 0.5};

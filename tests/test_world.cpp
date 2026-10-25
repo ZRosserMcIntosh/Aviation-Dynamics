@@ -1,8 +1,10 @@
 // Aviation Dynamics — tests: the open-world ground (terrain tiles, buildings).
 // SPDX-License-Identifier: MIT
 #include <cmath>
+#include <cstdint>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "airports.hpp"
 #include "avd/units.hpp"
@@ -152,4 +154,114 @@ TEST_CASE("world ground: an aircraft parks on sloping terrain and a wingtip stri
         }
         CHECK(building);
     }
+}
+
+TEST_CASE("building layer: buildings on another ground -- roofs, walls, rays, AVB1 tiles, a wingtip strike") {
+    // The region's ground (each field at its own elevation) with streamed buildings on it.
+    const auto region = makeRegionGround(saoPauloRegionAirports());
+    BuildingLayer layer(*region);
+    // An AVB1 block for tile (0, 0): one 20 x 20 m, 40 m building with its SW corner
+    // at (90, -10) from the tile's corner, and a 10 m one with a 4 x 4 m courtyard.
+    std::vector<std::uint8_t> blk = {'A', 'V', 'B', '1', 2, 0, 0, 0};
+    auto u16 = [&](int v) { blk.push_back(static_cast<std::uint8_t>(v & 0xff)); blk.push_back(static_cast<std::uint8_t>(v >> 8)); };
+    auto ring = [&](std::initializer_list<std::pair<int, int>> pts) {
+        u16(static_cast<int>(pts.size()));
+        for (auto [x, y] : pts) { u16(x & 0xffff); u16(y & 0xffff); }
+    };
+    u16(400); u16(0); blk.push_back(2); blk.push_back(1);
+    ring({{900, -100}, {1100, -100}, {1100, 100}, {900, 100}});
+    u16(100); u16(0); blk.push_back(1); blk.push_back(2);
+    ring({{3000, 3000}, {3200, 3000}, {3200, 3200}, {3000, 3200}});
+    ring({{3080, 3080}, {3080, 3120}, {3120, 3120}, {3120, 3080}});
+    std::vector<WorldBuilding> list;
+    CHECK(layer.parseAvb1(blk.data(), blk.size(), 0, 0, list));
+    CHECK(list.size() == 2);
+    const Real ground = -region->below(ned(100, 0, 1e4)).point.z;
+    CHECK_NEAR(list[0].top, ground + 40, 0.01);
+    CHECK_NEAR(list[0].base, ground - 0.6, 0.01);
+    CHECK(list[1].footprint.size() == 4);  // the courtyard is open air, not a wall
+    std::vector<std::uint8_t> bad(blk.begin(), blk.end() - 3);
+    std::vector<WorldBuilding> none;
+    CHECK(!layer.parseAvb1(bad.data(), bad.size(), 0, 0, none));
+    layer.add(7, list);
+    CHECK(layer.buildingCount() == 2);
+
+    // On the roof, beside it, inside it.
+    CHECK_NEAR(-layer.below(ned(100, 0, ground + 60)).point.z, ground + 40, 1e-6);
+    CHECK_NEAR(-layer.below(ned(150, 0, ground + 60)).point.z, -region->below(ned(150, 0, 1e4)).point.z, 1e-6);
+    GroundHit c;
+    CHECK(layer.solidAt(ned(91, 0, ground + 20), c));  // 1 m inside the west wall
+    CHECK_NEAR(c.point.x, ned(90, 0, 0).x, 1e-6);
+    CHECK_NEAR(c.point.y, ned(90, 0, 0).y, 1e-6);
+    CHECK(!layer.solidAt(ned(85, 0, ground + 20), c));
+    CHECK(!layer.solidAt(ned(100, 0, ground + 41), c));
+    // A level ray east hits the west wall; a ray down hits the roof.
+    const GroundHit wall = layer.raycast(ned(0, 0, ground + 20), world::nedFromEnu({1, 0, 0}), 500);
+    CHECK(wall.hit);
+    CHECK_NEAR(wall.distance, 90, 1e-6);
+    const GroundHit roof = layer.raycast(ned(95, 5, ground + 100), world::nedFromEnu({0, 0, -1}), 500);
+    CHECK_NEAR(roof.distance, 60, 1e-6);
+
+    // Flying east at 70 kt, 20 m up, 3 m north of the north wall: the right wingtip strikes it.
+    SimpleWeather atm;
+    Aircraft ac(ref(), saoPauloWorldFrame());
+    ac.setEngineRunning(true, 2300);
+    RigidBodyState s;
+    s.position = ned(40, 13, ground + 20);
+    s.velocity = world::nedFromEnu({ktToMs(70), 0, 0});
+    s.attitude = Quat::fromEuler(0, 0, kPi / 2);
+    ac.setFlightState(s);
+    ac.prepareContext(PilotInput{}, layer, atm);
+    ac.settleDownwash();
+    PilotInput in;
+    in.throttle = 0.6;
+    in.mixture = 1;
+    bool building = false;
+    for (int i = 0; i < 3 * 240 && !building; ++i) {
+        ac.step(1.0 / 240, in, layer, atm);
+        for (const FlightEvent& e : ac.drainEvents())
+            building |= e.type == FlightEventType::HardPointContact && static_cast<int>(e.value) == surfaces::kBuilding.id;
+    }
+    CHECK(building);
+    // Groups come and go on their own: a second tile's building stays when the first is dropped.
+    std::vector<WorldBuilding> other(1);
+    other[0].footprint = {{1100, 0}, {1120, 0}, {1120, 20}, {1100, 20}};
+    other[0].base = ground - 1;
+    other[0].top = ground + 30;
+    layer.add(8, other);
+    CHECK(layer.buildingCount() == 3);
+    layer.remove(7);
+    CHECK(layer.buildingCount() == 1);
+    CHECK(layer.groupCount() == 1);
+    CHECK(!layer.solidAt(ned(91, 0, ground + 20), c));
+    CHECK(layer.solidAt(ned(1110, 10, ground + 10), c));
+    layer.add(8, {});  // replacing a group drops its old buildings
+    CHECK(!layer.solidAt(ned(1110, 10, ground + 10), c));
+}
+
+TEST_CASE("map projection: airports in the São Paulo world sit on the map's UTM 23S grid") {
+    // References from PROJ (pyproj, EPSG:4326 -> EPSG:31983) less the map origin.
+    Real e = 0, n = 0;
+    wgs84::transverseMercator(Geodetic{degToRad(-23.5611), degToRad(-46.6558), 0}, degToRad(-45.0), 0.9996, e, n);
+    CHECK_NEAR(e + 500000.0, 331004.4497, 1e-3);
+    CHECK_NEAR(n + 10000000.0, 7393388.1322, 1e-3);
+    wgs84::transverseMercator(Geodetic{degToRad(-20.0), degToRad(-44.0), 0}, degToRad(-45.0), 0.9996, e, n);
+    CHECK_NEAR(e + 500000.0, 604609.3238, 1e-3);
+    CHECK_NEAR(n + 10000000.0, 7788206.4439, 1e-3);
+
+    const Vec3 masp = saoPauloMapNed(-23.5611, -46.6558);
+    CHECK_NEAR(masp.x, 77.412, 1e-3);
+    CHECK_NEAR(masp.y, 18.450, 1e-3);
+    // Congonhas 35L's surveyed threshold, on the map (OSM centreline within 2 m).
+    const Airport cgh = congonhas(saoPauloWorldFrame());
+    const Vec3 thr35 = landingThreshold(cgh.runways[0]);
+    CHECK_NEAR(thr35.x, -8023.309, 0.01);
+    CHECK_NEAR(thr35.y, 581.571, 0.01);
+    // In another frame the tangent plane is used: the threshold is the same
+    // geodetic point.
+    const LocalFrame other(Geodetic{degToRad(-23.6), degToRad(-46.65), 0});
+    const Vec3 t2 = landingThreshold(congonhas(other).runways[0]);
+    const Geodetic g = other.geodeticFromNed({t2.x, t2.y, 0});
+    CHECK_NEAR(radToDeg(g.latitude), -23.6343, 1e-6);
+    CHECK_NEAR(radToDeg(g.longitude), -46.6512, 1e-6);
 }

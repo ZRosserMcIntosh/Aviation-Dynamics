@@ -16,14 +16,36 @@ Geodetic deg(Real lat, Real lon, Real h = 0) { return {units::degToRad(lat), uni
 
 LocalFrame saoPauloWorldFrame() { return LocalFrame(deg(-23.5611, -46.6558, 0.0)); }
 
+Vec3 saoPauloMapNed(Real latDeg, Real lonDeg) {
+    Real e = 0, n = 0;
+    wgs84::transverseMercator(deg(latDeg, lonDeg), units::degToRad(-45.0), 0.9996, e, n);
+    return {n + 10000000.0 - kMapOriginNorth, e + 500000.0 - kMapOriginEast, 0.0};
+}
+
+namespace {
+
+// Where a coordinate lies in `f`: on the map's projection in the São Paulo
+// world (so runways, buildings and the map agree), on the tangent plane in
+// any other frame.
+Vec3 placeOn(const LocalFrame& f, Real latDeg, Real lonDeg) {
+    const Geodetic o = saoPauloWorldFrame().origin();
+    if (std::abs(f.origin().latitude - o.latitude) < 1e-12 && std::abs(f.origin().longitude - o.longitude) < 1e-12)
+        return saoPauloMapNed(latDeg, lonDeg);
+    Vec3 p = f.nedFromGeodetic(deg(latDeg, lonDeg, 0));
+    p.z = 0;
+    return p;
+}
+
+}  // namespace
+
 Airport campoDeMarte(const LocalFrame& frame) {
     Airport a;
     a.icao = "SBMT";
     a.name = "Campo de Marte";
     a.elevation = 722.0;
     a.magneticVariation = units::degToRad(-21.5);  // ~21-22 deg W in 2026 (estimated)
-    const Vec3 thr12 = frame.nedFromGeodetic(deg(-23.508333, -46.6425, 0));
-    const Vec3 thr30 = frame.nedFromGeodetic(deg(-23.510333, -46.631333, 0));
+    const Vec3 thr12 = placeOn(frame, -23.508333, -46.6425);
+    const Vec3 thr30 = placeOn(frame, -23.510333, -46.631333);
     const Vec3 d = thr30 - thr12;
     const Real heading = std::atan2(d.y, d.x);
     const Vec3 dir{std::cos(heading), std::sin(heading), 0};
@@ -57,12 +79,12 @@ Airport congonhas(const LocalFrame& frame) {
     a.name = "Congonhas";
     a.elevation = 802.0;
     a.magneticVariation = units::degToRad(-21.5);
-    // On the São Paulo World map, whose imagery puts runway 17R/35L about
-    // 112 m east of its surveyed line (and 0.25 deg further anticlockwise):
-    // the airplane lands on the runway the pilot sees. Surveyed thresholds
-    // (17R -23.6210, -46.6604; 35L -23.6343, -46.6512) for reference.
-    const Vec3 thr35 = frame.nedFromGeodetic(deg(-23.633762, -46.650216, 0));
-    const Vec3 thr17 = frame.nedFromGeodetic(deg(-23.620467, -46.659612, 0));
+    // The surveyed thresholds of 17R/35L. On the map's projection they lie
+    // within 2 m of OpenStreetMap's centreline and on the imagery. (Placed on
+    // a tangent plane at MASP they were ~140 m off the map, which had been
+    // taken for an imagery offset and corrected by moving the runway.)
+    const Vec3 thr35 = placeOn(frame, -23.6343, -46.6512);
+    const Vec3 thr17 = placeOn(frame, -23.6210, -46.6604);
     const Vec3 d = thr17 - thr35;
     const Real heading = std::atan2(d.y, d.x);
     const Vec3 dir{std::cos(heading), std::sin(heading), 0};
@@ -114,7 +136,7 @@ Airport fieldAt(const char* icao, const char* name, Real elevationFt) {
 // displaced thresholds and width in ft; flat at the field elevation.
 void addRunway(Airport& a, const LocalFrame& f, const char* id1, Real lat1, Real lon1, Real disp1Ft, const char* id2,
                Real lat2, Real lon2, Real disp2Ft, Real lengthFt, Real widthFt) {
-    const Vec3 c1 = f.nedFromGeodetic(deg(lat1, lon1, 0)), c2 = f.nedFromGeodetic(deg(lat2, lon2, 0));
+    const Vec3 c1 = placeOn(f, lat1, lon1), c2 = placeOn(f, lat2, lon2);
     const Real heading = std::atan2(c2.y - c1.y, c2.x - c1.x), half = 0.5 * lengthFt * kFt;
     const Vec3 mid = (c1 + c2) * 0.5, dir{std::cos(heading), std::sin(heading), 0};
     Vec3 e1 = mid - dir * half, e2 = mid + dir * half;
@@ -298,8 +320,8 @@ Airport airportFromRecord(const json::Value& rec, const LocalFrame& f) {
         auto agrees = [&](Real hdgDeg) { return std::abs(units::radToDeg(wrapPi(units::degToRad(hdgDeg - fromNumber)))) < 20; };
         const json::Value *le = r.find("le"), *he = r.find("he");
         if (le && he && le->isArray() && he->isArray() && le->items().size() == 2 && he->items().size() == 2) {
-            const Vec3 p1 = f.nedFromGeodetic(deg(le->items()[0].asNumber(), le->items()[1].asNumber(), 0));
-            const Vec3 p2 = f.nedFromGeodetic(deg(he->items()[0].asNumber(), he->items()[1].asNumber(), 0));
+            const Vec3 p1 = placeOn(f, le->items()[0].asNumber(), le->items()[1].asNumber());
+            const Vec3 p2 = placeOn(f, he->items()[0].asNumber(), he->items()[1].asNumber());
             if (agrees(units::radToDeg(std::atan2(p2.y - p1.y, p2.x - p1.x)))) {
                 addRunway(a, f, id1.c_str(), le->items()[0].asNumber(), le->items()[1].asNumber(), d1, id2.c_str(),
                           he->items()[0].asNumber(), he->items()[1].asNumber(), d2, len, wid);
@@ -312,13 +334,13 @@ Airport airportFromRecord(const json::Value& rec, const LocalFrame& f) {
         const json::Value* listed = r.find("hdg");
         const Real hdg = listed && listed->isNumber() && agrees(listed->asNumber()) ? listed->asNumber() : fromNumber;
         const Real h = units::degToRad(hdg);
-        Vec3 c = f.nedFromGeodetic(deg(lat0, lon0, 0));
+        Vec3 c = placeOn(f, lat0, lon0);
         const Real side = id1.find('L') != std::string::npos ? -200.0 : (id1.find('R') != std::string::npos ? 200.0 : 0.0);
         c = c + Vec3{-std::sin(h), std::cos(h), 0} * side;
         const Real half = 0.5 * len * kFt, mPerDegLat = 111320.0, mPerDegLon = 111320.0 * std::cos(units::degToRad(lat0));
         // Back to coordinates for addRunway (it reprojects them): a local
         // flat-Earth offset is exact enough over a runway length.
-        const Vec3 e0 = f.nedFromGeodetic(deg(lat0, lon0, 0));
+        const Vec3 e0 = placeOn(f, lat0, lon0);
         const Real dn = c.x - e0.x, de = c.y - e0.y;
         const Real latc = lat0 + dn / mPerDegLat, lonc = lon0 + de / mPerDegLon;
         const Real dLat = std::cos(h) * half / mPerDegLat, dLon = std::sin(h) * half / mPerDegLon;

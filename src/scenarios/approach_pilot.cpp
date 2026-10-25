@@ -38,8 +38,15 @@ PilotInput ApproachPilot::update(const Aircraft& ac, Real dt) {
     vsFilt_ += ((r.indicatedAltitude - altPrev_) / dt - vsFilt_) * std::min(dt / 1.0, 1.0);
     vsFast_ += ((r.indicatedAltitude - altPrev_) / dt - vsFast_) * std::min(dt / 0.3, 1.0);
     altPrev_ = r.indicatedAltitude;
+    // The radio altimeter's rate of change, filtered (0.3 s), as an autoland's
+    // flare computer takes it: the barometric one moves with the static
+    // source's error as the flare raises the angle of attack, and read the
+    // CRJ sinking 25 % faster than it was, which pulled it into a balloon.
+    if (!haveRa_) { raPrev_ = t.heightAgl; haveRa_ = true; }
+    vsRa_ += ((t.heightAgl - raPrev_) / dt - vsRa_) * std::min(dt / 0.3, 1.0);
+    raPrev_ = t.heightAgl;
     // The flare works on the quicker estimate (0.3 s): the 1 s lag overshot it.
-    const Real vsNow = phase_ == Phase::Flare ? vsFast_ : vsFilt_;
+    const Real vsNow = phase_ == Phase::Flare ? (radioAltimeter ? vsRa_ : vsFast_) : vsFilt_;
 
     // ---- Deviations in metres (+ right of course, + above the path) ----
     bool latValid = false, vertValid = false;

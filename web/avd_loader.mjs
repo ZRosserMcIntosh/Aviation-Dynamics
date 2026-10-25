@@ -58,9 +58,17 @@ export default async function createAvdModule(wasmBytes) {
   A.text = (len) => dec.decode(new Uint8Array(memory.buffer, ex.avd_text(0), len));
   // "<git short hash>[-dirty] <date>" baked by web/build_wasi.sh ("dev" otherwise).
   A.buildId = () => A.text(ex.avd_build_id());
+  // A building tile (AVB1 bytes) into the physics: the walls and roofs become solid.
+  A.buildingsTile = (i, j, bytes) => {
+    const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const at = ex.avd_text(b.length + 1);  // may grow the memory: take the buffer after
+    new Uint8Array(memory.buffer, at, b.length).set(b);
+    return ex.avd_buildings_tile(i, j, b.length);
+  };
   A.load = (json) => {
     const b = enc.encode(json);
-    new Uint8Array(memory.buffer, ex.avd_text(b.length + 1), b.length).set(b);
+    const at = ex.avd_text(b.length + 1);  // may grow the memory: take the buffer after
+    new Uint8Array(memory.buffer, at, b.length).set(b);
     const n = ex.avd_load(b.length);
     const errors = [];
     for (let i = 0; i < n; ++i) errors.push(A.text(ex.avd_error_text(i)));
@@ -90,7 +98,8 @@ export default async function createAvdModule(wasmBytes) {
   // true when it flies.
   A.trafficLoad = (json) => {
     const b = enc.encode(json);
-    new Uint8Array(memory.buffer, ex.avd_text(b.length + 1), b.length).set(b);
+    const at = ex.avd_text(b.length + 1);  // may grow the memory: take the buffer after
+    new Uint8Array(memory.buffer, at, b.length).set(b);
     const n = ex.avd_traffic_load(b.length);
     const errors = [];
     for (let i = 0; i < n; ++i) errors.push(A.text(ex.avd_error_text(i)));
@@ -160,7 +169,8 @@ export default async function createAvdModule(wasmBytes) {
   // index of the runway end in its order. Returns its index in destinations(), -1 if unusable.
   A.setDestinationRecord = (record, runway) => {
     const b = enc.encode(JSON.stringify(record));
-    new Uint8Array(memory.buffer, ex.avd_text(b.length + 1), b.length).set(b);
+    const at = ex.avd_text(b.length + 1);  // may grow the memory: take the buffer after
+    new Uint8Array(memory.buffer, at, b.length).set(b);
     return ex.avd_set_destination_record(b.length, runway);
   };
   A.gps = () => new Float64Array(memory.buffer, ex.avd_gps(), L.gps);

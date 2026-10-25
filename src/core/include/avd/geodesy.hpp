@@ -33,6 +33,14 @@ Vec3 geodeticToEcef(const Geodetic& g);
 Geodetic ecefToGeodetic(const Vec3& ecef);  // iterative (Bowring start), ~1e-9 m
 // Somigliana normal gravity at the ellipsoid plus free-air gradient (m/s^2).
 Real normalGravity(Real latitude, Real height);
+
+// Transverse Mercator on this ellipsoid (Krüger's series to n^6, as UTM and
+// PROJ use; sub-millimetre within a zone): easting and northing (m) of `g`
+// for central meridian `lon0` (rad) and scale `k0`, before false offsets.
+// UTM zone z: lon0 = (6 z - 183) deg, k0 = 0.9996, false easting 500 km,
+// false northing 10,000 km south of the equator. (GRS80, the SIRGAS 2000
+// ellipsoid, differs from WGS 84 by 0.1 mm in the semi-minor axis.)
+void transverseMercator(const Geodetic& g, Real lon0, Real k0, Real& east, Real& north);
 }  // namespace wgs84
 
 // A local tangent frame (NED) anchored at a geodetic origin.

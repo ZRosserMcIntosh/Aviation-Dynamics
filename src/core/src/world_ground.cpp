@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 
 #include "avd/json.hpp"
@@ -384,6 +385,196 @@ std::vector<std::string> TiledWorldGround::loadTileJson(const std::string& text)
     }
     if (err.empty()) addTile(std::move(t));
     return err;
+}
+
+// ------------------------------------------------------------ BuildingLayer ----
+
+std::int64_t BuildingLayer::cellKey(Real east, Real north) const {
+    const auto i = static_cast<std::int64_t>(std::floor(east / cell_)), j = static_cast<std::int64_t>(std::floor(north / cell_));
+    return (i << 32) ^ (j & 0xffffffff);
+}
+
+template <class F>
+void BuildingLayer::forCells(const Entry& e, F&& f) const {
+    for (Real y = std::floor(e.minY / cell_) * cell_; y <= e.maxY; y += cell_)
+        for (Real x = std::floor(e.minX / cell_) * cell_; x <= e.maxX; x += cell_) f(cellKey(x + 0.5 * cell_, y + 0.5 * cell_));
+}
+
+// Groups are indexed (and unindexed) on their own: a host streams tiles of
+// thousands of buildings while many others stay loaded.
+void BuildingLayer::add(std::int64_t key, std::vector<WorldBuilding> buildings) {
+    remove(key);
+    const auto& list = groups_[key] = std::move(buildings);
+    for (const WorldBuilding& b : list) {
+        Entry e{&b, 1e300, 1e300, -1e300, -1e300, key};
+        for (const Pt& p : b.footprint) {
+            e.minX = std::min(e.minX, p.first); e.minY = std::min(e.minY, p.second);
+            e.maxX = std::max(e.maxX, p.first); e.maxY = std::max(e.maxY, p.second);
+        }
+        forCells(e, [&](std::int64_t c) { grid_[c].push_back(e); });
+    }
+    count_ += list.size();
+}
+
+void BuildingLayer::remove(std::int64_t key) {
+    const auto it = groups_.find(key);
+    if (it == groups_.end()) return;
+    for (const WorldBuilding& b : it->second) {
+        Entry e{&b, 1e300, 1e300, -1e300, -1e300, key};
+        for (const Pt& p : b.footprint) {
+            e.minX = std::min(e.minX, p.first); e.minY = std::min(e.minY, p.second);
+            e.maxX = std::max(e.maxX, p.first); e.maxY = std::max(e.maxY, p.second);
+        }
+        forCells(e, [&](std::int64_t c) {
+            const auto cell = grid_.find(c);
+            if (cell == grid_.end()) return;
+            auto& v = cell->second;
+            v.erase(std::remove_if(v.begin(), v.end(), [&](const Entry& x) { return x.group == key; }), v.end());
+            if (v.empty()) grid_.erase(cell);
+        });
+    }
+    count_ -= it->second.size();
+    groups_.erase(it);
+}
+
+void BuildingLayer::clear() {
+    groups_.clear();
+    grid_.clear();
+    count_ = 0;
+}
+
+template <class F>
+void BuildingLayer::forBuildingsAt(Real east, Real north, F&& f) const {
+    const auto it = grid_.find(cellKey(east, north));
+    if (it == grid_.end()) return;
+    for (const Entry& e : it->second)
+        if (east >= e.minX && east <= e.maxX && north >= e.minY && north <= e.maxY && insidePolygon(e.b->footprint, east, north)) f(*e.b);
+}
+
+bool BuildingLayer::parseAvb1(const std::uint8_t* data, std::size_t size, Real x0, Real y0, std::vector<WorldBuilding>& out,
+                              Real sink) const {
+    std::size_t p = 0;
+    auto take = [&](void* dst, std::size_t n) {
+        if (p + n > size) return false;
+        std::memcpy(dst, data + p, n);  // little-endian on every target we build for
+        p += n;
+        return true;
+    };
+    char magic[4];
+    std::uint32_t count = 0;
+    if (!take(magic, 4) || std::memcmp(magic, "AVB1", 4) != 0 || !take(&count, 4)) return false;
+    out.reserve(out.size() + count);
+    for (std::uint32_t k = 0; k < count; ++k) {
+        std::uint16_t h = 0, mh = 0, n = 0;
+        std::uint8_t kind = 0, rings = 0;
+        if (!take(&h, 2) || !take(&mh, 2) || !take(&kind, 1) || !take(&rings, 1)) return false;
+        WorldBuilding b;
+        for (int r = 0; r < rings; ++r) {
+            if (!take(&n, 2)) return false;
+            for (int i = 0; i < n; ++i) {
+                std::int16_t xy[2];
+                if (!take(xy, 4)) return false;
+                if (r == 0) b.footprint.emplace_back(x0 + xy[0] / 10.0, y0 + xy[1] / 10.0);  // the outline (courtyards are open air)
+            }
+        }
+        if (b.footprint.size() < 3) continue;
+        Real cx = 0, cy = 0;
+        for (const Pt& q : b.footprint) { cx += q.first; cy += q.second; }
+        cx /= static_cast<Real>(b.footprint.size());
+        cy /= static_cast<Real>(b.footprint.size());
+        // The inner ground under the centroid and the first corner (as the renderer stands it).
+        Real g = 1e300;
+        for (const Pt& q : {Pt{cx, cy}, b.footprint.front()}) {
+            const GroundHit hit = inner_->below(world::nedFromEnu({q.first, q.second, 1e4}));
+            if (hit.hit) g = std::min(g, -hit.point.z);
+        }
+        if (!(g < 1e299)) continue;
+        b.base = g - sink + (mh > 0 ? mh / 10.0 + sink : 0.0);
+        b.top = g + h / 10.0;
+        (void)kind;
+        if (b.top > b.base) out.push_back(std::move(b));
+    }
+    return true;
+}
+
+GroundHit BuildingLayer::below(const Vec3& point) const {
+    GroundHit best = inner_->below(point);
+    const Vec3 p = world::enuFromNed(point);
+    forBuildingsAt(p.x, p.y, [&](const WorldBuilding& b) {
+        // A roof at or below the point (0.5 m tolerance) that is higher than what we have.
+        if (b.top > p.z + 0.5) return;
+        if (best.hit && -best.point.z >= b.top) return;
+        best = hitFromEnu(p.x, p.y, b.top, {0, 0, 1}, p.z - b.top, surfaces::kBuilding);
+    });
+    return best;
+}
+
+bool BuildingLayer::solidAt(const Vec3& point, GroundHit& contact) const {
+    if (inner_->solidAt(point, contact)) return true;
+    const Vec3 p = world::enuFromNed(point);
+    bool found = false;
+    forBuildingsAt(p.x, p.y, [&](const WorldBuilding& w) {
+        if (found || p.z >= w.top || p.z < w.base - 0.5) return;
+        Real cx = 0, cy = 0;
+        const Real wall = nearestEdge(w.footprint, p.x, p.y, cx, cy);
+        const Real roof = w.top - p.z;
+        if (roof <= wall) {
+            contact = hitFromEnu(p.x, p.y, w.top, {0, 0, 1}, roof, surfaces::kBuilding);
+        } else {
+            const Real dx = cx - p.x, dy = cy - p.y, l = std::max(std::hypot(dx, dy), 1e-9);
+            contact = hitFromEnu(cx, cy, p.z, {dx / l, dy / l, 0}, wall, surfaces::kBuilding);
+        }
+        found = true;
+    });
+    return found;
+}
+
+GroundHit BuildingLayer::raycast(const Vec3& originNed, const Vec3& dirNed, Real maxDistance) const {
+    GroundHit best = inner_->raycast(originNed, dirNed, maxDistance);
+    Real bestT = best.hit ? best.distance : maxDistance;
+    const Vec3 o = world::enuFromNed(originNed), d = world::enuFromNed(dirNed);
+    // March the ray's horizontal track through the cells (half-cell steps), testing
+    // each building met once: its roof and its walls.
+    std::vector<const WorldBuilding*> seen;
+    const Real horiz = std::hypot(d.x, d.y);
+    const Real step = horiz > 1e-9 ? 0.5 * cell_ / horiz : bestT + 1;
+    for (Real t = 0; t <= bestT + step; t += step) {
+        const Real tt = std::min(t, bestT);
+        const auto it = grid_.find(cellKey(o.x + d.x * tt, o.y + d.y * tt));
+        if (it != grid_.end())
+            for (const Entry& e : it->second) {
+                if (std::find(seen.begin(), seen.end(), e.b) != seen.end()) continue;
+                seen.push_back(e.b);
+                const WorldBuilding& w = *e.b;
+                // Roof plane.
+                if (std::abs(d.z) > 1e-9) {
+                    const Real tr = (w.top - o.z) / d.z;
+                    if (tr >= 0 && tr < bestT && insidePolygon(w.footprint, o.x + d.x * tr, o.y + d.y * tr)) {
+                        bestT = tr;
+                        best = hitFromEnu(o.x + d.x * tr, o.y + d.y * tr, w.top, {0, 0, std::copysign(1.0, -d.z)}, tr, surfaces::kBuilding);
+                    }
+                }
+                // Walls: the track against each edge, the height within base..top.
+                for (std::size_t i = 0, j = w.footprint.size() - 1; i < w.footprint.size(); j = i++) {
+                    const Real ax = w.footprint[j].first, ay = w.footprint[j].second;
+                    const Real ex = w.footprint[i].first - ax, ey = w.footprint[i].second - ay;
+                    const Real den = d.x * ey - d.y * ex;
+                    if (std::abs(den) < 1e-12) continue;
+                    const Real tw = ((ax - o.x) * ey - (ay - o.y) * ex) / den;
+                    const Real s = ((ax - o.x) * d.y - (ay - o.y) * d.x) / den;
+                    if (tw < 0 || tw >= bestT || s < 0 || s > 1) continue;
+                    const Real z = o.z + d.z * tw;
+                    if (z < w.base || z > w.top) continue;
+                    const Real l = std::max(std::hypot(ex, ey), 1e-9);
+                    Vec3 n{ey / l, -ex / l, 0};
+                    if (n.x * d.x + n.y * d.y > 0) n = n * -1.0;
+                    bestT = tw;
+                    best = hitFromEnu(o.x + d.x * tw, o.y + d.y * tw, z, n, tw, surfaces::kBuilding);
+                }
+            }
+        if (t >= bestT) break;
+    }
+    return best;
 }
 
 }  // namespace avd

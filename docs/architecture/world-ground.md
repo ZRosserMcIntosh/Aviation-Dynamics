@@ -68,9 +68,44 @@ The integration layer is implemented and tested (`tests/test_world.cpp`):
 - an aircraft parked across a 5% slope settling on its gear;
 - a wingtip striking a building.
 
-**No real São Paulo tile data ships here yet.** The terrain and building
-geometry is produced by the SaoPauloWorld project, which is not in this
-repository. The published showcase repo (`ZRosserMcIntosh/Sao-Paulo`) holds
-renders, street centrelines and per-tile counts, but no elevation or
-footprints. The next step is an `avd-world-tile/1` exporter in that project.
-The tests use a synthetic tile marked `"synthetic": true`.
+**No real São Paulo terrain tiles ship here yet.** The terrain geometry is
+produced by the SaoPauloWorld project, which is not in this repository. The
+next step for terrain is an `avd-world-tile/1` exporter in that project. The
+tests use a synthetic tile marked `"synthetic": true`.
+
+## Buildings on another ground: `BuildingLayer`
+
+The city's buildings come from OpenStreetMap (`tools/osm_buildings`): 2.07
+million footprints with their mapped heights, in 1 km "AVB1" tiles in the site
+frame. The browser flight test bed streams them around the aircraft.
+`BuildingLayer` puts them on any other ground (in the browser, the region's
+`RegionGround`):
+
+- **Groups.** Buildings come and go in groups under a key (one tile each).
+  Each group is indexed on its own in a 100 m grid, so streaming a tile does
+  not reindex the others.
+- **Parsing.** `parseAvb1` reads a tile and stands each building on the inner
+  ground under its centroid and first corner. It sinks the base 0.6 m, as the
+  renderer does. Courtyards are open air.
+- **Queries.**
+  - `below`: the higher of the inner ground and a roof at or below the point.
+  - `solidAt`: the nearest wall or the roof, for the hard points (as
+    `TiledWorldGround`).
+  - `raycast`: the inner ground's hit, or a nearer roof or wall met along the
+    ray.
+- **Browser ABI.**
+  - `avd_buildings_tile(i, j, len)`: the tile's bytes go in the text buffer,
+    as `A.buildingsTile` does it.
+  - `avd_buildings_drop(i, j)` and `avd_buildings_count()`.
+  - A hard point meeting a building reports `Building strike (<point>)`.
+- **Streaming.** The site hands over the tiles within about 1.5 km of the
+  aircraft and drops them past 2.5 km.
+
+Tested in `tests/test_world.cpp`:
+
+- a tile parsed onto the region's ground: its tops, bases and courtyards;
+- roofs, walls and rays;
+- groups added, replaced and dropped on their own;
+- a wingtip strike.
+
+The web smoke test flies into a streamed tower.
