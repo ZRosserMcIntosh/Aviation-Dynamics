@@ -510,7 +510,21 @@ void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, Ae
     if (dot(u, aft) < 0.2) u = aft;
     // Ground images (a flat ground below, within a few spans).
     const bool ground = S.def.groundEffect && dot(in.groundUpBody, in.groundUpBody) > 0.5 && in.heightAboveGround < 3 * S.span;
-    const Real h = ground ? in.heightAboveGround : 1e9;
+    Real h = ground ? in.heightAboveGround : 1e9;
+    if (ground) {
+        // The mirror plane stays below every bound vortex (by 2 % of the span):
+        // a wingtip put into the ground (a crash, a wing dug in) would otherwise
+        // lie on its own image, and the circulation diverged (6 MN on a 37 t
+        // jet, then the state blew up). In the ground the flow means nothing;
+        // this only keeps it finite.
+        const Vec3 ref = surfaces_[0].centroid;
+        Real lowest = 0;
+        for (int i = 0; i < n; ++i) {
+            const Strip& st = strips_[static_cast<std::size_t>(n0 + i)];
+            lowest = std::min({lowest, dot(st.boundA - ref, in.groundUpBody), dot(st.boundB - ref, in.groundUpBody)});
+        }
+        h = std::max(h, -lowest + 0.02 * S.span);
+    }
     // Near the ground the wake cannot trail down through it: legs parallel
     // to the ground (and so to their images), blending in below one span.
     if (ground) {
@@ -648,12 +662,35 @@ void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, Ae
             for (int i = 0; i < n; ++i) G[i] -= 0.5 * R[i];
         }
     }
-    for (int i = 0; i < n; ++i) {
+    // A guard, never met in flight: a circulation no section can carry (a
+    // section lift coefficient past 6, or not finite) means the solve has run
+    // away -- a tumbling airframe can put a control point on another strip's
+    // trailing leg or its image, where the singular kernel has no bound (a
+    // CRJ cartwheeling off a runway reached 8e8 N, then a numerical fault).
+    // So does an induced flow faster than the free stream itself (the
+    // circulation in bounds, but a control point on a leg's singular kernel:
+    // a business jet's wing dug into a runway reached 1e10 N in one step).
+    // That step the surface goes without induction (strip theory), and the
+    // next solve starts cold.
+    bool runaway = false;
+    for (int i = 0; i < n && !runaway; ++i) {
+        const Strip& st = strips_[static_cast<std::size_t>(n0 + i)];
+        runaway = !std::isfinite(G[i]) || std::abs(G[i]) > 3.0 * st.chord * length(vFree[i]) + 1.0;
+    }
+    for (int i = 0; i < n && !runaway; ++i) {
         Vec3 a;
         for (int j = 0; j < n; ++j) a += V[i * n + j] * G[j];
         induced[i] = a;
-        out.strips[static_cast<std::size_t>(n0 + i)].gamma = G[i];
+        runaway = !isFinite(a) || length(a) > length(vFree[i]) + 5.0;
     }
+    if (runaway) {
+        for (int i = 0; i < n; ++i) {
+            G[i] = 0;
+            induced[i] = {};
+        }
+        out.llValid[s] = false;
+    }
+    for (int i = 0; i < n; ++i) out.strips[static_cast<std::size_t>(n0 + i)].gamma = G[i];
 }
 
 void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {

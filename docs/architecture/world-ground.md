@@ -75,8 +75,10 @@ tests use a synthetic tile marked `"synthetic": true`.
 
 ## Buildings on another ground: `BuildingLayer`
 
-The city's buildings come from OpenStreetMap (`tools/osm_buildings`): 2.07
-million footprints with their mapped heights, in 1 km "AVB1" tiles in the site
+The city's buildings come from the Overture Maps buildings theme
+(`tools/osm_buildings`): 2.07 million OpenStreetMap footprints with their
+mapped heights, and 2.38 million Google and Microsoft footprints where OSM has
+none, their heights estimated. They are cut into 1 km "AVB1" tiles in the site
 frame. The browser flight test bed streams them around the aircraft.
 `BuildingLayer` puts them on any other ground (in the browser, the region's
 `RegionGround`):

@@ -123,6 +123,13 @@ export default async function createAvdModule(wasmBytes) {
     return new Float64Array(memory.buffer, ex.avd_air_velocity(n), 3 * n);
   };
   A.linePilot = (on, kias = 0, pathDeg = 0) => ex.avd_line_pilot(on ? 1 : 0, kias, pathDeg);
+  // Autoland: 1 engaged, 0 off, -1 no approach to fly, -2 on the ground.
+  A.autoland = (on) => ex.avd_autoland(on ? 1 : 0);
+  // { on, phase (0 intercept, 1 final, 2 flare, 3 rollout, 4 stopped), right (m), above (m), kias, flap }
+  A.autolandStatus = () => {
+    const v = new Float64Array(memory.buffer, ex.avd_autoland_status(), 6);
+    return { on: v[0] === 1, phase: v[1], right: v[2], above: v[3], kias: v[4], flap: v[5] };
+  };
   // The wind (ENU m/s) on a grid over centre +- half size (ENU m), x fastest.
   A.windBox = (c, h, nx, ny, nz) => new Float64Array(memory.buffer, ex.avd_wind_box(c[0], c[1], c[2], h[0], h[1], h[2], nx, ny, nz), 3 * nx * ny * nz);
   // Bluff bodies (gear legs, spoiler panels): { n, b } with 10 numbers a body.
