@@ -29,7 +29,7 @@ PilotInput LinePilot::update(const Aircraft& ac, Real dt) {
     // quicker, the roll loop's own lag set the 737 weaving).
     const Real v = std::max(std::hypot(t.velocityNed.x, t.velocityNed.y), 20.0);
     const Real trackErr = wrapPi(std::atan2(t.velocityNed.y, t.velocityNed.x) - course);
-    const Real want = -std::atan(right_ / (6.0 * v));
+    const Real want = -std::atan(right_ / (8.0 * v));
     pilot_.targetBank = clamp(std::atan(v / 9.80665 * 0.15 * wrapPi(want - trackErr)), -maxBank, maxBank);
     Real throttle;
     if (!goingAround_) {
@@ -51,6 +51,19 @@ PilotInput LinePilot::update(const Aircraft& ac, Real dt) {
         throttle = 1;
     }
     PilotInput in = pilot_.update(ac, dt);
+    // On a jet, the bank on the ailerons with the approach pilot's law
+    // (ApproachPilot), its gain with the airspeed. The test pilot's roll loop
+    // was tuned on the 172 and stays its pilot (the wake demonstration's 172
+    // and its tests fly with it); its gain falls with dynamic pressure to a
+    // floor that, at a jet's approach speed, is ~1 % of stick per degree of
+    // bank error. The integral and the spiral mode then set the bank, it lagged
+    // the line's demand, and the weave grew to hundreds of metres in two
+    // minutes (737, CRJ700, Top G).
+    if (ac.turbofanCount() > 0) {
+        const Real ias = std::max(ac.instruments().readings().indicatedAirspeed, 25.0);
+        const Real qs = clamp(sq(60.0 / ias), 0.4, 3.0);
+        in.roll = clamp((1.6 * (pilot_.targetBank - t.roll) - 0.35 * t.omega.x) * std::min(qs, 1.5), -1.0, 1.0);
+    }
     in.throttle = throttle;
     if (goingAround_) in.thrustMode = ThrustMode::Takeoff;
     return in;
