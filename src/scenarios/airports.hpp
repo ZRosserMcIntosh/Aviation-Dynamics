@@ -102,6 +102,10 @@ std::unique_ptr<AirfieldGround> makeAirfieldGround(const Airport& a, const Local
 // Every airport of the region on one ground, each field at its own
 // elevation, the terrain between them blended (RegionGround).
 std::unique_ptr<RegionGround> makeRegionGround(const std::vector<Airport>& airports);
+// The São Paulo region's terrain (data/world/terrain_sp.avt, tools/terrain:
+// SRTM 1", 200 m grid), read once; nullptr if the file is missing. Give it to
+// a RegionGround with setTerrain for the hills between the fields.
+std::shared_ptr<const ElevationGrid> saoPauloTerrain();
 
 // The landing threshold of runway end `r` (past any displaced threshold).
 Vec3 landingThreshold(const RunwayDef& r);

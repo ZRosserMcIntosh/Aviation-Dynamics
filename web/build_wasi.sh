@@ -10,7 +10,7 @@ OUT=${1:-"$HERE/dist"}
 : "${WASI_SDK:?set WASI_SDK to the wasi-sdk directory}"
 mkdir -p "$OUT"
 EXPORTS=""
-for f in avd_text avd_load avd_error_text avd_set_weather avd_reset avd_set_input avd_set_throttle avd_set_assist \
+for f in avd_text avd_load avd_error_text avd_set_weather avd_reset avd_set_input avd_set_throttle avd_set_reverse avd_terrain avd_set_assist \
          avd_quick_start avd_procedure_status avd_advance avd_events avd_cockpit_count avd_cockpit_text \
          avd_cockpit_cycle avd_runway avd_state avd_cockpit avd_markings avd_altimeter_adjust avd_dg_adjust \
          avd_dg_sync avd_heading_bug avd_obs_adjust avd_nav_tune avd_nav_swap avd_com_tune avd_com_swap avd_squawk \
@@ -21,7 +21,7 @@ for f in avd_text avd_load avd_error_text avd_set_weather avd_reset avd_set_inpu
          avd_set_runway_water avd_wind_grid avd_set_wake avd_wake avd_wind_box avd_bodies \
          avd_buildings_tile avd_buildings_drop avd_buildings_count \
          avd_traffic_load avd_traffic_spawn avd_traffic_go_around avd_traffic_clear avd_traffic_state \
-         avd_traffic_wake avd_points avd_air_velocity avd_line_pilot avd_autoland avd_autoland_status avd_occupant avd_reset_final \
+         avd_traffic_wake avd_points avd_air_velocity avd_line_pilot avd_autoland avd_autoland_status avd_autopilot avd_autopilot_status avd_occupant avd_reset_final \
          avd_set_destination avd_destination avd_destination_runway avd_destinations_text avd_region \
          avd_ground_height avd_route avd_route_text avd_gps avd_set_destination_record \
          avd_abi_version avd_layout avd_build_id; do
@@ -39,7 +39,7 @@ echo "build id: $AVD_BUILD_ID"
   -DAVD_BUILD_ID="\"$AVD_BUILD_ID\"" \
   -I"$REPO/src/core/include" -I"$REPO/src/scenarios" \
   "$HERE/avd_web.cpp" "$REPO"/src/core/src/*.cpp "$REPO/src/scenarios/airports.cpp" \
-  "$REPO/src/scenarios/trim.cpp" "$REPO/src/scenarios/test_pilot.cpp" "$REPO/src/scenarios/line_pilot.cpp" "$REPO/src/scenarios/approach_pilot.cpp" \
+  "$REPO/src/scenarios/trim.cpp" "$REPO/src/scenarios/test_pilot.cpp" "$REPO/src/scenarios/line_pilot.cpp" "$REPO/src/scenarios/approach_pilot.cpp" "$REPO/src/scenarios/autopilot.cpp" \
   $EXPORTS -Wl,--initial-memory=33554432 -Wl,--max-memory=67108864 -Wl,--strip-all \
   -o "$OUT/avd.wasm"
 cp "$HERE/avd_loader.mjs" "$OUT/avd.mjs"

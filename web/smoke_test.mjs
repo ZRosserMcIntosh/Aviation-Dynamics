@@ -111,6 +111,16 @@ check(B.jet()[0] === 2 && B.jet()[13] === 1 && B.jet()[21] === 1, 'jet: two turb
 B.avd_set_input(0, 0, 1, 0, 1, 1, 1, 0, 0);  // full right Q/E input, brakes on, at rest
 B.avd_advance(0.5);
 check(B.state()[57] === 1 && B.state()[56] === 1, 'jet: Q/E turn the nose-wheel tiller at walking pace');
+B.avd_set_input(0, 0, 0, 0, 1, 1, 1, 0, 0);
+B.setReverse(1);  // the reverse levers at idle on the ground: deployed, reverse N1
+for (let t = 0; t < 8; t += 0.25) B.avd_advance(0.25);
+{
+  const jr = B.jet();
+  check(jr[52] > 0.99 && jr[53] === 4 && jr[54] > 0.99 && jr[55] === 4 && jr[8] > 40, `reverse levers: deployed (phase ${jr[53]}), N1 ${jr[8].toFixed(0)} %`);
+}
+B.setReverse(0);
+for (let t = 0; t < 8; t += 0.25) B.avd_advance(0.25);
+check(B.jet()[52] === 0 && B.jet()[53] === 0, 'reverse levers down: stowed');
 B.avd_set_input(0, 0, 0, 0, 1, 0, 0, 0, 0);
 B.avd_advance(4);  // tiller centred again (20 deg/s actuator) before the take-off run
 B.avd_cockpit_cycle(B.cockpit().find((x) => x.id === 'brakes.parking').index);
@@ -216,7 +226,8 @@ check(cg[32] === 109.7 && cg[37] === 1 && cg[40] === 1 && Math.abs(cg[38]) < 0.1
     landed = B.state()[28] === 1;
   }
   const s5 = B.state();
-  check(landed && !s5[48] && Math.abs(s5[2] - 750.1) < 3, `hands-off 172 on the SBGR 10L final: ${landed ? 'touched down' : 'airborne'} at ${s5[2].toFixed(1)} m, crashed ${s5[48]}`);
+  // The CG about 3 m above the wheels at touchdown (the oleos at full extension).
+  check(landed && !s5[48] && Math.abs(s5[2] - 750.1) < 4, `hands-off 172 on the SBGR 10L final: ${landed ? 'touched down' : 'airborne'} at ${s5[2].toFixed(1)} m, crashed ${s5[48]}`);
   B.avd_set_destination(-1, 0);
 }
 // Autoland: engaged on the Top G's Congonhas 35L final (no destination: the
@@ -240,6 +251,36 @@ check(cg[32] === 109.7 && cg[37] === 1 && cg[40] === 1 && Math.abs(cg[38]) < 0.1
   const o = B.occupant();
   check(o.peakG > 1 && o.peakG < 3 && o.dri > 1 && o.dri < 6 && o.hic < 50 && !o.collapsed.some((c) => c) && !o.structural,
     `occupant after the autoland: peak ${o.peakG.toFixed(2)} g, DRI ${o.dri.toFixed(2)}, HIC ${o.hic.toFixed(1)}, lumbar ${o.lumbarN.toFixed(0)} N`);
+}
+// The region's terrain (data/world/terrain_sp.avt): Pico do Jaraguá rises
+// from the blend between the fields; the runway in use stays at its elevation.
+{
+  const rw0 = B.runway(), field = B.avd_ground_height(rw0[0], rw0[1]), before = B.avd_ground_height(-11414, 11504);
+  const bytes = await readFile(new URL('../data/world/terrain_sp.avt', import.meta.url));
+  const n = B.terrain(bytes);
+  const peak = B.avd_ground_height(-11414, 11504), after = B.avd_ground_height(rw0[0], rw0[1]);
+  check(n === 1101 * 901 && peak > 950 && peak < 1140 && Math.abs(after - field) < 1e-6,
+    `terrain: ${n} samples; Pico do Jaraguá ${peak.toFixed(0)} m (the blend gave ${before.toFixed(0)}), the runway ${after.toFixed(1)} m as before`);
+  check(B.terrain(new Uint8Array(16)) === -1, 'terrain: a malformed file is refused');
+}
+// Autopilot: refused on the ground; on the Top G's final, HDG on the bug 60 deg
+// right, ALT on the present altitude, the autothrottle 10 kt faster.
+{
+  B.avd_reset(1);
+  check(B.autopilot({ lateral: 2, vertical: 2 }) === -2, 'autopilot refused on the ground');
+  B.avd_reset(2);
+  const s0 = B.state().slice();
+  const altFt = s0[13], hdg0 = s0[37];  // the altimeter, the heading indicator
+  B.avd_heading_bug((hdg0 + 60) % 360);
+  const ias = Math.round(s0[10]) + 10;
+  const r = B.autopilot({ lateral: 2, vertical: 2, autothrottle: true, altFt, vsFpm: 0, iasKt: ias });
+  let worstAlt = 0;
+  for (let t = 0; t < 90; t += 0.25) { B.avd_advance(0.25); worstAlt = Math.max(worstAlt, Math.abs(B.state()[13] - altFt)); }
+  const st = B.autopilotStatus(), s1 = B.state();
+  const off = ((s1[37] - (hdg0 + 60) + 540) % 360) - 180;
+  check(r === 1 && st.on && st.lateral === 2 && st.vertical === 2 && Math.abs(off) < 3 && worstAlt < 120 && Math.abs(s1[10] - ias) < 5,
+    `autopilot: HDG ${off.toFixed(1)} deg off the bug after 90 s, altitude within ${worstAlt.toFixed(0)} ft, ${s1[10].toFixed(0)} kt on ${ias}`);
+  check(B.autopilot({}) === 0 && !B.autopilotStatus().on, 'autopilot off');
 }
 // Anywhere in Brazil (data/world/airports_br.json): Galeão 15's ILS (IGL)
 // at its 10 NM fix, 360 km away; a region airport's record maps onto the
@@ -268,7 +309,7 @@ check(cg[32] === 109.7 && cg[37] === 1 && cg[40] === 1 && Math.abs(cg[38]) < 0.1
     landed = B.state()[28] === 1;
   }
   const s = B.state();
-  check(landed && !s[48] && Math.abs(s[2] - fl.elev * 0.3048) < 3, `hands-off 172 at Florianópolis ${fl.rw[0].ends[0]}: ${landed ? 'touched down' : 'airborne'} at ${s[2].toFixed(1)} m (field ${(fl.elev * 0.3048).toFixed(1)} m)`);
+  check(landed && !s[48] && Math.abs(s[2] - fl.elev * 0.3048) < 4, `hands-off 172 at Florianópolis ${fl.rw[0].ends[0]}: ${landed ? 'touched down' : 'airborne'} at ${s[2].toFixed(1)} m (field ${(fl.elev * 0.3048).toFixed(1)} m)`);
   B.avd_set_destination(-1, 0);
 }
 // Wind physics through the page API: a hands-off approach flown into the

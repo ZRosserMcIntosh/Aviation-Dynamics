@@ -9,6 +9,8 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -118,11 +120,40 @@ private:
     std::vector<RunwayDef> runways_;
 };
 
+// Ground heights on a regular grid (tools/terrain: the AVT1 file), in the
+// local NED frame's horizontal axes: x north, y east, heights m above the
+// frame's origin (MSL for the São Paulo world). Bilinear between samples.
+class ElevationGrid {
+public:
+    // AVT1 bytes: b"AVT1", int32 nx, ny, float64 east0, north0, spacing,
+    // scale, then nx * ny int16 (rows from the south, west to east), all
+    // little-endian. False (and left empty) on anything malformed.
+    bool parse(const unsigned char* data, std::size_t size);
+    bool empty() const { return heights_.empty(); }
+    // Height at (north, east); NaN off the grid.
+    Real heightAt(Real north, Real east) const;
+    // Distance inside the grid's edge (m; negative outside).
+    Real inside(Real north, Real east) const;
+    Real north0() const { return north0_; }
+    Real east0() const { return east0_; }
+    Real spacing() const { return spacing_; }
+    int nx() const { return nx_; }
+    int ny() const { return ny_; }
+
+private:
+    int nx_ = 0, ny_ = 0;
+    Real east0_ = 0, north0_ = 0, spacing_ = 1;
+    std::vector<float> heights_;
+};
+
 // Several airfields in one region, each at its own elevation: flat within
-// `radius` of its centre (with its runways), and between the fields a smooth
-// blend of their elevations (inverse-distance weighting, power 2, on the
-// distance beyond each field's flat area). Grass off the runways. Not real
-// terrain: the hills and valleys between the fields are absent.
+// `radius` of its centre (with its runways). Between the fields, the
+// elevation grid if one is set (the region's real hills and valleys, blended
+// to each field's elevation over 2 km beyond its flat area, and to the
+// fields' blend over the last 5 km inside the grid's edge); without one, or
+// off it, a smooth blend of the fields' elevations (inverse-distance
+// weighting, power 2, on the distance beyond each field's flat area). Grass
+// off the runways.
 class RegionGround final : public GroundQuery {
 public:
     struct Field {
@@ -135,14 +166,19 @@ public:
     const std::vector<Field>& fields() const { return fields_; }
     void setWaterDepth(Real m) { waterDepth_ = std::max(m, 0.0); }
     Real waterDepth() const { return waterDepth_; }
+    // The region's terrain between the fields (nullptr: the blend alone).
+    void setTerrain(std::shared_ptr<const ElevationGrid> grid) { terrain_ = std::move(grid); }
+    const ElevationGrid* terrain() const { return terrain_.get(); }
     // The terrain's down coordinate at a horizontal position (runways lie on it).
     Real terrainDown(Real north, Real east) const;
     void surfaceAt(Real north, Real east, Real& down, Vec3& normal, SurfaceProperties& s) const;
     GroundHit raycast(const Vec3& origin, const Vec3& dir, Real maxDistance) const override;
 
 private:
+    Real blendDown(Real north, Real east) const;
     Real waterDepth_ = 0;
     std::vector<Field> fields_;
+    std::shared_ptr<const ElevationGrid> terrain_;
 };
 
 }  // namespace avd

@@ -928,6 +928,83 @@ TEST_CASE("top g: ground spoilers and thrust reversers deploy on touchdown, reve
     CHECK(deployed);
 }
 
+TEST_CASE("top g: the pilot's reverse levers: deploy only on the ground at idle, the lever sets the reverse thrust, back stows") {
+    auto setup = [](Aircraft& ac, const FlatGround& ground, const SimpleWeather& atm) {
+        ac.setEngineRunning(true);
+        ac.placeOnGround(0, 0, 0, ground, atm);
+        ac.setCockpitControl("brakes.parking", 0);
+        PilotInput none;
+        for (int i = 0; i < 240; ++i) ac.step(kDt, none, ground, atm);
+    };
+    SimpleWeather atm;
+    FlatGround ground(0, surfaces::kAsphalt);
+    // At rest, throttles at idle: full reverse deploys, then reverse N1 with the lever.
+    Aircraft ac(jet());
+    setup(ac, ground, atm);
+    PilotInput in;
+    in.reverse = 1;
+    for (int i = 0; i < 240 * 6; ++i) ac.step(kDt, in, ground, atm);
+    CHECK(ac.reverserPhase(0) == 4);
+    CHECK(ac.reverserPosition(0) > 0.99);
+    const Real n1Full = ac.turbofanState(0).n1;
+    in.reverse = 0.3;
+    for (int i = 0; i < 240 * 6; ++i) ac.step(kDt, in, ground, atm);
+    const Real n1Part = ac.turbofanState(0).n1;
+    std::cerr << "  reverse lever: N1 " << n1Full << " at full reverse, " << n1Part << " at 0.3\n";
+    CHECK(n1Full > n1Part + 0.1);
+    // Back to 0: stowed.
+    in.reverse = 0;
+    for (int i = 0; i < 240 * 6; ++i) ac.step(kDt, in, ground, atm);
+    CHECK(ac.reverserPhase(0) == 0);
+    CHECK(ac.reverserPosition(0) == 0);
+    // The lever interlock: a throttle above idle, nothing deploys.
+    Aircraft open(jet());
+    setup(open, ground, atm);
+    PilotInput thr;
+    thr.throttle = 0.5;
+    thr.reverse = 1;
+    for (int i = 0; i < 240 * 4; ++i) open.step(kDt, thr, ground, atm);
+    CHECK(open.reverserPosition(0) == 0);
+    // In the air, nothing deploys.
+    Aircraft air(jet());
+    TrimRequest req;
+    req.altitude = 1000;
+    req.tas = ktToMs(160);
+    const TrimResult tr = trim(air, req, atm);
+    DynamicState s = tr.state;
+    s.body.position = {0, 0, -1000};
+    air.setState(s);
+    air.prepareContext(tr.input, ground, atm);
+    air.settleDownwash();
+    air.setElevatorTrim(tr.trim);
+    PilotInput fly = tr.input;
+    fly.throttle = 0;
+    fly.reverse = 1;
+    for (int i = 0; i < 240 * 4; ++i) air.step(kDt, fly, ground, atm);
+    CHECK(air.reverserPosition(0) == 0);
+    // On a landing roll from 120 kt, full reverse to 60 kt stops shorter than the automatic sequence.
+    auto rollTo = [&](Real lever) {
+        Aircraft r(jet());
+        setup(r, ground, atm);
+        DynamicState st = r.state();
+        st.body.velocity = {ktToMs(120), 0, 0};
+        r.setState(st);
+        const Real x0 = r.state().body.position.x;
+        PilotInput p;
+        p.reverse = lever;
+        for (int i = 0; i < 240 * 120; ++i) {
+            r.step(kDt, p, ground, atm);
+            if (r.telemetry().groundSpeed < ktToMs(60)) break;
+        }
+        return r.state().body.position.x - x0;
+    };
+    const Real manual = rollTo(1), part = rollTo(0.3), automatic = rollTo(0);
+    std::cerr << "  120 to 60 kt, no wheel brakes: " << manual << " m on full reverse, " << part << " m at 0.3, " << automatic
+              << " m on the automatic sequence\n";
+    CHECK(manual > 100 && std::abs(manual - automatic) < 5);  // the automatic sequence is full reverse to 60 kt
+    CHECK(part > manual + 50);
+}
+
 TEST_CASE("top g: spoiler panels dump lift where they are and shed their own vortices; gear drag pitches nose down") {
     Aircraft ac(jet());
     const AeroModel& m = ac.aeroModel();

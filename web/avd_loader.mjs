@@ -65,6 +65,13 @@ export default async function createAvdModule(wasmBytes) {
     new Uint8Array(memory.buffer, at, b.length).set(b);
     return ex.avd_buildings_tile(i, j, b.length);
   };
+  // The region's terrain between the fields (AVT1 bytes, tools/terrain): the sample count, -1 if malformed.
+  A.terrain = (bytes) => {
+    const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const at = ex.avd_text(b.length + 1);  // may grow the memory: take the buffer after
+    new Uint8Array(memory.buffer, at, b.length).set(b);
+    return ex.avd_terrain(b.length);
+  };
   A.load = (json) => {
     const b = enc.encode(json);
     const at = ex.avd_text(b.length + 1);  // may grow the memory: take the buffer after
@@ -83,6 +90,8 @@ export default async function createAvdModule(wasmBytes) {
   // One engine's throttle lever (0-based; -1: every lever). Split levers hold
   // until the next avd_set_input, which sets them all again.
   A.setThrottle = (engine, v) => ex.avd_set_throttle(engine, v);
+  // Reverse thrust levers 0..1 (deploy on the main wheels at idle; 0 stows).
+  A.setReverse = (v) => ex.avd_set_reverse(v);
   A.runway = () => Array.from(new Float64Array(memory.buffer, ex.avd_runway(), L.runway));
   A.windGrid = (hx, hy, hz, nx, ny, nz) => new Float64Array(memory.buffer, ex.avd_wind_grid(hx, hy, hz, nx, ny, nz), 3 * nx * ny * nz);
   // The wake's vortex segments: { n, gmax, ground, seg } with 9 numbers a
@@ -129,6 +138,16 @@ export default async function createAvdModule(wasmBytes) {
     const collapsed = [];
     for (let i = 0; i < 16; ++i) collapsed.push(((v[5] | 0) >> i & 1) === 1);
     return { peakG: v[0], spinalG: v[1], dri: v[2], lumbarN: v[3], hic: v[4], collapsed, structural: v[6] === 1 };
+  };
+  // Autopilot: lateral 0 off, 1 ROL, 2 HDG (the heading bug), 3 NAV (GPS); vertical 0 off, 1 PIT, 2 ALT, 3 VS;
+  // autothrottle on the selected IAS. 1 engaged, 0 all off, -2 on the ground, -3 NAV without a route.
+  A.autopilot = ({ lateral = 0, vertical = 0, autothrottle = false, altFt = 0, vsFpm = 0, iasKt = 0 } = {}) =>
+    ex.avd_autopilot(lateral, vertical, autothrottle ? 1 : 0, altFt, vsFpm, iasKt);
+  // { on, lateral, vertical (4: ALT* capturing), autothrottle, altFt, vsFpm, iasKt, bugDeg, bankCmd, pitchCmd, vsCmd }
+  A.autopilotStatus = () => {
+    const v = new Float64Array(memory.buffer, ex.avd_autopilot_status(), 11);
+    return { on: v[0] === 1, lateral: v[1], vertical: v[2], autothrottle: v[3] === 1, altFt: v[4], vsFpm: v[5], iasKt: v[6],
+      bugDeg: v[7], bankCmd: v[8], pitchCmd: v[9], vsCmd: v[10] };
   };
   // Autoland: 1 engaged, 0 off, -1 no approach to fly, -2 on the ground.
   A.autoland = (on) => ex.avd_autoland(on ? 1 : 0);
