@@ -13,6 +13,7 @@
 
 #include "airports.hpp"
 #include "approach_pilot.hpp"
+#include "autopilot.hpp"
 #include "line_pilot.hpp"
 #include "scenarios.hpp"
 #include "avd/aircraft_loader.hpp"
@@ -138,6 +139,10 @@ struct Sim {
     Real autolandVariation = 0;  // the destination's magnetic variation (the route's tracks are true)
     int autolandFlap = 0;        // landing flap detent
     Real autolandVapp = 0;       // m/s
+    // The autopilot (avd_autopilot): heading bug / GPS route, altitude and
+    // vertical speed, autothrottle.
+    bool apOn = false;
+    scenarios::Autopilot ap;
 };
 constexpr Real kOwnWakeAge = 4.0;
 
@@ -180,8 +185,12 @@ int regionCount() { return static_cast<int>(g_airports.size()); }
 void rebuildWeather();
 void rebuildAir();
 
+// The region's terrain (avd_terrain), kept across ground rebuilds.
+std::shared_ptr<const ElevationGrid> g_terrain;
+
 // The buildings stand on the region's ground; after it is rebuilt they stand on the new one.
 void groundChanged() {
+    g->ground->setTerrain(g_terrain);
     if (g->world) g->world->setInner(*g->ground);
     else g->world = std::make_unique<BuildingLayer>(*g->ground);
 }
@@ -515,6 +524,7 @@ void newAircraft() {
     g->wake = std::make_unique<Wake>(g->ac->aeroModel(), wp);
     g->linePilotOn = false;
     g->autolandOn = false;
+    g->apOn = false;
     rebuildAir();
 }
 
@@ -794,6 +804,14 @@ AVD_EXPORT void avd_set_throttle(int engine, double v) {
     g->raw.splitThrottles = true;
 }
 
+// The reverse thrust levers, 0 (stowed) .. 1 (maximum reverse): lifted with
+// the throttles at idle on the main wheels they deploy the reversers, then set
+// the reverse N1; back to 0 stows them (PilotInput::reverse). Held until set again.
+AVD_EXPORT void avd_set_reverse(double v) {
+    if (!g) return;
+    g->raw.reverse = std::clamp(v, 0.0, 1.0);
+}
+
 // 0 Arcade, 1 Sport, 2 Simulation.
 AVD_EXPORT void avd_set_assist(int preset) {
     if (!g) return;
@@ -1071,6 +1089,14 @@ PilotInput autolandInput() {
     return g->autoland.update(ac, kDt);
 }
 
+// One step of the autopilot: HDG on the heading bug, NAV on the GPS's active leg.
+PilotInput autopilotInput() {
+    g->ap.headingBug = g->ac->instruments().readings().headingBug;
+    g->ap.gps = &g->gps.indication();
+    g->ap.magneticVariation = g->airport.magneticVariation;
+    return g->ap.update(*g->ac, g->raw, kDt);
+}
+
 // Advance by wall-clock seconds at a fixed 240 Hz (at most 0.25 s per call).
 AVD_EXPORT int avd_advance(double seconds) {
     if (!g) return 0;
@@ -1083,8 +1109,11 @@ AVD_EXPORT int avd_advance(double seconds) {
             T.ac->step(kDt, T.pilot.update(*T.ac, kDt), *g->world, *g->weather);
             T.wake->update(*T.ac, *g->weather, g->world.get());
         }
+        if (g->apOn && g->ac->telemetry().onGround) g->apOn = false;  // disconnects on the ground
         PilotInput in = g->autolandOn ? autolandInput()
-                        : g->linePilotOn ? g->linePilot.update(*g->ac, kDt) : g->assist.apply(g->raw, *g->ac, kDt);
+                        : g->linePilotOn ? g->linePilot.update(*g->ac, kDt)
+                        : g->apOn        ? autopilotInput()
+                                         : g->assist.apply(g->raw, *g->ac, kDt);
         if (!g->linePilotOn && !g->autolandOn) g->procedure.update(*g->ac, in, kDt);
         g->ac->step(kDt, in, *g->world, flightAir());
         if (g->wakeOn) g->wake->update(*g->ac, *g->weather, g->world.get());
@@ -1245,6 +1274,20 @@ AVD_EXPORT double* avd_region() {
 }
 
 // Terrain elevation (m MSL) under a world point (east, north m).
+// The region's terrain between the fields: AVT1 bytes (tools/terrain) already
+// written to avd_text. Returns the grid's sample count, -1 if malformed.
+AVD_EXPORT int avd_terrain(int len) {
+    if (len < 0 || len > g_textCap) return -1;
+    auto grid = std::make_shared<ElevationGrid>();
+    if (!grid->parse(reinterpret_cast<const unsigned char*>(g_text), static_cast<std::size_t>(len))) return -1;
+    g_terrain = std::move(grid);
+    if (g) {
+        g->ground->setTerrain(g_terrain);
+        groundChanged();
+    }
+    return g_terrain->nx() * g_terrain->ny();
+}
+
 AVD_EXPORT double avd_ground_height(double east, double north) {
     if (!g) return 0;
     return -g->ground->terrainDown(north, east);
@@ -1642,6 +1685,7 @@ AVD_EXPORT double* avd_air_velocity(int n) {
 AVD_EXPORT void avd_line_pilot(int on, double kias, double pathDeg) {
     if (!g) return;
     g->linePilotOn = on != 0;
+    if (on) g->apOn = false;
     if (!g->linePilotOn) return;
     const AircraftTelemetry& t = g->ac->telemetry();
     scenarios::LinePilot p;
@@ -1737,7 +1781,69 @@ AVD_EXPORT int avd_autoland(int on) {
     g->autoland = p;
     g->autolandOn = true;
     g->linePilotOn = false;
+    g->apOn = false;
     return 1;
+}
+
+// The autopilot. lateral: 0 off, 1 ROL (wings level), 2 HDG (the heading bug,
+// avd_heading_bug), 3 NAV (the GPS route's active leg); vertical: 0 off,
+// 1 PIT (the attitude now), 2 ALT (hold the selected altitude), 3 VS (the
+// selected rate to the selected altitude, captured: ALT); autothrottle 0/1 on
+// the selected IAS. Altitude in feet on the altimeter, vertical speed fpm,
+// IAS kt. Changing modes keeps the integrators; engaging from off takes them
+// from where the airplane is. Returns 1 engaged, 0 everything off, -2 on the
+// ground, -3 NAV without a route.
+AVD_EXPORT int avd_autopilot(int lateral, int vertical, int autothrottle, double altFt, double vsFpm, double iasKt) {
+    if (!g || !g->ac) return 0;
+    scenarios::Autopilot& ap = g->ap;
+    lateral = std::clamp(lateral, 0, 3);
+    vertical = std::clamp(vertical, 0, 3);
+    if (lateral == 0 && vertical == 0 && autothrottle == 0) {
+        g->apOn = false;
+        return 0;
+    }
+    if (g->ac->telemetry().onGround) return -2;
+    if (lateral == 3 && !g->gps.indication().valid) return -3;
+    if (!g->apOn) ap.engage(*g->ac, g->raw);
+    ap.lateral = static_cast<scenarios::Autopilot::Lateral>(lateral);
+    // VS re-armed (a new rate or altitude); ALT* (capture) is kept while VS stays selected.
+    const auto vert = static_cast<scenarios::Autopilot::Vertical>(vertical);
+    if (!(vert == scenarios::Autopilot::Vertical::VerticalSpeed && ap.vertical == scenarios::Autopilot::Vertical::AltitudeCapture &&
+          std::abs(ap.selectedVs - fpmToMs(vsFpm)) < 0.01 && std::abs(ap.selectedAltitude - ftToM(altFt)) < 0.1))
+        ap.vertical = vert;
+    ap.autothrottle = autothrottle != 0;
+    ap.selectedAltitude = ftToM(altFt);
+    ap.selectedVs = fpmToMs(vsFpm);
+    ap.selectedIas = ktToMs(iasKt);
+    g->apOn = true;
+    g->autolandOn = false;
+    g->linePilotOn = false;
+    return 1;
+}
+
+// [on, lateral (0 off, 1 ROL, 2 HDG, 3 NAV), vertical (0 off, 1 PIT, 2 ALT,
+// 3 VS, 4 ALT* capturing), autothrottle, selected altitude ft, vertical speed
+// fpm, IAS kt, heading bug deg, commanded bank deg, commanded pitch deg,
+// commanded vertical speed fpm].
+double g_autopilot[11];
+AVD_EXPORT double* avd_autopilot_status() {
+    std::fill(std::begin(g_autopilot), std::end(g_autopilot), 0.0);
+    if (!g || !g->apOn) return g_autopilot;
+    const scenarios::Autopilot& ap = g->ap;
+    g_autopilot[0] = 1;
+    g_autopilot[1] = static_cast<int>(ap.lateral);
+    g_autopilot[2] = static_cast<int>(ap.vertical);
+    g_autopilot[3] = ap.autothrottle;
+    g_autopilot[4] = mToFt(ap.selectedAltitude);
+    g_autopilot[5] = msToFpm(ap.selectedVs);
+    g_autopilot[6] = msToKt(ap.selectedIas);
+    Real bug = radToDeg(g->ac->instruments().readings().headingBug);
+    if (bug < 0) bug += 360;
+    g_autopilot[7] = bug;
+    g_autopilot[8] = radToDeg(ap.bankCommand());
+    g_autopilot[9] = radToDeg(ap.pitchCommand());
+    g_autopilot[10] = msToFpm(ap.vsCommand());
+    return g_autopilot;
 }
 // [on, phase (0 intercept, 1 final, 2 flare, 3 rollout, 4 stopped), metres
 // right of the course, metres above the path, target airspeed (kt), landing

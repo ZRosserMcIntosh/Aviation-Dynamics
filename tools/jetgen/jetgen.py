@@ -402,7 +402,7 @@ def build(key, spec, top):
     x_mid = pct((TOP['fwd_cg_pct'][1] + TOP['aft_cg_pct']) / 2)  # mid CG envelope at MTOW
     f_nose = (x_mid - xm) / (xn - xm)
     per_newton = mains[0]['cornering_stiffness_n_per_rad'] / (mtow * 9.80665 * (1 - f_nose) / len(mains))
-    nose['cornering_stiffness_n_per_rad'] = round(per_newton * mtow * 9.80665 * f_nose)
+    nose['cornering_stiffness_n_per_rad'] = round(0.85 * per_newton * mtow * 9.80665 * f_nose)
     # The static loads the tyre laws refer to, at MTOW and that CG.
     nose['static_load_n'] = round(mtow * 9.80665 * f_nose)
     for m in mains:

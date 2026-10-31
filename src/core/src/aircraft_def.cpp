@@ -358,6 +358,13 @@ std::vector<std::string> AircraftDefinition::validate() const {
         c.nonNegative(p + ".dampingCompression", g.dampingCompression);
         c.nonNegative(p + ".dampingRebound", g.dampingRebound);
         c.positive(p + ".maxCompression", g.maxCompression);
+        if (g.oleo.enabled) {
+            c.range(p + ".oleo.compressionRatio", g.oleo.compressionRatio, 1.5, 10);
+            c.range(p + ".oleo.polytropicIndex", g.oleo.polytropicIndex, 1.0, 1.4);
+            c.nonNegative(p + ".oleo.orifice", g.oleo.orifice);
+            c.nonNegative(p + ".oleo.linearDamping", g.oleo.linearDamping);
+            c.range(p + ".oleo.reboundRatio", g.oleo.reboundRatio, 1, 5);
+        }
         c.positive(p + ".wheelRadius", g.wheelRadius);
         c.range(p + ".rollingResistance", g.rollingResistance, 0, 0.5);
         c.range(p + ".maxBrakeForceCoefficient", g.maxBrakeForceCoefficient, 0, 1.5);

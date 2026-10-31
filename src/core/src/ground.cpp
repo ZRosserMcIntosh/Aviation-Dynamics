@@ -3,6 +3,9 @@
 #include "avd/ground.hpp"
 
 #include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <limits>
 
 #include "avd/units.hpp"
 
@@ -107,7 +110,70 @@ GroundHit AirfieldGround::raycast(const Vec3& o, const Vec3& dir, Real maxDistan
     return h;
 }
 
+bool ElevationGrid::parse(const unsigned char* data, std::size_t size) {
+    heights_.clear();
+    constexpr std::size_t kHeader = 4 + 2 * 4 + 4 * 8;
+    if (!data || size < kHeader || std::memcmp(data, "AVT1", 4) != 0) return false;
+    std::int32_t nx = 0, ny = 0;
+    double e0 = 0, n0 = 0, sp = 0, scale = 0;
+    std::memcpy(&nx, data + 4, 4);
+    std::memcpy(&ny, data + 8, 4);
+    std::memcpy(&e0, data + 12, 8);
+    std::memcpy(&n0, data + 20, 8);
+    std::memcpy(&sp, data + 28, 8);
+    std::memcpy(&scale, data + 36, 8);
+    if (nx < 2 || ny < 2 || nx > 20000 || ny > 20000 || !(sp > 0) || !(scale > 0) || !std::isfinite(e0) || !std::isfinite(n0)) return false;
+    const std::size_t count = static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny);
+    if (size != kHeader + 2 * count) return false;
+    heights_.resize(count);
+    for (std::size_t k = 0; k < count; ++k) {
+        std::int16_t v = 0;
+        std::memcpy(&v, data + kHeader + 2 * k, 2);
+        heights_[k] = static_cast<float>(v * scale);
+    }
+    nx_ = nx, ny_ = ny, east0_ = e0, north0_ = n0, spacing_ = sp;
+    return true;
+}
+
+Real ElevationGrid::heightAt(Real north, Real east) const {
+    if (heights_.empty()) return std::numeric_limits<Real>::quiet_NaN();
+    const Real fx = (east - east0_) / spacing_, fy = (north - north0_) / spacing_;
+    if (!(fx >= 0 && fy >= 0 && fx <= nx_ - 1 && fy <= ny_ - 1)) return std::numeric_limits<Real>::quiet_NaN();
+    const int i = std::min(static_cast<int>(fx), nx_ - 2), j = std::min(static_cast<int>(fy), ny_ - 2);
+    const Real u = fx - i, v = fy - j;
+    const std::size_t k = static_cast<std::size_t>(j) * static_cast<std::size_t>(nx_) + static_cast<std::size_t>(i);
+    const Real h00 = heights_[k], h10 = heights_[k + 1], h01 = heights_[k + static_cast<std::size_t>(nx_)], h11 = heights_[k + static_cast<std::size_t>(nx_) + 1];
+    return (h00 * (1 - u) + h10 * u) * (1 - v) + (h01 * (1 - u) + h11 * u) * v;
+}
+
+Real ElevationGrid::inside(Real north, Real east) const {
+    if (heights_.empty()) return -1e9;
+    const Real w = (nx_ - 1) * spacing_, h = (ny_ - 1) * spacing_;
+    const Real x = east - east0_, y = north - north0_;
+    return std::min({x, w - x, y, h - y});
+}
+
 Real RegionGround::terrainDown(Real n, Real e) const {
+    if (fields_.empty() && !terrain_) return 0;
+    // Within a field's flat area: its elevation.
+    const Field* nearest = nullptr;
+    Real nearestGap = 1e18;
+    for (const Field& f : fields_) {
+        const Real gap = std::hypot(n - f.north, e - f.east) - f.radius;
+        if (gap <= 0) return f.down;
+        if (gap < nearestGap) nearestGap = gap, nearest = &f;
+    }
+    const Real edge = terrain_ ? terrain_->inside(n, e) : -1;
+    if (edge <= 0) return blendDown(n, e);
+    // The terrain, brought to the nearest field's elevation over 2 km beyond
+    // its flat area, and to the fields' blend over the grid's last 5 km.
+    Real down = -terrain_->heightAt(n, e);
+    if (nearest) down += (nearest->down - down) * (1 - smoothstep(0.0, 2000.0, nearestGap));
+    if (edge < 5000) down += (blendDown(n, e) - down) * (1 - smoothstep(0.0, 5000.0, edge));
+    return down;
+}
+
+Real RegionGround::blendDown(Real n, Real e) const {
     if (fields_.empty()) return 0;
     Real wsum = 0, dsum = 0;
     for (const Field& f : fields_) {
@@ -149,9 +215,45 @@ void RegionGround::surfaceAt(Real n, Real e, Real& down, Vec3& normal, SurfacePr
 }
 
 GroundHit RegionGround::raycast(const Vec3& o, const Vec3& dir, Real maxDistance) const {
-    // Gentle terrain: start on the plane of the terrain under the origin and
-    // refine on the local tangent plane.
     GroundHit h;
+    if (terrain_ && std::hypot(dir.x, dir.y) > 1e-6) {
+        // Real terrain: march along the ray, each step at most half the
+        // height above the ground (and at least 5 m), then bisect the
+        // crossing. Ridges steeper than 2:1 can be stepped through at the
+        // 5 m floor only.
+        auto above = [&](Real t) {
+            const Vec3 p = o + dir * t;
+            return terrainDown(p.x, p.y) - p.z;  // + above the ground
+        };
+        Real t0 = 0, a0 = above(0);
+        if (a0 < 0) return h;
+        bool crossed = false;
+        Real t1 = 0;
+        while (t0 < maxDistance) {
+            t1 = std::min(t0 + std::max(0.5 * a0, 5.0), maxDistance);
+            const Real a1 = above(t1);
+            if (a1 <= 0) {
+                crossed = true;
+                break;
+            }
+            t0 = t1, a0 = a1;
+            if (t1 >= maxDistance) break;
+        }
+        if (!crossed) return h;
+        for (int i = 0; i < 30; ++i) {
+            const Real tm = 0.5 * (t0 + t1);
+            (above(tm) > 0 ? t0 : t1) = tm;
+        }
+        const Vec3 p = o + dir * t1;
+        Real down;
+        surfaceAt(p.x, p.y, down, h.normal, h.surface);
+        h.hit = true;
+        h.distance = t1;
+        h.point = {p.x, p.y, down};
+        return h;
+    }
+    // Gentle terrain (or a vertical ray): start on the plane of the terrain
+    // under the origin and refine on the local tangent plane.
     if (dir.z <= 1e-9) return h;
     Real t = (terrainDown(o.x, o.y) - o.z) / dir.z;
     for (int i = 0; i < 6; ++i) {

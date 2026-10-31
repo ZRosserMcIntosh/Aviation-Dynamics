@@ -145,6 +145,36 @@ void Aircraft::prepareGear() {
         r.brakeTorque = g.brakeTorque > 0 ? g.brakeTorque : g.maxBrakeForceCoefficient * r.staticLoad * g.wheelRadius;
         r.spinDamping = 0.6 * std::sqrt(g.longitudinalStiffness * r.inertia) / g.wheelRadius;
         r.heldDamping = 0.05 * g.longitudinalStiffness;
+        r.length = g.length;
+        if (g.oleo.enabled) {
+            // Through the static load at the static stroke, ratio x it at full stroke:
+            // a = ratio^(1/n), L = S / (1 - 1/a^2), static stroke L (1 - 1/a).
+            const Real n = g.oleo.polytropicIndex, ratio = g.oleo.compressionRatio;
+            const Real a = std::pow(ratio, 1 / n);
+            r.oleoN = n;
+            r.oleoL = g.maxCompression / (1 - 1 / (a * a));
+            r.oleoFe = r.staticLoad / ratio;
+            // The damping is sized on the mass the leg has to stop: its static
+            // share for a main leg; for a leg ahead of the CG (a nose leg) the
+            // airplane pitching onto it about the mains, I_pivot / l^2, which
+            // is several times its static load (the nose's slapdown: sized on
+            // its static share, a Learjet's nose oleo bottomed at 1.4 m/s).
+            Real sized = r.staticLoad;
+            if (g.attach.x > xcg && na > 0) {
+                const Real l = g.attach.x - xa, d = xcg - xa;
+                if (l > 0.5) sized = std::max(sized, (mass_.inertia.m[1][1] + W / kStandardGravity * d * d) / (l * l) * kStandardGravity / nf);
+            }
+            r.oleoC2 = g.oleo.orifice > 0 ? g.oleo.orifice : 0.1 * sized;
+            r.oleoC1 = g.oleo.linearDamping > 0 ? g.oleo.linearDamping : 0.2 * sized;
+            // Out to where the linear spring put the airplane at the weight it
+            // is loaded to (its ground attitude and height unchanged there);
+            // the gas spring itself is designed for the static load at MTOW.
+            // The leg's share now: the moment balance at this mass and CG.
+            const Real loadNow = std::max(est * mass_.mass * kStandardGravity / W, 1.0);
+            const Real gasStroke = r.oleoL * (1 - std::pow(r.oleoFe / loadNow, 1 / n));
+            const Real linearStroke = std::max((loadNow - g.preload) / g.stiffness, 0.0);
+            r.length = g.length + gasStroke - linearStroke;
+        }
     }
 }
 
@@ -455,7 +485,8 @@ void Aircraft::placeOnGround(Real north, Real east, Real heading, const GroundQu
     const GroundHit g = ground.below({north, east, -1e4});
     const Real groundDown = g.hit ? g.point.z : 0.0;
     Real lowest = -1e9;
-    for (const GearDef& gd : def_.gear) lowest = std::max(lowest, gd.attach.z + gd.length - mass_.cg.z);
+    for (std::size_t i = 0; i < def_.gear.size(); ++i)
+        lowest = std::max(lowest, def_.gear[i].attach.z + gearRt_[i].length - mass_.cg.z);
     const Vec3 cgOffsetNed = s_.body.attitude.rotate(mass_.cg);
     s_.body.position = {north + cgOffsetNed.x, east + cgOffsetNed.y, groundDown - lowest - 0.01};
     s_.tyreLateral.fill(0);
@@ -799,14 +830,22 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
             const Vec3 pAttach = s.body.position + q.rotate(rb);
             const Vec3 a = q.rotate({0, 0, 1});
             const Vec3& n = gp.normal;
-            const Real h = dot(pAttach + a * g.length - gp.point, n);
+            const Real len = gr.length;
+            const Real h = dot(pAttach + a * len - gp.point, n);
             const Real cosT = dot(a, -n);
             if (h < 0 && cosT > 0.3) {
                 const Real x = -h / cosT;
-                const Vec3 rc = rb + Vec3{0, 0, g.length - x};
+                const Vec3 rc = rb + Vec3{0, 0, len - x};
                 const Vec3 vPt = s.body.velocity + q.rotate(cross(w, rc));
                 const Real xdot = -dot(vPt, n) / cosT;
-                Real fs = g.preload + g.stiffness * x + (xdot > 0 ? g.dampingCompression : g.dampingRebound) * xdot;
+                Real fs;
+                if (g.oleo.enabled) {
+                    const Real gas = gr.oleoFe * std::pow(gr.oleoL / (gr.oleoL - std::min(x, 0.98 * gr.oleoL)), gr.oleoN);
+                    const Real damp = gr.oleoC2 * xdot * std::abs(xdot) + gr.oleoC1 * xdot;
+                    fs = gas + (xdot > 0 ? damp : g.oleo.reboundRatio * damp);
+                } else {
+                    fs = g.preload + g.stiffness * x + (xdot > 0 ? g.dampingCompression : g.dampingRebound) * xdot;
+                }
                 if (x > g.maxCompression) fs += 20 * g.stiffness * (x - g.maxCompression);
                 const Real N = std::max(fs, 0.0);
                 const Real steer = gt.steerAngle;
@@ -1126,9 +1165,20 @@ void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, co
             int& ph = reverserPhase_[k];
             Real& pos = reverserPos_[k];
             const TurbofanEngine& eng = turbofans_[i];
+            // The pilot's reverse lever: deploys on the main wheels with the
+            // throttles at idle (the air/ground and lever interlocks), and
+            // takes over from the automatic sequence for this ground run.
+            const bool manual = in.reverse > 0.02;
+            if (manual && mains && idle && turboState_[i].running && ph != 4) {
+                ph = 4;
+                reverserDone_ = true;
+            }
             switch (ph) {
             case 0:  // stowed: deploy on the main wheels, idle, still fast
                 if (mains && idle && ias > rv.stowIas + 2.5 && turboState_[i].running && !reverserDone_) ph = 1;
+                break;
+            case 4:  // on the lever: stowed when it comes back, or off the ground
+                if (!manual || !mains) ph = 3;
                 break;
             case 1:  // reverse thrust down to the stow speed
                 if (advanced || !mains) { ph = 3; reverserDone_ = true; }
@@ -1141,10 +1191,12 @@ void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, co
                 if (pos <= 0) ph = 0;
                 break;
             }
-            pos = approach(pos, ph == 1 || ph == 2 ? 1.0 : 0.0, dt / rv.transitTime);
+            pos = approach(pos, ph == 1 || ph == 2 || ph == 4 ? 1.0 : 0.0, dt / rv.transitTime);
             // The fuel control: reverse N1 only once fully deployed; idle while
             // the sleeves travel (the interlock), the lever's own setting once stowed.
-            if (ph == 1 && pos > 0.95) c.turboIn[i].throttle = (rv.reverseN1 - eng.def().idleN1) / (1 - eng.def().idleN1);
+            const Real maxReverse = (rv.reverseN1 - eng.def().idleN1) / (1 - eng.def().idleN1);
+            if (ph == 1 && pos > 0.95) c.turboIn[i].throttle = maxReverse;
+            else if (ph == 4 && pos > 0.95) c.turboIn[i].throttle = clamp(in.reverse, 0.0, 1.0) * maxReverse;
             else if (ph != 0) c.turboIn[i].throttle = 0;
         }
     }

@@ -126,7 +126,7 @@ PilotInput ApproachPilot::update(const Aircraft& ac, Real dt) {
             derotating_ = true;
         }
         derotPitch_ = std::max(derotPitch_ - 0.035 * dt, -0.02);
-        in.pitch = clamp(2.0 * (derotPitch_ - pitch) - 1.0 * pitchRate, -0.4, 0.6);
+        in.pitch = clamp(4.0 * (derotPitch_ - pitch) - 3.0 * pitchRate, -0.4, 1.0);
         in.roll = clamp(-1.5 * roll, -0.5, 0.5);
         // Steer a heading back to the centreline (at most 4 deg off the course), the heading rate damping it.
         const Real hc = courseMagnetic - (latValid ? clamp(0.008 * y_ + 0.04 * yRate, -0.07, 0.07) : 0.0);
