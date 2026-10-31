@@ -68,10 +68,43 @@ The integration layer is implemented and tested (`tests/test_world.cpp`):
 - an aircraft parked across a 5% slope settling on its gear;
 - a wingtip striking a building.
 
-**No real São Paulo terrain tiles ship here yet.** The terrain geometry is
-produced by the SaoPauloWorld project, which is not in this repository. The
-next step for terrain is an `avd-world-tile/1` exporter in that project. The
-tests use a synthetic tile marked `"synthetic": true`.
+No `avd-world-tile/1` terrain tiles ship here: their geometry would come
+from the SaoPauloWorld project, which is not in this repository, and the
+tests use a synthetic tile marked `"synthetic": true`. The region's real
+terrain reaches the aircraft another way, below.
+
+## The region's terrain: `ElevationGrid` on `RegionGround`
+
+`tools/terrain/make_terrain.py` builds `data/world/terrain_sp.avt`:
+
+- **Source.** SRTM 1 arc-second (NASA/USGS, public domain), from the AWS
+  Terrain Tiles mirror.
+- **Grid.** 200 m over 220 × 180 km around MASP (1101 × 901 samples), in
+  the map's projection (EPSG:31983 less the map origin, as the airports and
+  buildings), heights in decimetres: 2 MB.
+- **Ground, not roofs.** SRTM is a surface model; each cell takes the 20th
+  percentile of the ~40 one-arc-second samples inside it (the open ground
+  between buildings and trees). Voids are filled from their neighbours, the
+  sea is 0.
+
+**AVT1** (little-endian): `"AVT1"`, int32 nx, int32 ny, float64 east0, north0
+(the south-west sample), float64 spacing, float64 scale (m per unit), then
+nx × ny int16, rows from the south, each row west to east.
+
+`RegionGround::setTerrain` takes the grid (`scenarios::saoPauloTerrain()`
+natively, `avd_terrain` in the browser):
+
+| Where | Ground |
+|---|---|
+| A field's flat area (its runways and 1.5 km around them) | the field's elevation, as before |
+| The next 2 km | the grid, blended into the field's elevation (smoothstep) |
+| Elsewhere on the grid | the grid, bilinear |
+| The grid's last 5 km, and off it | blended into the fields' inverse-distance blend, as before |
+
+Normals come from central differences; vertical rays (`below`) read it
+directly; oblique rays march in steps of half the height above the ground
+(at least 5 m) and bisect the crossing. The buildings (`BuildingLayer`) stand
+on it, and the browser's ground mesh samples it.
 
 ## Buildings on another ground: `BuildingLayer`
 

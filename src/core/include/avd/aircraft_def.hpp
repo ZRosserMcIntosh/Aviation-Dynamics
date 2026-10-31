@@ -504,6 +504,24 @@ struct GearDef {
     // past the reserve-energy descent velocity the gear is shown to absorb,
     // 14 CFR 25.723 (12 ft/s) and 23.725 (1.2 x a light aircraft's limit)).
     Real collapseSpeed = 0;
+    // An oleo-pneumatic strut instead of the linear spring above (Currey,
+    // "Aircraft Landing Gear Design", ch. 5): a polytropic gas spring
+    // F = Fe (L / (L - s))^n through the leg's static load at MTOW, its
+    // extended force 1/ratio of that and its full-stroke force ratio times
+    // it (the stroke is maxCompression, the static stroke about 3/4 of it);
+    // orifice damping c2 s'|s'| (the metered flow) plus a linear term (seals,
+    // bearing friction), rebound restricted harder. The leg's length is taken
+    // out to the static stroke, so the airplane sits where the linear spring
+    // put it at MTOW: only the dynamics change. stiffness/preload/damping
+    // then only set that static point.
+    struct Oleo {
+        bool enabled = false;
+        Real compressionRatio = 4;     // static / extended gas force (and full stroke / static)
+        Real polytropicIndex = 1.2;
+        Real orifice = 0;              // N s^2/m^2 (0: 0.1 x the static load)
+        Real linearDamping = 0;        // N s/m (0: 0.2 x the static load)
+        Real reboundRatio = 2;         // rebound damping / compression damping
+    } oleo;
     Real wheelRadius = 0.2;
     Real rollingResistance = 0.02;    // coefficient on a paved surface
     Real maxBrakeForceCoefficient = 0;  // brake force / static load; sets brakeTorque when that is 0 (0 = no brake)

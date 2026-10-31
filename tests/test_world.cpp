@@ -265,3 +265,67 @@ TEST_CASE("map projection: airports in the São Paulo world sit on the map's UTM
     CHECK_NEAR(radToDeg(g.latitude), -23.6343, 1e-6);
     CHECK_NEAR(radToDeg(g.longitude), -46.6512, 1e-6);
 }
+
+TEST_CASE("region terrain: the SRTM grid between the fields -- the hills where they are, the fields flat, the blend continuous") {
+    const auto grid = scenarios::saoPauloTerrain();
+    CHECK(grid != nullptr);
+    if (!grid) return;
+    CHECK(grid->nx() > 1000 && grid->ny() > 800);
+    auto at = [&](Real lat, Real lon) {
+        const Vec3 p = scenarios::saoPauloMapNed(lat, lon);
+        return grid->heightAt(p.x, p.y);
+    };
+    // Pico do Jaraguá (1,135 m), the Cantareira, the Paulista ridge at MASP
+    // (~820 m), the Pinheiros river floor (~720 m), the port of Santos, the
+    // Serra do Mar's foot at Cubatão; all within a 200 m cell's 20th percentile.
+    const Real jaragua = at(-23.4567, -46.7664), cantareira = at(-23.405, -46.62), masp = at(-23.5611, -46.6558);
+    const Real pinheiros = at(-23.5865, -46.6955), santos = at(-23.9616, -46.3049), cubatao = at(-23.895, -46.425);
+    std::cerr << "  terrain: Jaragua " << jaragua << " m, Cantareira " << cantareira << ", MASP " << masp << ", Pinheiros "
+              << pinheiros << ", Santos " << santos << ", Cubatao " << cubatao << "\n";
+    CHECK_RANGE(jaragua, 950, 1140);
+    CHECK_RANGE(cantareira, 850, 1250);
+    CHECK_RANGE(masp, 780, 840);
+    CHECK_RANGE(pinheiros, 700, 760);
+    CHECK(santos < 20);
+    CHECK(cubatao < 60);
+
+    // Every region field stays flat at its elevation; 2 km beyond its flat
+    // area the terrain takes over, and the way there has no step.
+    RegionGround with = *scenarios::makeRegionGround(scenarios::saoPauloRegionAirports());
+    with.setTerrain(grid);
+    for (const RegionGround::Field& f : with.fields()) {
+        CHECK(std::abs(with.terrainDown(f.north, f.east) - f.down) < 1e-9);
+        for (const RunwayDef& r : f.runways) CHECK(std::abs(with.terrainDown(r.threshold.x, r.threshold.y) - f.down) < 1e-9);
+        for (int k = 0; k < 8; ++k) {
+            const Real ang = k * kPi / 4;
+            Real prev = with.terrainDown(f.north, f.east), worst = 0;
+            for (Real d = f.radius; d < f.radius + 4000; d += 25) {
+                const Real h = with.terrainDown(f.north + d * std::cos(ang), f.east + d * std::sin(ang));
+                worst = std::max(worst, std::abs(h - prev));
+                prev = h;
+            }
+            CHECK(worst < 15);  // m per 25 m: no cliff at the field's edge
+        }
+        const Real far = f.radius + 2500;
+        const Real dem = grid->heightAt(f.north + far, f.east);
+        if (std::isfinite(dem) && grid->inside(f.north + far, f.east) > 5000)
+            CHECK(std::abs(-with.terrainDown(f.north + far, f.east) - dem) < 1e-6);
+    }
+
+    // A level ray at 1,000 m MSL from 3 km south of Pico do Jaraguá meets the
+    // hill; without the grid, the blend between the fields lets it through.
+    const Vec3 peak = scenarios::saoPauloMapNed(-23.4567, -46.7664);
+    const Vec3 from{peak.x - 3000, peak.y, -1000};
+    const GroundHit hit = with.raycast(from, {1, 0, 0}, 6000);
+    RegionGround without = *scenarios::makeRegionGround(scenarios::saoPauloRegionAirports());
+    CHECK(hit.hit && hit.distance > 1000 && hit.distance < 3200);
+    CHECK(!without.raycast(from, {1, 0, 0}, 6000).hit);
+    // Straight down onto the hillside: the same ground as terrainDown.
+    const GroundHit down = with.below({peak.x - 800, peak.y, -1500});
+    CHECK(down.hit && std::abs(down.point.z - with.terrainDown(peak.x - 800, peak.y)) < 0.05);
+    // Malformed AVT1 is refused.
+    ElevationGrid bad;
+    const unsigned char junk[48] = {'A', 'V', 'T', '1'};
+    CHECK(!bad.parse(junk, sizeof junk));
+    CHECK(bad.empty());
+}

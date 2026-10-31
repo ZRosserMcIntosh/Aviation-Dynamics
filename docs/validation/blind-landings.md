@@ -80,34 +80,34 @@ ILS 10L at Guarulhos, calm, zero visibility:
 
 | Aircraft | Touchdown | Off centreline | Sink | Stopped at | Seat | DRI |
 |---|---|---|---|---|---|---|
-| Tupi T-180 (172) | 427 m | 1.2 m | 148 fpm | 668 m | 1.9 g | 1.9 |
-| Top G | 498 m | 0.2 m | 399 fpm | 904 m | 1.8 g | 2.2 |
-| Phenom 300E | 476 m | 0.4 m | 319 fpm | 779 m | 2.0 g | 2.2 |
-| Citation CJ4 | 503 m | 0.8 m | 288 fpm | 816 m | 2.2 g | 2.4 |
-| Learjet 45 | 467 m | 1.2 m | 346 fpm | 762 m | 1.9 g | 2.2 |
-| CRJ700 | 579 m | 0.9 m | 347 fpm | 1,181 m | 2.0 g | 2.3 |
-| 737-800 | 527 m | 0.1 m | 391 fpm | 1,178 m | 2.5 g | 2.9 |
+| Tupi T-180 (172) | 427 m | 1.2 m | 148 fpm | 664 m | 1.8 g | 1.9 |
+| Top G | 492 m | 0.2 m | 388 fpm | 887 m | 1.6 g | 1.8 |
+| Phenom 300E | 474 m | 0.4 m | 313 fpm | 777 m | 1.6 g | 1.8 |
+| Citation CJ4 | 501 m | 0.8 m | 277 fpm | 812 m | 2.0 g | 2.3 |
+| Learjet 45 | 465 m | 1.1 m | 338 fpm | 763 m | 1.5 g | 1.6 |
+| CRJ700 | 573 m | 0.9 m | 332 fpm | 1,114 m | 1.4 g | 1.5 |
+| 737-800 | 517 m | 0.1 m | 367 fpm | 1,068 m | 1.8 g | 1.9 |
 
 ILS 35L at Congonhas (1,940 m), the wind from 060 (almost straight across),
 with the mechanical turbulence it makes over the city:
 
 | Aircraft | Wind | Touchdown | Off centreline | Sink | Stopped at | Seat | DRI |
 |---|---|---|---|---|---|---|---|
-| Tupi T-180 | 6 kt | 425 m | 0.7 m | 121 fpm | 652 m | 1.7 g | 1.8 |
-| Top G | 6 kt | 476 m | 2.8 m | 417 fpm | 882 m | 2.1 g | 2.2 |
-| CRJ700 | 6 kt | 585 m | 2.9 m | 387 fpm | 1,128 m | 1.9 g | 2.3 |
-| 737-800 | 6 kt | 478 m | 2.5 m | 360 fpm | 1,121 m | 2.5 g | 2.7 |
-| CRJ700 | 10 kt | 524 m | 2.2 m | 447 fpm | 1,050 m | 2.1 g | 2.2 |
-| 737-800 | 10 kt | 496 m | 2.9 m | 363 fpm | 1,147 m | 2.2 g | 2.5 |
+| Tupi T-180 | 6 kt | 425 m | 0.7 m | 121 fpm | 647 m | 1.7 g | 1.7 |
+| Top G | 6 kt | 471 m | 2.7 m | 404 fpm | 861 m | 2.1 g | 2.2 |
+| CRJ700 | 6 kt | 579 m | 2.9 m | 370 fpm | 1,112 m | 1.7 g | 1.6 |
+| 737-800 | 6 kt | 469 m | 2.6 m | 345 fpm | 1,013 m | 1.8 g | 2.0 |
+| CRJ700 | 10 kt | 521 m | 2.2 m | 430 fpm | 1,037 m | 2.1 g | 2.0 |
+| 737-800 | 10 kt | 486 m | 2.9 m | 350 fpm | 1,039 m | 1.8 g | 2.0 |
 
 RNAV (GPS) approaches, the GPS vertical path to the threshold:
 
 | Aircraft | Approach | Touchdown | Off centreline | Sink | Stopped at | Seat | DRI |
 |---|---|---|---|---|---|---|---|
-| Tupi T-180 | São José dos Campos 16, calm | 416 m | 1.1 m | 144 fpm | 652 m | 1.9 g | 1.9 |
-| Top G | São José dos Campos 16, calm | 436 m | 0.4 m | 409 fpm | 839 m | 1.8 g | 2.2 |
-| CRJ700 | São José dos Campos 16, calm | 519 m | 1.3 m | 354 fpm | 1,117 m | 2.0 g | 2.3 |
-| 737-800 | Guarulhos 28L, 6 kt from 200 | 421 m | 0.2 m | 447 fpm | 1,011 m | 2.2 g | 2.6 |
+| Tupi T-180 | São José dos Campos 16, calm | 416 m | 1.1 m | 144 fpm | 647 m | 1.8 g | 1.9 |
+| Top G | São José dos Campos 16, calm | 431 m | 0.4 m | 389 fpm | 821 m | 1.6 g | 1.8 |
+| CRJ700 | São José dos Campos 16, calm | 513 m | 1.3 m | 336 fpm | 1,049 m | 1.4 g | 1.4 |
+| 737-800 | Guarulhos 28L, 6 kt from 200 | 413 m | 0.2 m | 432 fpm | 919 m | 1.8 g | 2.0 |
 
 ## What it took (found and fixed)
 
@@ -152,8 +152,16 @@ RNAV (GPS) approaches, the GPS vertical path to the threshold:
   - The crash-test dummy in the pilot's seat showed it: 3.9 g at a
     Learjet 45's cockpit (DRI 4.7) with 1.1 g at the CG.
   - The nose is now flown down at 2°/s, back pressure against its rate:
-    1.9 g, DRI 2.2. What is left is the main gear's touchdown (the CG at
-    2.2–2.8 g in a jet's 300–450 fpm arrival).
+    1.9 g, DRI 2.2. What was left was the main gear's touchdown (the CG at
+    2.2–2.8 g in a jet's 300–450 fpm arrival): the next item.
+- **A strut that was nearly rigid.**
+  - The jets' legs were a linear spring preloaded to most of the static
+    load: a 1 m/s touchdown already put 2.1 g on the Top G's CG.
+  - They are now oleo-pneumatic struts (a gas spring from a quarter of the
+    static load, an orifice damper; see the fidelity matrix). The seat
+    readings above are 1.4–2.1 g (the Learjet 1.5 g).
+  - The derotation hold was firmed up with them: the mains' spin-up still
+    pitched a Learjet down at 13°/s against the old one.
 
 ## The autoland in the browser
 

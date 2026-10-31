@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <fstream>
+#include <iterator>
 
 #include "avd/units.hpp"
 
@@ -189,6 +191,22 @@ const std::vector<Airport>& saoPauloRegionAirports() {
 }
 
 Vec3 landingThreshold(const RunwayDef& r) { return runwayPoint(r, r.displaced); }
+
+std::shared_ptr<const ElevationGrid> saoPauloTerrain() {
+#ifndef AVD_DATA_DIR
+    return nullptr;  // the browser build: the host hands the file over (avd_terrain)
+#else
+    static const std::shared_ptr<const ElevationGrid> grid = []() -> std::shared_ptr<const ElevationGrid> {
+        std::ifstream f(std::string(AVD_DATA_DIR) + "/world/terrain_sp.avt", std::ios::binary);
+        if (!f) return nullptr;
+        const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        auto g = std::make_shared<ElevationGrid>();
+        if (!g->parse(bytes.data(), bytes.size())) return nullptr;
+        return g;
+    }();
+    return grid;
+#endif
+}
 
 std::unique_ptr<RegionGround> makeRegionGround(const std::vector<Airport>& airports) {
     auto g = std::make_unique<RegionGround>();

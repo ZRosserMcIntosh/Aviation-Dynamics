@@ -715,6 +715,15 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("damping_rebound_ns_per_m", g.dampingRebound);
         o.num("max_compression_m", g.maxCompression);
         o.num("collapse_speed_mps", g.collapseSpeed);
+        if (o.has("oleo")) {
+            Obj ol = o.child("oleo");
+            g.oleo.enabled = true;
+            ol.num("compression_ratio", g.oleo.compressionRatio);
+            ol.num("polytropic_index", g.oleo.polytropicIndex);
+            ol.num("orifice_ns2_per_m2", g.oleo.orifice);
+            ol.num("linear_damping_ns_per_m", g.oleo.linearDamping);
+            ol.num("rebound_ratio", g.oleo.reboundRatio);
+        }
         o.num("wheel_radius_m", g.wheelRadius);
         o.num("rolling_resistance", g.rollingResistance);
         o.num("brake_coefficient", g.maxBrakeForceCoefficient);

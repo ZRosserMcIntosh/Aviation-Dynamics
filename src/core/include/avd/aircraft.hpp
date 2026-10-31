@@ -70,6 +70,12 @@ struct PilotInput {
     Real mixture = 1;      // 0 (idle cut-off) .. 1 (full rich)
     Real brakeLeft = 0, brakeRight = 0;  // 0..1 toe brakes
     Real trimRate = 0;     // -1..1, + nose-up trim wheel movement
+    // Turbofans: the reverse thrust levers, 0 (stowed) .. 1 (maximum reverse).
+    // Lifted (> 0) with the throttles at idle and the main wheels on the
+    // ground they deploy the reversers; once deployed the lever sets the
+    // reverse N1 from idle up to the reverser's reverse N1. Back to 0 stows
+    // them. Left at 0 the automatic sequence (on the landing roll) runs.
+    Real reverse = 0;
     bool starterHeld = false;  // ignition key held at START
 };
 
@@ -269,9 +275,9 @@ public:
     // Propeller slipstream of engine i at the last recorded evaluation (visualisation).
     const SlipstreamState& slipstream(int i) const { return slip_[i]; }
     Real speedbrakePosition() const { return speedbrakePos_; }
-    // Thrust reverser of turbofan i: 0 stowed .. 1 deployed; the automatic
-    // sequence's phase (0 stowed, 1 deploying / reverse thrust, 2 reverse
-    // idle, 3 stowing).
+    // Thrust reverser of turbofan i: 0 stowed .. 1 deployed; the sequence's
+    // phase (0 stowed, 1 deploying / reverse thrust, 2 reverse idle,
+    // 3 stowing; 4 on the pilot's reverse lever, PilotInput::reverse).
     Real reverserPosition(int i) const { return reverserPos_[static_cast<std::size_t>(i)]; }
     int reverserPhase(int i) const { return reverserPhase_[static_cast<std::size_t>(i)]; }
     bool groundSpoilersActive() const { return groundSpoilers_; }
@@ -353,6 +359,9 @@ private:
         Real brakeTorque = 0;      // N m at full pedal
         Real spinDamping = 0;      // N s/m, bristle damping on the slip velocity while the wheel turns
         Real heldDamping = 0;      // N s/m, while the wheel is held (the airframe's fore-aft mode)
+        Real length = 0;           // attach -> tyre at full extension (an oleo's taken out to its static stroke)
+        // Oleo (GearDef::Oleo): gas spring Fe (L / (L - s))^n, damping c2 s'|s'| + c1 s'.
+        Real oleoFe = 0, oleoL = 1, oleoN = 1, oleoC2 = 0, oleoC1 = 0;
     };
     void prepareGear();
     Real corneringStiffness(std::size_t leg, Real normalForce) const;
