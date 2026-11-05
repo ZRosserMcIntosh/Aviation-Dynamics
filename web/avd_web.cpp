@@ -304,6 +304,10 @@ AVD_EXPORT int avd_build_id() { return putText(AVD_BUILD_ID); }
 
 namespace {
 
+// Turbine aircraft (turbofans or turboprops): generators, VMO, the jet-style
+// spawns (approach at Vref + 5 from the trimmed CLmax, landing flap, gear).
+bool turbine() { return g && (!g->def.turbofans.empty() || !g->def.turboprops.empty()); }
+
 const char* eventText(FlightEventType t) {
     switch (t) {
         case FlightEventType::EngineStarted: return "Engine running";
@@ -313,7 +317,7 @@ const char* eventText(FlightEventType t) {
         case FlightEventType::StallWarningOff: return "";
         case FlightEventType::Touchdown: return "Touchdown";
         case FlightEventType::Liftoff: return "Lift-off";
-        case FlightEventType::Overspeed: return g && !g->def.turbofans.empty() ? "OVERSPEED: above VMO" : "OVERSPEED: above VNE";
+        case FlightEventType::Overspeed: return turbine() ? "OVERSPEED: above VMO" : "OVERSPEED: above VNE";
         case FlightEventType::MachOverspeed: return "OVERSPEED: above MMO";
         case FlightEventType::GearOverspeed: return "Gear extended above VLE";
         case FlightEventType::OverG: return "LIMIT LOAD EXCEEDED";
@@ -321,8 +325,8 @@ const char* eventText(FlightEventType t) {
         case FlightEventType::PropStrike: return "PROPELLER STRIKE";
         case FlightEventType::HardPointContact: return "Airframe ground contact";
         case FlightEventType::BatteryDepleted: return "Battery depleted";
-        case FlightEventType::AlternatorOffline: return g && !g->def.turbofans.empty() ? "Generator offline" : "Alternator offline";
-        case FlightEventType::AlternatorOnline: return g && !g->def.turbofans.empty() ? "Generator online" : "Alternator online";
+        case FlightEventType::AlternatorOffline: return turbine() ? "Generator offline" : "Alternator offline";
+        case FlightEventType::AlternatorOnline: return turbine() ? "Generator online" : "Alternator online";
         case FlightEventType::LoadShed: return "LOAD SHED: essential bus only";
         case FlightEventType::LoadRestored: return "Load shed reset: all buses powered";
         case FlightEventType::GearCollapse: return "GEAR COLLAPSE";
@@ -672,7 +676,7 @@ AVD_EXPORT void avd_reset(int mode) {
     const scenarios::Airport& ap = atDest ? regionAirport(g_destAirport) : g->airport;
     const RunwayDef& rw = ap.runways[static_cast<std::size_t>(atDest ? g_destRunway : 0)];
     if (mode == 4) {
-        const bool jet = g->ac->turbofanCount() > 0;
+        const bool jet = turbine();
         const Real dist = 10 * 1852.0;
         const Real alt = ap.elevation + 15.24 + dist * std::tan(degToRad(3.0));
         placeTrimmed(scenarios::runwayPoint(rw, rw.displaced - dist), alt, rw.headingTrue, jet ? 180.0 : 90.0, jet ? 1 : 0, 0.0);
@@ -691,14 +695,16 @@ AVD_EXPORT void avd_reset(int mode) {
         // the landing threshold (scenarios/airports.cpp). Mode 3: level cruise, 100 KIAS.
         // Jets: final at 125 KIAS (about Vref + 10) with landing flap and the gear down, cruise at 250 KIAS.
         const bool final = mode == 2;
-        const bool jet = g->ac->turbofanCount() > 0;
+        const bool jet = turbine();
+        // Turboprops cruise at 200 KIAS (VMO 263 KIAS for the King Air 350).
+        const Real cruiseKias = g->ac->turbopropCount() > 0 ? 200.0 : 250.0;
         const int landingFlap = jet ? static_cast<int>(g->def.controls.flapDetents.size()) - 1 : 2;
         const Real dist = final ? (jet ? -6000.0 : -3000.0) : -8000.0;
         const Real path = final ? degToRad(-3.0) : 0.0;
         const Real alt = ap.elevation + (final ? (-dist + rw.displaced + 300.0) * std::tan(-path) : (jet ? 1500.0 : 850.0));
         // Jets fly the final at their own approach speed: Vref (1.23 times the
         // landing-flap stall speed at this weight) + 5 kt.
-        const Real kias = final ? (jet ? jetApproachKias() : 65.0) : (jet ? 250.0 : 100.0);
+        const Real kias = final ? (jet ? jetApproachKias() : 65.0) : (jet ? cruiseKias : 100.0);
         placeTrimmed(scenarios::runwayPoint(rw, dist), alt, rw.headingTrue, kias, final ? landingFlap : 0, path);
     }
     finishReset(mode >= 1);
@@ -710,7 +716,7 @@ AVD_EXPORT void avd_reset_final(double distance, double kias) {
     if (!g) return;
     newAircraft();
     const RunwayDef& rw = g->airport.runways[0];
-    const bool jet = g->ac->turbofanCount() > 0;
+    const bool jet = turbine();
     const int landingFlap = jet ? static_cast<int>(g->def.controls.flapDetents.size()) - 1 : 2;
     const Real dist = -std::clamp(distance, 500.0, 30000.0);
     const Real alt = g->airport.elevation + (-dist + rw.displaced + 300.0) * std::tan(degToRad(3.0));
@@ -730,10 +736,11 @@ AVD_EXPORT void avd_reset_air(double east, double north, double heightAboveField
     const Vec3 ned = world::nedFromEnu({east, north, 0});
     const AircraftDefinition& d = g->def;
     const bool jet = !d.turbofans.empty();
+    const bool big = turbine();
     // Keep the request flyable: below the type's ceiling, no faster than Vmo
     // (or Mmo at height), flaps no further than the speed allows, and at least
     // 1.25 Vs for that configuration and weight.
-    const Real height = std::clamp(heightAboveField, 30.0, jet ? 14500.0 : 4500.0);
+    const Real height = std::clamp(heightAboveField, 30.0, big ? 14500.0 : 4500.0);
     const Real altMsl = g->airport.elevation + height;
     const std::vector<Real>& det = d.controls.flapDetents;
     int flap = std::clamp(flapDetent, 0, static_cast<int>(det.size()) - 1);
@@ -793,7 +800,7 @@ AVD_EXPORT void avd_set_input(double pitch, double roll, double yaw, double thro
 // Splits the levers until the next avd_set_input, which sets them all again.
 AVD_EXPORT void avd_set_throttle(int engine, double v) {
     if (!g) return;
-    const int n = g->ac->engineCount() + g->ac->turbofanCount();
+    const int n = g->ac->engineCount() + g->ac->turbofanCount() + g->ac->turbopropCount();
     if (engine < 0 || engine >= n) {
         g->raw.throttle = v;
         g->raw.splitThrottles = false;
@@ -810,6 +817,98 @@ AVD_EXPORT void avd_set_throttle(int engine, double v) {
 AVD_EXPORT void avd_set_reverse(double v) {
     if (!g) return;
     g->raw.reverse = std::clamp(v, 0.0, 1.0);
+}
+
+// ---- Turboprops (web/README.md, "Turboprops") ---------------------------------
+// The power levers are the throttles (avd_set_input / avd_set_throttle; 1 is
+// the forward stop, where the torque and ITT limiters hold) and their travel
+// below idle is avd_set_reverse (beta, then reverse; main wheels on the
+// ground). The propeller levers: 0 the minimum governed rpm .. 1 the rated
+// rpm (PilotInput::propLever), every engine; held until set again.
+AVD_EXPORT void avd_set_prop_lever(double v) {
+    if (!g) return;
+    g->raw.propLever = std::clamp(v, 0.0, 1.0);
+}
+
+// Condition lever of engine (0-based; -1 every engine): 0 CUT-OFF, 1 LOW IDLE,
+// 2 HIGH IDLE (cockpit control "engine<N>.condition"). Returns the engines set.
+AVD_EXPORT int avd_set_condition(int engine, int position) {
+    if (!g) return 0;
+    int n = 0;
+    for (int i = 0; i < g->ac->turbopropCount(); ++i)
+        if (engine < 0 || engine == i) n += g->ac->setCockpitControl("engine" + std::to_string(i + 1) + ".condition", std::clamp(position, 0, 2));
+    return n;
+}
+
+// The propeller lever's feather detent of engine (0-based; -1 every engine):
+// 1 feather, 0 back to the governing range (cockpit "engine<N>.feather").
+AVD_EXPORT int avd_set_feather(int engine, int on) {
+    if (!g) return 0;
+    int n = 0;
+    for (int i = 0; i < g->ac->turbopropCount(); ++i)
+        if (engine < 0 || engine == i) n += g->ac->setCockpitControl("engine" + std::to_string(i + 1) + ".feather", on ? 1 : 0);
+    return n;
+}
+
+namespace {
+constexpr int kTurbopropSize = 48;
+constexpr int kTurbopropStride = 20;
+double g_tprop[kTurbopropSize];
+}  // namespace
+
+// Turboprop engine indication (48 doubles; truth, blank 0 without gauge
+// power on the needles marked *): [0] turboprops, [1] propeller lever 0..1,
+// [2] selected Np rpm, [3] autofeather fitted, [4] autofeather switch,
+// [5] autofeather armed, [6] reverse lever 0..1, [7] gauges powered; engines
+// at 8 + 20 i (i = 0, 1): torque % *, torque ft lbf *, ITT degC *, Ng % *,
+// Np rpm *, fuel flow kg/h *, fuel flow lb/h *, oil pressure psi *, oil
+// temperature degC *, blade angle deg (0.75 R), feathered, beta (ground
+// beta / reverse), running, lit, condition lever (0 cut-off, 1 low idle,
+// 2 high idle), starter switch, feather detent, thrust kN, shaft power shp,
+// autofeathered.
+AVD_EXPORT double* avd_turboprop() {
+    for (double& v : g_tprop) v = 0;
+    if (!g) return g_tprop;
+    const Aircraft& ac = *g->ac;
+    const int n = ac.turbopropCount();
+    g_tprop[0] = n;
+    if (n == 0) return g_tprop;
+    const TurbopropDef& d0 = g->def.turboprops[0];
+    g_tprop[1] = g->raw.propLever;
+    g_tprop[2] = d0.minGovernedRpm + (d0.ratedPropRpm - d0.minGovernedRpm) * g->raw.propLever;
+    g_tprop[3] = d0.autofeather;
+    g_tprop[4] = ac.cockpitControl("propeller.autofeather") == 1;
+    g_tprop[5] = ac.autofeatherArmed();
+    g_tprop[6] = g->raw.reverse;
+    const bool gauges = ac.electrical().powered();
+    g_tprop[7] = gauges;
+    for (int i = 0; i < std::min(n, 2); ++i) {
+        const TurbopropState& s = ac.turbopropState(i);
+        const std::string e = "engine" + std::to_string(i + 1);
+        double* o = g_tprop + 8 + kTurbopropStride * i;
+        const double p = gauges ? 1.0 : 0.0;
+        o[0] = p * s.torqueFraction * 100;
+        o[1] = p * s.torque / (kPoundForce * kFoot);
+        o[2] = p * (s.itt - 273.15);
+        o[3] = p * s.ng * 100;
+        o[4] = p * ac.telemetry().engines[static_cast<std::size_t>(i)].rpm;
+        o[5] = p * s.fuelFlow * 3600;
+        o[6] = p * s.fuelFlow * 3600 / kPound;
+        o[7] = p * s.oilPressure / kPsi;
+        o[8] = p * (s.oilTemperature - 273.15);
+        o[9] = radToDeg(s.bladeAngle);
+        o[10] = s.feathered;
+        o[11] = s.beta;
+        o[12] = s.running;
+        o[13] = s.lit;
+        o[14] = ac.cockpitControl(e + ".condition");
+        o[15] = ac.cockpitControl(e + ".starter");
+        o[16] = ac.cockpitControl(e + ".feather");
+        o[17] = s.thrust / 1000;
+        o[18] = s.shaftPower / kHorsepower;
+        o[19] = ac.autofeathered(i);
+    }
+    return g_tprop;
 }
 
 // 0 Arcade, 1 Sport, 2 Simulation.
@@ -833,6 +932,20 @@ AVD_EXPORT void avd_set_level_hold(int on) {
 
 AVD_EXPORT void avd_quick_start() {
     if (!g) return;
+    if (g->ac->turbopropCount() > 0) {
+        // Turboprop: power up, then one engine at a time: the starter cranks
+        // the gas generator, the condition lever goes to LOW IDLE at light-off
+        // speed, the starter is released at idle (updateJetStart).
+        Aircraft& ac = *g->ac;
+        ac.setCockpitControl("electrical.battery", 1);
+        ac.setCockpitControl("electrical.alternator", 1);
+        ac.setCockpitControl("electrical.avionics", 1);
+        ac.setCockpitControl("fuel.auxpump", 1);
+        ac.setCockpitControl("electrical.load.beacon", 1);
+        ac.setCockpitControl("engine1.starter", 1);
+        g->jetStart = 1;
+        return;
+    }
     if (g->ac->turbofanCount() > 0) {
         // Jet: power up, then the fuel control switches one engine at a time
         // (each start runs the starter, light-off and spool-up in the core).
@@ -853,6 +966,26 @@ namespace {
 void updateJetStart() {
     if (!g || g->jetStart == 0 || g->jetStart == 3) return;
     Aircraft& ac = *g->ac;
+    if (ac.turbopropCount() > 0) {
+        const int n = ac.turbopropCount();
+        const int i = g->jetStart - 1;
+        if (i >= n) return;
+        const std::string e = "engine" + std::to_string(i + 1);
+        const TurbopropState& s = ac.turbopropState(i);
+        if (!s.lit && s.ng >= ac.turboprop(i).def().lightOffNg + 0.005 && ac.cockpitControl(e + ".condition") == 0)
+            ac.setCockpitControl(e + ".condition", 1);
+        if (s.running) {
+            if (i + 1 < n) {
+                ac.setCockpitControl("engine" + std::to_string(i + 2) + ".starter", 1);
+                g->jetStart = i + 2;
+            } else {
+                ac.setCockpitControl("electrical.load.nav_lights", 1);
+                ac.setCockpitControl("electrical.load.strobes", 1);
+                g->jetStart = 3;
+            }
+        }
+        return;
+    }
     const int n = ac.turbofanCount();
     const int i = g->jetStart - 1;
     if (i < n && ac.turbofanState(i).running) {
@@ -872,7 +1005,7 @@ void updateJetStart() {
 AVD_EXPORT int avd_procedure_status() {
     if (!g) return 0;
     if (g->jetStart > 0) {
-        const int i = std::min(g->jetStart, g->ac->turbofanCount()) - 1;
+        const int i = std::min(g->jetStart, g->ac->turbofanCount() + g->ac->turbopropCount()) - 1;
         putText(g->jetStart == 3 ? "Both engines running." : "Starting engine " + std::to_string(i + 1) + "...");
         return g->jetStart == 3 ? 2 : 1;
     }
@@ -920,11 +1053,11 @@ AVD_EXPORT double* avd_flow() {
     }
     double* e = g_flow + 16 + kFlowStrips * kFlowStride;
     int ne = 0;
-    for (int i = 0; i < ac.engineCount() && ne < 4; ++i, ++ne) {
+    for (int i = 0; i < ac.propellerCount() && ne < 4; ++i, ++ne) {
         const SlipstreamState& ss = ac.slipstream(i);
         double* o = e + ne * kFlowEngine;
         const EngineTelemetry& et = ac.telemetry().engines[static_cast<std::size_t>(i)];
-        const PropellerDef& pd = g->def.engines[static_cast<std::size_t>(i)].propeller;
+        const PropellerDef& pd = ac.propeller(i).def();
         o[0] = ss.discCentre.x; o[1] = ss.discCentre.y; o[2] = ss.discCentre.z;
         o[3] = ss.axis.x; o[4] = ss.axis.y; o[5] = ss.axis.z;
         o[6] = ss.radius; o[7] = ss.axialIncrement; o[8] = et.prop.thrust; o[9] = 0;
@@ -1000,10 +1133,12 @@ AVD_EXPORT double* avd_jet() {
         g_jet[30 + i] = s.oilPressure / 6894.757;
         ff += e.fuelFlow;
         g_jet[58 + i] = t.throttles[static_cast<std::size_t>(i)];
-        g_jet[60 + i] = i < ac.electrical().generatorCount() ? ac.electrical().generatorOnline(i) : 0.0;
         double* u = g_jet + 74 + 4 * i;
         u[0] = e.n1 * 100; u[1] = e.n2 * 100; u[2] = e.itt - 273.15; u[3] = e.fuelFlow * 3600;
     }
+    // Generators 1 and 2 on line (turbofans and turboprops).
+    if (ac.turbofanCount() + ac.turbopropCount() > 0)
+        for (int i = 0; i < std::min(ac.electrical().generatorCount(), 2); ++i) g_jet[60 + i] = ac.electrical().generatorOnline(i);
     for (int k = 0; k < std::min(ac.hydraulicSystemCount(), 2); ++k)
         g_jet[62 + k] = ac.hydraulicPressure(k) * g->def.hydraulics.systems[static_cast<std::size_t>(k)].nominalPressure / 6894.757;
     g_jet[64] = t.gearPower; g_jet[65] = t.flapPower; g_jet[66] = t.speedbrakePower; g_jet[67] = t.steeringPower; g_jet[68] = t.brakePower;
@@ -1387,8 +1522,9 @@ AVD_EXPORT double* avd_state() {
     s[21] = m3ToGal(r.fuelFlow / g->def.fuel.density) * 3600; s[22] = r.fuelGauge[0] * 1000; s[23] = r.fuelGauge[1] * 1000;
     s[24] = g->raw.throttle; s[25] = g->raw.mixture;
     s[26] = radToDeg(t.flapAngle); s[27] = t.elevatorTrim; s[28] = t.onGround; s[29] = r.stallHorn;
-    s[30] = ac.turbofanCount() > 0 ? ac.turbofanState(0).running || ac.turbofanState(std::min(1, ac.turbofanCount() - 1)).running
-                                   : e.engine.running; s[31] = r.voltmeter; s[32] = ac.electrical().alternatorOnline(); s[33] = paToInHg(ac.vacuum().suction());
+    s[30] = ac.turbofanCount() > 0    ? ac.turbofanState(0).running || ac.turbofanState(std::min(1, ac.turbofanCount() - 1)).running
+            : ac.turbopropCount() > 0 ? ac.turbopropState(0).running || ac.turbopropState(std::min(1, ac.turbopropCount() - 1)).running
+                                      : e.engine.running; s[31] = r.voltmeter; s[32] = ac.electrical().alternatorOnline(); s[33] = paToInHg(ac.vacuum().suction());
     s[34] = ac.electrical().batteryCharge();
     s[35] = radToDeg(r.attitudeRoll); s[36] = radToDeg(r.attitudePitch); s[37] = std::fmod(radToDeg(r.headingIndicator) + 360.0, 360.0);
     s[38] = radToDeg(r.turnRate); s[39] = r.slipBall;
@@ -1738,7 +1874,7 @@ AVD_EXPORT int avd_autoland(int on) {
     }
     const scenarios::Airport& ap = regionAirport(g_destAirport);
     const RunwayDef& rw = ap.runways[static_cast<std::size_t>(g_destRunway)];
-    const bool jet = ac.turbofanCount() > 0;
+    const bool jet = turbine();
     ac.instruments().setAltimeterSetting(g->weather->atmosphere().conditions().seaLevelPressure);
     g->autolandFlap = static_cast<int>(g->def.controls.flapDetents.size()) - 1;
     g->autolandVapp = jet ? ktToMs(jetApproachKias()) : ktToMs(65);

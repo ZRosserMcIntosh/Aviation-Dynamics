@@ -5,7 +5,7 @@ exceptions or RTTI, and the WASI imports are stubs because the core does no
 I/O. The C ABI is in `avd_web.cpp`.
 
 ```sh
-WASI_SDK=/path/to/wasi-sdk web/build_wasi.sh   # → web/dist/avd.wasm, avd.mjs, tupi_t180.json, top_g.json
+WASI_SDK=/path/to/wasi-sdk web/build_wasi.sh   # → web/dist/avd.wasm, avd.mjs and the aircraft JSON (king_air_350.json among them)
 node web/smoke_test.mjs                        # take-off, Quick Start, ILS reception, instruments
 node web/abi_check.mjs                         # the tables below against the module's avd_layout()
 node web/cockpit/build_page.mjs                # → web/dist/cockpit.html (one self-contained file)
@@ -20,6 +20,8 @@ exports plus these helpers:
   before the next call);
 - `markings()`, `runway()`, `events()`, `cockpit()`, `procedure()`, `jet()`,
   `setThrottle(engine, v)`;
+- turboprops: `turboprop()`, `setPropLever(v)`, `setCondition(engine, p)`,
+  `setFeather(engine, on)` (see *Turboprops* below);
 - `abiVersion`, `layout` (every array size and stride from `avd_layout()`)
   and `buildId()`; see *ABI version* below.
 
@@ -91,7 +93,7 @@ call is clamped to 0.25 s. It returns the number of steps run.
 
 | Function | Meaning |
 |---|---|
-| `avd_reset(mode)` | Reset on the runway in use (`avd_set_airport`; Congonhas 35L by default): 0 cold and dark 30 m down the runway, 1 engine running there, 2 trimmed on the 3° final 3 km out (jets 6 km) at 65 KIAS with flaps 20 (jets: Vref + 5 KIAS, landing flap, gear down), exactly on the glide path (which starts at the glideslope antenna 300 m past the landing threshold), 3 trimmed level cruise 8 km before the runway, 850 m above the field (jets 1,500 m), 100 KIAS (jets 250), 4 trimmed at the destination's intermediate fix (10 NM out on the final course, level at the 3° path's altitude, 90 KIAS; jets 180 KIAS with flaps 1), 5 like 2 but on the destination's final; 4 and 5 use the runway in use when no destination is set. Every reset sets the altimeter to QNH, NAV 1 to the destination's ILS (else the runway in use's, else 113.70) with 113.70 in standby, the OBS to that course, the heading bug to the runway heading on the ground (else the course), COM standby 132.80 and the transponder to ALT; modes 1–5 seed the instruments to the truth |
+| `avd_reset(mode)` | Reset on the runway in use (`avd_set_airport`; Congonhas 35L by default): 0 cold and dark 30 m down the runway, 1 engine running there, 2 trimmed on the 3° final 3 km out (jets 6 km) at 65 KIAS with flaps 20 (jets: Vref + 5 KIAS, landing flap, gear down), exactly on the glide path (which starts at the glideslope antenna 300 m past the landing threshold), 3 trimmed level cruise 8 km before the runway, 850 m above the field (jets 1,500 m), 100 KIAS (jets 250; turboprops take the jets' spawns but cruise at 200 KIAS), 4 trimmed at the destination's intermediate fix (10 NM out on the final course, level at the 3° path's altitude, 90 KIAS; jets 180 KIAS with flaps 1), 5 like 2 but on the destination's final; 4 and 5 use the runway in use when no destination is set. Every reset sets the altimeter to QNH, NAV 1 to the destination's ILS (else the runway in use's, else 113.70) with 113.70 in standby, the OBS to that course, the heading bug to the runway heading on the ground (else the course), COM standby 132.80 and the transponder to ALT; modes 1–5 seed the instruments to the truth |
 | `avd_reset_air(east, north, heightAboveField, headingDeg, kias, flap)` | Trimmed, level, hands-off spawn anywhere in the world (ENU metres from the world anchor, height in m above the field elevation, true track (the spawn crabs into the mean wind to make it good), 55–350 KIAS, flap detent 0–3). Read the levers with `avd_trim_throttle()` / `avd_trim_mixture()` |
 | `avd_set_weather(windMs, windFromDeg, turbulenceMs, isaDevC, humidity)` | Weather (rebuilds the field). The wind is the airfield report; it brings its own mechanical turbulence, weaker wind and stronger gusts over the city around SBMT, backing with height, and Cantareira ridge lift. `turbulenceMs` is an extra RMS on top |
 | `avd_set_wind_detail(severity, wStarMs, ziM)` | Turbulence class (0 none, 1 light, 2 moderate, 3 severe; MIL-HDBK-1797) and thermals (w*, convective-layer depth m AGL; w* 0 = none) |
@@ -99,6 +101,10 @@ call is clamped to 0.25 s. It returns the number of steps run.
 | `avd_set_input(pitch, roll, yaw, throttle, mixture, brakeL, brakeR, trimRate, starter)` | Raw pilot input in −1..1 or 0..1. Starter is held while 1. On an aircraft with a tiller, yaw turns the tiller on the ground below 5 kt. `throttle` moves every engine's lever together (and ends a split) |
 | `avd_set_throttle(engine, v)` | One engine's throttle lever (0-based; −1 or out of range: every lever). Splits the levers (asymmetric thrust, differential taxi) until the next `avd_set_input`, which sets them all again. `A.setThrottle(engine, v)` |
 | `avd_set_reverse(v)` | The reverse thrust levers, 0 (stowed) to 1 (maximum reverse). Lifted with the throttles at idle and the main wheels on the ground, they deploy the reversers (2 s) and then set the reverse N1, from idle up to the reverser's reverse N1. Back to 0 stows them. Held until set again; while it is 0 the automatic landing-roll sequence runs. `jet()` reports reverser phase 4 while on the lever. `A.setReverse(v)` |
+| `avd_set_prop_lever(v)` | Turboprops: the propeller levers, 0 (the minimum governed rpm, 1,450 on the King Air 350) to 1 (the rated rpm, 1,700), every engine; the governors set the blade angle to hold it. Held until set again. `A.setPropLever(v)` |
+| `avd_set_condition(engine, p)` | Turboprops: condition lever of engine (0-based; −1 every engine): 0 CUT-OFF (fuel off: shut-down), 1 LOW IDLE, 2 HIGH IDLE. Returns the number of levers set. The cockpit control `engine<N>.condition` |
+| `avd_set_feather(engine, on)` | Turboprops: the propeller lever's feather detent (1 feather, 0 back to the governing range); −1 every engine. Returns the number set. The cockpit control `engine<N>.feather` |
+| `avd_turboprop()` | Turboprop engine indication, 48 doubles (layout in *Turboprops*). `A.turboprop()` returns it as an object |
 | `avd_set_assist(p)` | 0 Arcade, 1 Sport, 2 Simulation |
 | `avd_set_airport(id)` / `avd_airport_text()` | Spawn airport: 0 Campo de Marte (SBMT, runway 12), 1 Congonhas (SBSP, runway 35L, the default). Kept across aircraft loads; takes effect at the next reset. Text: `ICAO\|name\|runway\|reciprocal`. `avd_runway()` describes the runway in use |
 | `avd_set_station(i, kg)` / `avd_set_tank(i, litres)` | Planned load, applied to every new spawn (trimmed spawns trim at that weight). No upper limit on stations (placards are reported, not enforced); tanks hold at most their capacity |
@@ -124,7 +130,7 @@ call is clamped to 0.25 s. It returns the number of steps run.
 | `avd_terrain(len)` | The region's terrain between the airfields: AVT1 bytes (`tools/terrain`, a 200 m SRTM grid) already written to `avd_text`. The fields stay flat at their elevations, blended into it over 2 km; off the grid the fields' blend as before. Kept across airport changes; `avd_ground_height` and everything on the ground (gear, buildings, hard points) use it. Returns the sample count, −1 if malformed. `A.terrain(bytes)` |
 | `avd_occupant()` | The crash dummy in the pilot's seat and the damage, since the last reset or placement: `[peak g (resultant), peak spinal g, DRI, lumbar load N, HIC(36), collapsed gear legs (bit mask), structural failure (0/1)]` (`avd/occupant.hpp`; the seat limits HIC 1,000, lumbar 6,672 N, DRI 18). `A.occupant()` → `{ peakG, spinalG, dri, lumbarN, hic, collapsed: [bool per leg], structural }` |
 | `avd_set_level_hold(on)` | Straight-and-level hold (auto-trim that keeps the airplane straight and level with the stick released), with any preset; kept when the preset changes |
-| `avd_quick_start()` / `avd_procedure_status()` | Run the Quick Start checklist through the cockpit (turbofan aircraft: power up, then each engine's fuel control switch to RUN in turn). Status: 0 idle, 1 running, 2 done, 3 failed; the message is in the text buffer |
+| `avd_quick_start()` / `avd_procedure_status()` | Run the Quick Start checklist through the cockpit (turbofan aircraft: power up, then each engine's fuel control switch to RUN in turn; turboprops: power up, then each engine's starter, its condition lever to LOW IDLE at light-off speed, the starter released at idle). Status: 0 idle, 1 running, 2 done, 3 failed; the message is in the text buffer |
 | `avd_cockpit_count()` / `avd_cockpit_text(i)` / `avd_cockpit_cycle(i)` | Switch registry: `id\|label\|pos0;pos1…\|current`. Electrical: `electrical.battery`, `electrical.alternator` (every generator), `electrical.generator<N>`, `electrical.avionics`, `electrical.load_shed` (NORMAL / SHED: the pilot's shed of the non-essential loads, held until reset), `electrical.load.<name>` breakers |
 | `avd_altimeter_adjust(hundredthsInHg)` | Kollsman knob |
 | `avd_dg_adjust(deg)` / `avd_dg_sync()` / `avd_heading_bug(deg)` | Heading indicator knobs |
@@ -141,6 +147,70 @@ call is clamped to 0.25 s. It returns the number of steps run.
 | `avd_jet()` | 96 doubles for turbofan aircraft: [0] engines, [1] gear position, [2] gear lever, [3] speedbrake position, [4] speedbrake detent, [5] Mach, [6] fuel kg, [7] fuel flow kg/h; per engine at 8 + 8i (the engine indication's sensed channels: needle lag, blank without gauge power): N1 %, N2 %, ITT °C, fuel flow kg/h, thrust kN, running, starting, fuel switch; [24] MMO, [25] VMO kt, [26] TAS kt, [27] flap deg, [28] trim, [29] weight on wheels, [30–31] oil psi (sensed); [32] 1-g stall CAS kt (current flap, weight and Mach, from the trimmed CLmax), [33] the same at take-off flap, [34] at landing flap, [35] gross mass kg, [36] flight-path angle deg, [37] track true deg, [38] wind from true deg, [39] wind kt, [40] radio altitude ft, [41] SAT °C, [42] load factor, [43] α deg, [44] any generator online, [45] bus volts, [46] stall warning, [47] VFE kt for the current flap (0 flaps up), [48] VLE kt, [49] take-off flap deg, [50] landing flap deg, [51] stick pusher active, [52–55] thrust reversers (position 0..1, phase: 0 stowed, 1 reverse thrust, 2 reverse idle, 3 stowing, 4 on the reverse levers) engines 1 and 2, [56] ground spoilers out, [57] reversers fitted, [58–59] throttle levers engines 1 and 2 (0..1, as followed), [60–61] generators 1 and 2 on line, [62–63] hydraulic pressure systems A and B psi (0 without hydraulics), [64] gear, [65] flap, [66] speedbrake, [67] steering, [68] brake power available (supply fraction 0..1; 1 without hydraulics; brakes: 1 while pressurised or an accumulator application is backing them), [69] brake accumulator applications left (−1 without hydraulics), [70] gear emergency release pulled, [71] hydraulics fitted, [72] battery charge 0..1, [73] battery current A (+ discharge), [74 + 4i] truth N1 %, N2 %, ITT °C, fuel flow kg/h engines 1 and 2 (for the debug overlay); [82] load shed active (LOAD SHED / ESS BUS ONLY: the non-essential loads are off, by the bus controller or the pilot's `electrical.load_shed`), [83] the bus controller's automatic shed is on (no generator on line, battery alone past `load_shed_delay_s`), [84] a bus controller is fitted (`auto_load_shed`); [85–95] reserved |
 | `avd_flow()` | Airflow-visualisation snapshot (1,352 doubles): header [0] strips, [1] engines, [2] TAS m/s, [3] α, [4] β, [5] ρ, [6–8] CG (FRD), [9] speed of sound, [10–12] body rates p, q, r (rad/s); per lifting strip at 16 + 20i (up to 64): quarter-chord position, span axis, normal (FRD body), chord, area, cl, local α, dynamic pressure, stall α, surface index, attached-flow fraction (1 attached, below 0.5 separated: stalled or behind a raised spoiler), bound circulation Γ m²/s, zero-lift α (with the flaps), cd; per engine at 1296 + 14k: position, thrust axis, disc/nozzle radius, slipstream velocity increment, thrust N, kind (0 propeller, 1 turbofan), propeller rate rad/s (signed, right-handed about the thrust axis), blades, swirl m/s at 0.7 R, hub radius fraction (turbofans: thrust-reverser position, efflux speed m/s, cowl radius, cascades forward of the nozzle m) |
 | `avd_bodies()` | Bluff bodies in the airflow: [0] count, then ten doubles a body (up to 32): position (structural frame m), long axis, size (wheel diameter or the panel's projected height, m), length along the axis m, drag area m², kind (0 gear leg or wheel, 1 spoiler panel, 2 strut or other fixed item). Extended retractable gear, raised spoiler panels, and drag items given a `body` shape (fixed gear, wing struts); the airflow view draws their wakes. `A.bodies()` returns `{ n, b }` (a view: copy what you keep) |
+
+## Turboprops
+
+A turboprop's **power levers** are the throttles (`avd_set_input`'s
+`throttle`, `avd_set_throttle(engine, v)`): 0 idle to 1 the forward stop,
+where the fuel control's torque limiter (100 % torque, 1,050 shp on the
+King Air 350) and ITT limiter (820 °C) hold, so the stop is take-off power
+low down and the ITT-limited maximum higher up. Their travel **below idle**
+is `avd_set_reverse(v)`: with the power levers at idle and the main wheels
+on the ground, 0–0.4 takes the blades from the flight-idle stop to the
+reverse stop at idle Ng (**beta**), 0.4–1 raises Ng into **reverse**; in the
+air nothing moves (the flight-idle gate). The **propeller levers**
+(`avd_set_prop_lever`) select the governed Np; the feather detent is
+`avd_set_feather`. The **condition levers** (`avd_set_condition`) are fuel
+cut-off, low idle and high idle. The **starter** is the cockpit control
+`engine<N>.starter` (ON cranks the gas generator; light-off needs the
+condition lever out of CUT-OFF above 13 % Ng; the switch goes OFF by itself
+at stabilised idle), and `propeller.autofeather` (OFF / ARM) the autofeather:
+armed with both power levers above 85 % and both engines above 24 % torque,
+it feathers an engine whose torque falls below 12 %. A propeller feathers by
+itself when the engine runs down on the ground (no governor oil); a
+windmilling propeller in flight keeps its oil and windmills at the governed
+speed until it is feathered. `avd_state()` [19] is engine 1's Np (rpm) and
+[30] any engine running; `avd_jet()` carries the gear, flap, V-speed,
+generator and battery fields for turboprops too ([0], its turbofan count,
+stays 0).
+
+`avd_turboprop()`, 48 doubles (the needles marked * read 0 without bus power):
+
+| Index | Meaning |
+|---|---|
+| 0 | turboprops fitted |
+| 1 | propeller lever 0..1 |
+| 2 | selected Np, rpm |
+| 3 | autofeather fitted |
+| 4 | autofeather switch (1 ARM) |
+| 5 | autofeather armed |
+| 6 | reverse (beta) lever 0..1 |
+| 7 | gauges powered |
+| 8 + 20i | engine i (0, 1): torque % * |
+| 9 + 20i | torque ft lbf * |
+| 10 + 20i | ITT °C * |
+| 11 + 20i | Ng % * |
+| 12 + 20i | Np rpm * |
+| 13 + 20i | fuel flow kg/h * |
+| 14 + 20i | fuel flow lb/h * |
+| 15 + 20i | oil pressure psi * |
+| 16 + 20i | oil temperature °C * |
+| 17 + 20i | blade angle deg at 0.75 R |
+| 18 + 20i | feathered |
+| 19 + 20i | beta (blade angle on the power lever: ground beta / reverse) |
+| 20 + 20i | running |
+| 21 + 20i | lit (burning; starting or running) |
+| 22 + 20i | condition lever (0 cut-off, 1 low idle, 2 high idle) |
+| 23 + 20i | starter switch |
+| 24 + 20i | feather detent |
+| 25 + 20i | thrust kN (− windmilling or reverse) |
+| 26 + 20i | shaft power shp |
+| 27 + 20i | feathered by the autofeather |
+
+`A.turboprop()` → `{ count, propLever, npSelected, autofeather: { fitted, on,
+armed }, reverse, powered, engines: [{ torque, torqueFtLb, itt, ng, np,
+fuelFlowKgH, fuelFlowLbH, oilPsi, oilC, blade, feathered, beta, running, lit,
+condition, starter, feather, thrustKn, shp, autofeathered }] }`.
 
 ## `avd_state()`: 64 doubles
 

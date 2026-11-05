@@ -92,6 +92,25 @@ export default async function createAvdModule(wasmBytes) {
   A.setThrottle = (engine, v) => ex.avd_set_throttle(engine, v);
   // Reverse thrust levers 0..1 (deploy on the main wheels at idle; 0 stows).
   A.setReverse = (v) => ex.avd_set_reverse(v);
+  // Turboprops (web/README.md, "Turboprops"): propeller levers 0 (minimum
+  // governed rpm) .. 1 (rated), every engine; condition levers (engine, -1
+  // every engine; 0 cut-off, 1 low idle, 2 high idle); feather detents.
+  A.setPropLever = (v) => ex.avd_set_prop_lever(v);
+  A.setCondition = (engine, position) => ex.avd_set_condition(engine, position);
+  A.setFeather = (engine, on) => ex.avd_set_feather(engine, on ? 1 : 0);
+  // The engine indication: { count, propLever, npSelected, autofeather: { fitted, on, armed }, reverse, powered,
+  //   engines: [{ torque %, torqueFtLb, itt degC, ng %, np rpm, fuelFlowKgH, fuelFlowLbH, oilPsi, oilC, blade deg,
+  //   feathered, beta, running, lit, condition, starter, feather, thrustKn, shp, autofeathered }] }.
+  A.turboprop = () => {
+    const v = new Float64Array(memory.buffer, ex.avd_turboprop(), 48);
+    const keys = ['torque', 'torqueFtLb', 'itt', 'ng', 'np', 'fuelFlowKgH', 'fuelFlowLbH', 'oilPsi', 'oilC', 'blade', 'feathered', 'beta',
+      'running', 'lit', 'condition', 'starter', 'feather', 'thrustKn', 'shp', 'autofeathered'];
+    const flags = new Set(['feathered', 'beta', 'running', 'lit', 'starter', 'feather', 'autofeathered']);
+    const engines = Array.from({ length: Math.min(v[0], 2) }, (_, i) =>
+      Object.fromEntries(keys.map((k, j) => [k, flags.has(k) ? v[8 + 20 * i + j] === 1 : v[8 + 20 * i + j]])));
+    return { count: v[0], propLever: v[1], npSelected: v[2], autofeather: { fitted: v[3] === 1, on: v[4] === 1, armed: v[5] === 1 },
+      reverse: v[6], powered: v[7] === 1, engines };
+  };
   A.runway = () => Array.from(new Float64Array(memory.buffer, ex.avd_runway(), L.runway));
   A.windGrid = (hx, hy, hz, nx, ny, nz) => new Float64Array(memory.buffer, ex.avd_wind_grid(hx, hy, hz, nx, ny, nz), 3 * nx * ny * nz);
   // The wake's vortex segments: { n, gmax, ground, seg } with 9 numbers a

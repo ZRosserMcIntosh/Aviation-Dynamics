@@ -385,4 +385,65 @@ A.avd_set_wake(1);
   A.avd_buildings_drop(ti, tj);
   check(A.avd_buildings_count() === 0, 'buildings: the tile dropped');
 }
+
+// ---- The King Air 350 (turboprops: power, propeller and condition levers) ----
+{
+  const K = await createAvdModule();
+  const kErrors = K.load(await readFile(new URL('./dist/king_air_350.json', import.meta.url), 'utf8'));
+  check(kErrors.length === 0, `king_air_350.json loads${kErrors.length ? ': ' + kErrors.join('; ') : ''}`);
+  K.avd_set_assist(0);
+  K.avd_reset(1);
+  let tp = K.turboprop();
+  check(tp.count === 2 && tp.engines[0].running && tp.engines[1].running && tp.engines[0].condition === 1 && K.state()[30] === 1,
+    `turboprop: two PT6As at low idle (Ng ${tp.engines[0].ng.toFixed(0)} %, Np ${tp.engines[0].np.toFixed(0)} rpm, ITT ${tp.engines[0].itt.toFixed(0)} C)`);
+  check(K.setCondition(-1, 2) === 2, 'condition levers to HIGH IDLE');
+  for (let t = 0; t < 4; t += 0.25) K.avd_advance(0.25);
+  tp = K.turboprop();
+  check(Math.abs(tp.engines[0].ng - 72) < 1 && tp.engines[1].condition === 2, `high idle: Ng ${tp.engines[0].ng.toFixed(1)} %`);
+  K.setCondition(-1, 1);
+  K.avd_cockpit_cycle(K.cockpit().find((x) => x.id === 'brakes.parking').index);  // brakes off
+  K.avd_set_input(0, 0, 0, 1, 1, 0, 0, 0, 0);  // power levers to the stop
+  let climbed = false;
+  for (let i = 0; i < 45 * 4; ++i) {
+    const ks = K.state();
+    K.avd_set_input(ks[10] > 100 ? Math.max(-1, Math.min(1, 0.12 * (10 - ks[8]))) : 0, 0, 0, 1, 1, 0, 0, 0, 0);
+    K.avd_advance(0.25);
+    if (i === 20 * 4) {
+      tp = K.turboprop();
+      check(Math.abs(tp.engines[0].torque - 100) < 3 && Math.abs(tp.engines[0].np - 1700) < 20 && tp.engines[0].itt < 820,
+        `take-off power: torque ${tp.engines[0].torque.toFixed(0)} % (${tp.engines[0].torqueFtLb.toFixed(0)} ft lbf), Np ${tp.engines[0].np.toFixed(0)}, ITT ${tp.engines[0].itt.toFixed(0)} C, ${tp.engines[0].fuelFlowLbH.toFixed(0)} lb/h`);
+    }
+    climbed = climbed || (ks[28] === 0 && ks[14] > 300);
+  }
+  let ks = K.state();
+  check(climbed && ks[28] === 0 && ks[15] > 1000, `King Air: off the runway and climbing (AGL ${ks[14].toFixed(0)} ft, ${ks[15].toFixed(0)} fpm, ${ks[10].toFixed(0)} KIAS)`);
+  K.avd_cockpit_cycle(K.cockpit().find((x) => x.id === 'gear.lever').index);
+  K.setPropLever(0.2);  // 1,500 rpm
+  for (let i = 0; i < 40; ++i) { ks = K.state(); K.avd_set_input(Math.max(-1, Math.min(1, 0.12 * (8 - ks[8]))), 0, 0, 0.8, 1, 0, 0, 0, 0); K.avd_advance(0.25); }
+  tp = K.turboprop();
+  check(K.jet()[1] === 0 && Math.abs(tp.engines[0].np - 1500) < 15 && Math.abs(tp.engines[1].np - 1500) < 15 && Math.abs(tp.npSelected - 1500) < 1,
+    `gear up; propeller levers to ${tp.npSelected.toFixed(0)} rpm: Np ${tp.engines[0].np.toFixed(0)} / ${tp.engines[1].np.toFixed(0)}`);
+  K.setCondition(0, 0);  // engine 1 cut off
+  K.setFeather(0, 1);
+  for (let i = 0; i < 60; ++i) { ks = K.state(); K.avd_set_input(Math.max(-1, Math.min(1, 0.12 * (6 - ks[8]))), 0, 0, 0.8, 1, 0, 0, 0, 0); K.avd_advance(0.25); }
+  tp = K.turboprop();
+  check(!tp.engines[0].running && tp.engines[0].feathered && tp.engines[0].np < 100 && tp.engines[1].running,
+    `engine 1 shut down and feathered (blade ${tp.engines[0].blade.toFixed(0)} deg, Np ${tp.engines[0].np.toFixed(0)})`);
+  // Cold and dark, then Quick Start: starter, light-off, idle, one engine after the other.
+  K.avd_reset(0);
+  tp = K.turboprop();
+  check(!tp.engines[0].running && tp.engines[0].feathered && tp.engines[0].condition === 0, 'King Air cold and dark: feathered, cut off');
+  K.avd_quick_start();
+  for (let i = 0; i < 100 * 4; ++i) { K.avd_set_input(0, 0, 0, 0, 1, 0, 0, 0, 0); K.avd_advance(0.25); }
+  tp = K.turboprop();
+  check(tp.engines[0].running && tp.engines[1].running && !tp.engines[0].feathered && K.procedure().status === 2 && K.jet()[60] === 1,
+    `King Air Quick Start: both running (Ng ${tp.engines[0].ng.toFixed(0)} / ${tp.engines[1].ng.toFixed(0)} %), generators on line`);
+  // Beta and reverse on the ground: power levers idle, reverse lever up.
+  K.avd_reset(1);
+  K.setReverse(1);
+  for (let i = 0; i < 16; ++i) K.avd_advance(0.25);
+  tp = K.turboprop();
+  check(tp.engines[0].beta && tp.engines[0].blade < 0 && tp.engines[0].thrustKn < -1, `reverse: blade ${tp.engines[0].blade.toFixed(0)} deg, ${tp.engines[0].thrustKn.toFixed(1)} kN`);
+  K.setReverse(0);
+}
 process.exit(failures ? 1 : 0);

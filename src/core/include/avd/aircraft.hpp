@@ -291,6 +291,8 @@ public:
     Real selectedPropOmega(int i, const PilotInput& in) const;
     // Autofeather armed (switch on, power levers up, both engines making torque).
     bool autofeatherArmed() const { return autofeatherArmed_; }
+    // Turboprop i's propeller was feathered by the autofeather (latched until the switch goes off).
+    bool autofeathered(int i) const { return autofeathered_[static_cast<std::size_t>(i)]; }
     Real gearPosition() const { return gearPos_; }
     // Propeller slipstream of engine i at the last recorded evaluation (visualisation).
     const SlipstreamState& slipstream(int i) const { return slip_[i]; }
