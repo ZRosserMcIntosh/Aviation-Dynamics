@@ -214,6 +214,11 @@ public:
     // prepareContext() (or step) first, or the pitot-static instruments are
     // seeded with the air at the previous position.
     void resetInstrumentsToTruth();
+    // A glass cockpit (a G1000 172): the attitude and heading from an AHRS
+    // and magnetometer on the main bus instead of the data's vacuum gyros
+    // (false: back to them). The vacuum system then drives nothing the pilot
+    // flies by.
+    void setAhrsReference(bool on) { instruments_.setAhrsReference(on, s_.body.attitude); }
     void setColdAndDark();
     // Initial-condition setters (spawn/trim): flaps already at a detent, trim position.
     void setFlapsImmediately(int detent);

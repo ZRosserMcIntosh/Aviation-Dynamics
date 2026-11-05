@@ -28,6 +28,13 @@ struct Range {
 // How a gyro instrument is driven.
 enum class GyroPower { Vacuum, Electric };
 
+// Where the attitude display gets its attitude from: its own spinning gyro
+// (vacuum or electric, with erection and turn errors), or an AHRS/IRS
+// (strapdown rate sensors and accelerometers blended in a filter with
+// air-data and GPS aiding: no erection or turn errors, no gimbal stops, a
+// small filter lag; a red ATT flag while aligning, unpowered or failed).
+enum class AttitudeReference { Gyro, Ahrs };
+
 struct NeedleDynamics {
     Real naturalFrequency = 8.0;  // rad/s
     Real damping = 1.0;           // 1 = critically damped (no overshoot)
@@ -66,6 +73,10 @@ struct AttitudeIndicatorDef {
     Real spinUpTime = 60.0;               // s, rotor time constant
     Real spinDownTime = 200.0;            // s, rotor coast-down time constant
     Real minimumUsefulSpin = 0.7;         // below this the pendulous erection is ineffective
+    // AHRS (reference = Ahrs): the gyro fields above are then unused.
+    AttitudeReference reference = AttitudeReference::Gyro;
+    Real ahrsTimeConstant = 0.05;         // s, output lag of the attitude filter (displays update at 20-50 Hz)
+    Real alignTime = 30.0;                // s from power (or a reset) to a valid attitude, in any attitude
 };
 
 struct HeadingIndicatorDef {

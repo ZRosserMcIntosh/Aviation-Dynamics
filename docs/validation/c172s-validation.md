@@ -362,7 +362,7 @@ gives 547 ft.
   - Quick Start from cold and dark, and its real failure modes (flat battery,
     valve shut).
   - Hot, high and humid take-offs.
-- **Instruments:** <!-- validation:begin tests file=test_instruments.cpp -->40<!-- validation:end --> cases in `tests/test_instruments.cpp`. Examples:
+- **Instruments:** <!-- validation:begin tests file=test_instruments.cpp -->43<!-- validation:end --> cases in `tests/test_instruments.cpp`. Examples:
   - IAS/CAS/TAS at altitude;
   - Kollsman setting;
   - hot-day altimeter error;

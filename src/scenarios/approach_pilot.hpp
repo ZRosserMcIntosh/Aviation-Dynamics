@@ -21,6 +21,22 @@
 
 namespace avd::scenarios {
 
+// The ILS needles in metres, as an autopilot turns them, from the geometry the
+// approach chart gives: the localizer's full scale is 106.7 m at the threshold
+// and widens toward its antenna ~300 m beyond the far end; the glideslope's is
+// 0.7 deg about its antenna ~300 m past the threshold. `range` is the
+// distance to the threshold (m; negative past it). Shared by the
+// ApproachPilot and the autopilot's APR mode.
+struct BeamDeviation {
+    bool lateralValid = false, verticalValid = false;
+    Real lateral = 0;   // m, + right of the course
+    Real vertical = 0;  // m, + above the glidepath
+};
+BeamDeviation ilsDeviation(const NavIndication& nav, Real range, Real runwayLength);
+// The distance to the threshold (m) from the height above it (m) on the
+// 3 deg path, which crosses the threshold at `thresholdCrossing`.
+Real rangeOnGlidepath(Real heightAboveThreshold, Real thresholdCrossing);
+
 class ApproachPilot {
 public:
     enum class Phase { Intercept, Final, Flare, Rollout, Stopped };

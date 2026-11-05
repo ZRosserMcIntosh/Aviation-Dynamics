@@ -49,10 +49,15 @@ runway's direction beyond the charted course.
   - Its sink rate is the radio altimeter's rate of change (the 172's, the
     altimeter's).
   - The sink rate is held in proportion to the height, plus a small
-    touchdown sink.
+    touchdown sink (80 fpm on the radio altimeter).
+  - On the radio altimeter the law firms up over the last 3 m, to 11 times
+    its gain at the runway, and its integral is kept from winding against
+    the attitude limits.
   - While the sink is still too high, the pitch is never lowered more than
-    1° below its highest flare attitude yet.
-  - The thrust retards gradually to idle (over 4 s) below 20 ft, or as soon
+    1° below its highest flare attitude yet; below 2 m on the radio
+    altimeter, never at all. The stall warning (shaker) stops the nose
+    where it is.
+  - The thrust retards gradually to idle (over 4 s) below 10 ft, or as soon
     as the flare has arrested the descent.
 - **Rollout.** Idle and brakes; the rudder and nose wheel steer the
   centreline on the localizer or GPS.
@@ -71,22 +76,23 @@ flown to a full stop. The pass criteria:
 | Touchdown point | 60–914 m past the threshold | the touchdown zone (3,000 ft) |
 | Touchdown lateral | within 8.2 m (27 ft) of the centreline | AC 120-28D, CAT III touchdown |
 | Sink rate at touchdown | under 600 fpm | 10 ft/s, the landing-gear design sink rate |
+| … and a soft one | under 240 fpm (300 in the city's gusts) | autoland touchdowns in service: 120–200 fpm |
 | Stop | on the runway, main gear 3 m inside its edge | — |
 | The pilot's seat | gear intact, spinal DRI under 5 | DRI 18 is the ejection-seat design limit; the crash-test dummy of `avd/occupant.hpp` |
 
-## Results (October 2026)
+## Results (November 2026)
 
 ILS 10L at Guarulhos, calm, zero visibility:
 
 | Aircraft | Touchdown | Off centreline | Sink | Stopped at | Seat | DRI |
 |---|---|---|---|---|---|---|
 | Tupi T-180 (172) | 427 m | 1.2 m | 148 fpm | 664 m | 1.8 g | 1.9 |
-| Top G | 492 m | 0.2 m | 388 fpm | 887 m | 1.6 g | 1.8 |
-| Phenom 300E | 474 m | 0.4 m | 313 fpm | 777 m | 1.6 g | 1.8 |
-| Citation CJ4 | 501 m | 0.8 m | 277 fpm | 812 m | 2.0 g | 2.3 |
-| Learjet 45 | 465 m | 1.1 m | 338 fpm | 763 m | 1.5 g | 1.6 |
-| CRJ700 | 573 m | 0.9 m | 332 fpm | 1,114 m | 1.4 g | 1.5 |
-| 737-800 | 517 m | 0.1 m | 367 fpm | 1,068 m | 1.8 g | 1.9 |
+| Top G | 572 m | 0.2 m | 198 fpm | 984 m | 1.5 g | 1.5 |
+| Phenom 300E | 560 m | 0.4 m | 159 fpm | 878 m | 1.5 g | 1.6 |
+| Citation CJ4 | 596 m | 0.3 m | 142 fpm | 914 m | 1.4 g | 1.5 |
+| Learjet 45 | 555 m | 0.5 m | 196 fpm | 859 m | 1.6 g | 1.6 |
+| CRJ700 | 713 m | 0.1 m | 192 fpm | 1,260 m | 1.7 g | 1.8 |
+| 737-800 | 717 m | 0.1 m | 170 fpm | 1,251 m | 1.9 g | 2.2 |
 
 ILS 35L at Congonhas (1,940 m), the wind from 060 (almost straight across),
 with the mechanical turbulence it makes over the city:
@@ -94,20 +100,20 @@ with the mechanical turbulence it makes over the city:
 | Aircraft | Wind | Touchdown | Off centreline | Sink | Stopped at | Seat | DRI |
 |---|---|---|---|---|---|---|---|
 | Tupi T-180 | 6 kt | 425 m | 0.7 m | 121 fpm | 647 m | 1.7 g | 1.7 |
-| Top G | 6 kt | 471 m | 2.7 m | 404 fpm | 861 m | 2.1 g | 2.2 |
-| CRJ700 | 6 kt | 579 m | 2.9 m | 370 fpm | 1,112 m | 1.7 g | 1.6 |
-| 737-800 | 6 kt | 469 m | 2.6 m | 345 fpm | 1,013 m | 1.8 g | 2.0 |
-| CRJ700 | 10 kt | 521 m | 2.2 m | 430 fpm | 1,037 m | 2.1 g | 2.0 |
-| 737-800 | 10 kt | 486 m | 2.9 m | 350 fpm | 1,039 m | 1.8 g | 2.0 |
+| Top G | 6 kt | 508 m | 2.9 m | 274 fpm | 922 m | 2.0 g | 2.0 |
+| CRJ700 | 6 kt | 755 m | 0.9 m | 145 fpm | 1,303 m | 1.7 g | 1.7 |
+| 737-800 | 6 kt | 564 m | 0.8 m | 146 fpm | 1,116 m | 2.1 g | 2.3 |
+| CRJ700 | 10 kt | 647 m | 7.2 m | 204 fpm | 1,173 m | 3.1 g | 3.6 |
+| 737-800 | 10 kt | 624 m | 5.0 m | 198 fpm | 1,173 m | 1.8 g | 2.0 |
 
 RNAV (GPS) approaches, the GPS vertical path to the threshold:
 
 | Aircraft | Approach | Touchdown | Off centreline | Sink | Stopped at | Seat | DRI |
 |---|---|---|---|---|---|---|---|
 | Tupi T-180 | São José dos Campos 16, calm | 416 m | 1.1 m | 144 fpm | 647 m | 1.8 g | 1.9 |
-| Top G | São José dos Campos 16, calm | 431 m | 0.4 m | 389 fpm | 821 m | 1.6 g | 1.8 |
-| CRJ700 | São José dos Campos 16, calm | 513 m | 1.3 m | 336 fpm | 1,049 m | 1.4 g | 1.4 |
-| 737-800 | Guarulhos 28L, 6 kt from 200 | 413 m | 0.2 m | 432 fpm | 919 m | 1.8 g | 2.0 |
+| Top G | São José dos Campos 16, calm | 508 m | 0.3 m | 200 fpm | 916 m | 1.4 g | 1.5 |
+| CRJ700 | São José dos Campos 16, calm | 652 m | 0.6 m | 190 fpm | 1,193 m | 1.7 g | 1.8 |
+| 737-800 | Guarulhos 28L, 6 kt from 200 | 450 m | 0.8 m | 194 fpm | 974 m | 2.1 g | 2.3 |
 
 ## What it took (found and fixed)
 
@@ -153,7 +159,7 @@ RNAV (GPS) approaches, the GPS vertical path to the threshold:
     Learjet 45's cockpit (DRI 4.7) with 1.1 g at the CG.
   - The nose is now flown down at 2°/s, back pressure against its rate:
     1.9 g, DRI 2.2. What was left was the main gear's touchdown (the CG at
-    2.2–2.8 g in a jet's 300–450 fpm arrival): the next item.
+    2.2–2.8 g in a jet's 300–450 fpm arrival): the next items.
 - **A strut that was nearly rigid.**
   - The jets' legs were a linear spring preloaded to most of the static
     load: a 1 m/s touchdown already put 2.1 g on the Top G's CG.
@@ -162,6 +168,34 @@ RNAV (GPS) approaches, the GPS vertical path to the threshold:
     readings above are 1.4–2.1 g (the Learjet 1.5 g).
   - The derotation hold was firmed up with them: the mains' spin-up still
     pitched a Learjet down at 13°/s against the old one.
+- **Autoland touchdowns at 280–430 fpm.**
+  - The jets arrived at twice an autoland's 120–200 fpm. The flare's sink
+    law lagged its target, and the sink then grew again in the last 2 m.
+  - The model's ground effect takes lift away there: at a fixed attitude a
+    737's, a Top G's and a CRJ's load factor falls from 1.02 at 10 m of wheel
+    height to 0.90 at 2 m (a real wing gains lift near the ground; see
+    *Limits*). Whatever attitude the flare reached, the airplane then sank.
+  - The retard began at 20 ft; the speed it bled off in the last metres
+    sank the airplane further.
+  - Fixes, on the radio altimeter only (the 172's barometric flare is as it
+    was):
+    - The law firms up over the last 3 m, to 11 times its gain at the
+      runway. Firmer all the way down, it arrested the sink high in the
+      city's turbulence, floated and dropped a CRJ in at 700 fpm.
+    - Its integral no longer winds against the attitude floor; while the
+      floor holds the nose it is set to stand there. Wound down in a float,
+      it had left a CRJ on the floor while it sank in at 500 fpm.
+    - Below 2 m the nose is never lowered: let down 2° after a level-off at
+      6 ft, a 737 dropped in.
+    - The stall warning stops the nose: the Top G's flare had reached its
+      stick pusher at 7° of alpha in ground effect, which shoved the nose
+      down 4° a metre above the runway.
+    - The retard waits for 10 ft, and the touchdown sink the law aims at is
+      80 fpm (was 120).
+  - Every touchdown is now 142–204 fpm, except the Top G in the 6 kt
+    crosswind over Congonhas: 274 fpm. Its flare reaches the stall warning
+    in the gusts and stops pulling. The floats are longer: the CRJ700 and
+    737-800 touch down 650–760 m in (inside the zone's 914 m).
 
 ## The autoland in the browser
 
@@ -171,13 +205,22 @@ if the 3° path can be flown from there, else it flies the whole procedure. It
 configures the airplane itself (gear, flaps by their limit speeds). From a
 cruise start 8 km out and well above the path, every aircraft landed and
 stopped on Congonhas 35L and Guarulhos 10L: touchdowns 400–522 m past the
-threshold, within 2 m of the centreline (`web/smoke_test.mjs` checks the Top G).
+threshold, within 2 m of the centreline (measured before the softer flare,
+which lengthens the float). `web/smoke_test.mjs` checks the Top G from its
+Congonhas final: with the softer flare it stops 1,469 m down 35L (of 1,940),
+on the centreline, the dummy at 1.7 g.
+
+The autopilot's approach mode (APR, `scenarios::Autopilot`) flies the same
+needles with the same laws down to the decision altitude and disconnects
+there; the pilot lands (see the fidelity matrix).
 
 ## Limits
 
 - **Stronger crosswinds and turbulence are not passed yet.**
   - In 12 kt across Congonhas, the CRJ700 touched down 9.2 m off the
-    centreline (the limit is 8.2 m) and the Top G at 581 fpm.
+    centreline (the limit is 8.2 m) and the Top G at 581 fpm (before the
+    softer flare; not re-run). In 10 kt the CRJ700 now floats into the
+    decrab longer and touches 7.2 m off, close to the limit.
   - Added turbulence (σ 0.5–1 m/s on top of the city's mechanical
     turbulence) is not tested since the flare change.
   - Real CAT III autoland is certified to 15–25 kt crosswind. This pilot's
@@ -186,6 +229,10 @@ threshold, within 2 m of the centreline (`web/smoke_test.mjs` checks the Top G).
 - **Only fixed approaches are tested.** These are single deterministic
   runs per case, not the Monte Carlo dispersion analysis AC 120-28D asks
   for.
+- **Ground effect.** The aerodynamic model loses about 10 % of the jets'
+  lift at a fixed attitude between 10 m and 2 m of wheel height, where a
+  real wing gains some. The flare is tuned against that, so a corrected
+  ground effect would retune it (it would float more).
 - **Ideal signals.** The radio altimeter reads the true height above the
   ground beneath. The ILS has no beam bends or multipath. The GPS has no
   integrity or accuracy model beyond its CDI scaling.

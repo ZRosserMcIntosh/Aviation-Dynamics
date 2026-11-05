@@ -534,6 +534,8 @@ std::vector<std::string> AircraftDefinition::validate() const {
         c.positive("panel.attitude.spinUpTime", p.attitude.spinUpTime);
         c.positive("panel.attitude.spinDownTime", p.attitude.spinDownTime);
         c.range("panel.attitude.minimumUsefulSpin", p.attitude.minimumUsefulSpin, 0.05, 1);
+        c.range("panel.attitude.ahrsTimeConstant", p.attitude.ahrsTimeConstant, 0, 2);
+        c.range("panel.attitude.alignTime", p.attitude.alignTime, 0, 600);
         c.range("panel.heading.mechanicalDrift", p.heading.mechanicalDrift, -0.01, 0.01);
         if (p.heading.gimbalLimit != 0) c.range("panel.heading.gimbalLimit", p.heading.gimbalLimit, 0.2, kPi / 2);
         c.range("panel.heading.slavingRate", p.heading.slavingRate, 0, 0.5);

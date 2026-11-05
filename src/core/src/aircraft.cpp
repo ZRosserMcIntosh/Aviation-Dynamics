@@ -1943,8 +1943,10 @@ SensorInputs Aircraft::sensorInputs() const {
     const InstrumentPanelDef& p = def_.panel;
     const bool bus = electrical_.powered();
     in.turnCoordinatorPowered = loadPowered(p.turnCoordinator.electricalLoad, bus);
-    in.attitudeElectricPowered = loadPowered(p.attitude.electricalLoad, bus);
-    in.headingElectricPowered = loadPowered(p.heading.electricalLoad, bus);
+    // The attitude and heading sources as the panel has them now (a glass
+    // cockpit's AHRS may have replaced the data's gyros: setAhrsReference).
+    in.attitudeElectricPowered = loadPowered(instruments_.def().attitude.electricalLoad, bus);
+    in.headingElectricPowered = loadPowered(instruments_.def().heading.electricalLoad, bus);
     in.gaugesPowered = loadPowered(p.engine.gaugeLoad, bus);
     in.avionicsPowered = loadPowered(p.avionics.avionicsLoad, electrical_.avionicsBusVoltage() >= electrical_.busMinimum());
     in.annunciatorsPowered = bus;

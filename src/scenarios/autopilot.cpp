@@ -5,20 +5,67 @@
 #include <algorithm>
 #include <cmath>
 
+#include "approach_pilot.hpp"
 #include "avd/units.hpp"
 
 namespace avd::scenarios {
+
+namespace {
+constexpr Real kGlidepath = 0.0524;  // 3 deg
+Real leverOf(const PilotInput& p) { return p.splitThrottles ? p.throttles[0] : p.throttle; }
+}  // namespace
 
 void Autopilot::engage(const Aircraft& ac, const PilotInput& pilot) {
     const CockpitState& r = ac.instruments().readings();
     have_ = false;
     pitchHold_ = pitchRef_ = pitchCmd_ = r.attitudePitch;
-    bankCmd_ = 0;
+    bankCmd_ = r.attitudeRoll;
     vsCmd_ = 0;
     hdgErr_ = 0;
-    throttleBase_ = pilot.splitThrottles ? pilot.throttles[0] : pilot.throttle;
+    throttleBase_ = leverOf(pilot);
     pitchPid_.reset();
     iasPid_.reset();
+    // Everything as if newly selected: update() takes each axis from here.
+    lastLateral_ = Lateral::Off;
+    lastVertical_ = Vertical::Off;
+    lastAutothrottle_ = false;
+    apr_ = ApproachState::Off;
+}
+
+// The approach's deviations from NAV 1's needles or the GPS, in metres and dots.
+void Autopilot::approachGuidance(const Aircraft& ac, Real dt) {
+    const CockpitState& r = ac.instruments().readings();
+    latValid_ = vertValid_ = false;
+    if (approachSource == ApproachSource::Ils) {
+        const NavIndication& n = r.nav1;
+        const Real range = rangeOnGlidepath(r.indicatedAltitude - fieldElevation, thresholdCrossing);
+        const BeamDeviation d = ilsDeviation(n, range, runwayLength);
+        latValid_ = d.lateralValid;
+        vertValid_ = d.verticalValid;
+        if (latValid_) y_ = d.lateral, latDots_ = 2 * n.cdi;
+        if (vertValid_) z_ = d.vertical, vertDots_ = 2 * n.glideslope;
+        finalCourse_ = approachCourse;
+    } else if (gps && gps->valid) {
+        latValid_ = true;
+        y_ = gps->crossTrack;
+        latDots_ = 2 * gps->cdi;
+        finalCourse_ = wrapPi(gps->desiredTrack - magneticVariation);
+        if (gps->verticalValid) {
+            vertValid_ = true;
+            z_ = gps->verticalDeviation;
+            vertDots_ = 2 * gps->vdi;
+        }
+    }
+    if (!latValid_) latDots_ = 0;
+    if (!vertValid_) vertDots_ = 0;
+    // The lateral speed off the course, filtered (0.5 s).
+    if (latValid_) {
+        if (!haveY_) yPrev_ = y_, yRate_ = 0, haveY_ = true;
+        if (dt > 0) yRate_ += ((y_ - yPrev_) / dt - yRate_) * std::min(dt / 0.5, 1.0);
+        yPrev_ = y_;
+    } else {
+        haveY_ = false;
+    }
 }
 
 PilotInput Autopilot::update(const Aircraft& ac, const PilotInput& pilot, Real dt) {
@@ -47,23 +94,91 @@ PilotInput Autopilot::update(const Aircraft& ac, const PilotInput& pilot, Real d
     // Control gains with dynamic pressure (down to a jet's cruise: 1/q all the way).
     const Real qs = clamp(sq(60.0 / std::max(ias, 25.0)), 0.1, 3.0);
     const Real v = std::max(ias, 25.0);
+    const Real tas = std::max(ac.telemetry().trueAirspeed, 25.0);
+
+    // ---- Mode changes: each axis newly engaged starts from where the airplane is ----
+    if (autothrottle && !lastAutothrottle_) {
+        // SPD pressed: the base is the lever applied now (the pilot's), not the
+        // one at the autopilot's engagement (a full-power climb's 1.0 held
+        // 257 kt level on a 250 kt selection).
+        throttleBase_ = leverOf(pilot);
+        iasPid_.reset();
+    }
+    if (vertical != Vertical::Off && lastVertical_ == Vertical::Off) {
+        pitchHold_ = pitchRef_ = pitchCmd_ = pitch;
+        pitchPid_.reset();
+    } else if (vertical == Vertical::Pitch && lastVertical_ != Vertical::Pitch) {
+        pitchHold_ = pitch;  // PIT: the attitude at its engagement
+    }
+    if (lateral != Lateral::Off && lastLateral_ == Lateral::Off) {
+        bankCmd_ = roll;
+        hdgErr_ = 0;
+        if (apr_ == ApproachState::Minimums) apr_ = ApproachState::Off;
+    }
+    if (lateral == Lateral::Approach && (lastLateral_ != Lateral::Approach || apr_ == ApproachState::Off)) {
+        apr_ = ApproachState::Armed;
+        haveY_ = false;
+        drift_ = 0;
+        hdgLag_ = wrapPi(hdg - approachCourse);
+    }
+    if (lateral != Lateral::Approach && apr_ != ApproachState::Minimums) apr_ = ApproachState::Off;
+    if (vertical == Vertical::GlidePath && apr_ != ApproachState::VerticalCaptured) vertical = Vertical::Altitude;  // GS only by capture
+
+    // ---- APR: arm, capture, minimums ----
+    if (lateral == Lateral::Approach) {
+        approachGuidance(ac, dt);
+        // The localizer (GPS final course) captured inside full scale.
+        if (apr_ == ApproachState::Armed && latValid_ && std::abs(latDots_) < 1.8) apr_ = ApproachState::LateralCaptured;
+        // The glideslope (glidepath) armed behind it: captured within a
+        // quarter of a dot (from below or level, the vertical mode holding
+        // the airplane there; or as the airplane descends through it).
+        if (apr_ == ApproachState::LateralCaptured && vertValid_ && std::abs(vertDots_) < 0.25) {
+            apr_ = ApproachState::VerticalCaptured;
+            vertical = Vertical::GlidePath;
+        }
+        // Decision altitude, coupled: the autopilot disconnects (the
+        // autothrottle stays in SPD); the pilot lands.
+        if (apr_ == ApproachState::VerticalCaptured && alt <= decisionAltitude) {
+            apr_ = ApproachState::Minimums;
+            lateral = Lateral::Off;
+            vertical = Vertical::Off;
+        }
+    }
 
     // ---- Lateral ----
     if (lateral != Lateral::Off) {
         Real bank = 0;
-        if (lateral == Lateral::Heading || lateral == Lateral::Nav) {
+        const bool aprCaptured = lateral == Lateral::Approach && apr_ != ApproachState::Armed && latValid_;
+        const bool navLike = lateral == Lateral::Nav || (lateral == Lateral::Approach && !aprCaptured && approachSource == ApproachSource::Gps);
+        if (lateral == Lateral::Heading || lateral == Lateral::Nav || lateral == Lateral::Approach) {
             Real want = headingBug;
-            if (lateral == Lateral::Nav && gps && gps->valid) {
+            if (navLike && gps && gps->valid) {
                 // The leg's track, and back to it from the side (a 20 s
                 // exponential, at most 30 deg off the track).
                 const Real course = wrapPi(gps->desiredTrack - magneticVariation);
                 want = course - clamp((xtk / 20.0 + xtkRate_) / v, -0.52, 0.52);
             }
+            if (aprCaptured) {
+                // The approach: back to the centreline (an 8 s exponential, at
+                // most 30 deg off the course), less the drift (the track off
+                // the course less the heading, the heading lagged 2 s as the
+                // track lags it, filtered 3 s): the crab into the wind comes
+                // from the drift, as the ApproachPilot flies it.
+                hdgLag_ += (wrapPi(hdg - finalCourse_) - hdgLag_) * std::min(dt / 2.0, 1.0);
+                const Real drift = std::asin(clamp(yRate_ / tas, -0.5, 0.5)) - hdgLag_;
+                drift_ += (clamp(drift, -0.5, 0.5) - drift_) * std::min(dt / 3.0, 1.0);
+                want = finalCourse_ - clamp((y_ / 8.0 + yRate_) / tas, -0.52, 0.52) - drift_;
+            }
             hdgErr_ += (wrapPi(want - hdg) - hdgErr_) * std::min(dt / 1.0, 1.0);
             // At most a rate-one turn (3 deg/s) or maxBank, whichever is less;
             // the heading rate damps the roll-out.
             const Real rateOne = std::atan(v * 0.0524 / 9.81);
-            const Real limit = std::min(maxBank, std::max(rateOne, 0.26));
+            // NAV may bank to 30 deg (an FMS's LNAV limit): the GPS begins a
+            // fly-by turn for a 25 deg turn, so the autopilot needs the margin
+            // to catch up with its own lags (held at 25 deg on the AHRS's true
+            // bank, a Top G overshot the next leg by 300 m; the old gyro, reading
+            // 3-5 deg shallow, had been banking it 28-30).
+            const Real limit = std::min(navLike ? std::max(maxBank, 0.52) : maxBank, std::max(rateOne, 0.26));
             bank = clamp(1.5 * hdgErr_ - 2.0 * std::min(v / 60.0, 1.2) * hdgRate_, -limit, limit);
         }
         bankCmd_ += clamp(bank - bankCmd_, -0.087 * dt, 0.087 * dt);  // 5 deg/s
@@ -74,16 +189,24 @@ PilotInput Autopilot::update(const Aircraft& ac, const PilotInput& pilot, Real d
     // ---- Vertical ----
     if (vertical != Vertical::Off) {
         // Captured when the altitude law's own rate meets the selected one
-        // (10 s of error at 0.1/s): no step in the commanded rate.
+        // (10 s of error at 0.1/s): no step in the commanded rate. Only with
+        // the selected altitude ahead in the direction of the selected rate:
+        // behind it (VS +500 with the altitude 1,000 ft below) it flies the
+        // rate selected, away from it, as a real autopilot does (it went
+        // straight to ALT* and dived at 1,000 fpm).
         if (vertical == Vertical::VerticalSpeed) {
             const Real err = selectedAltitude - alt;
-            if ((selectedVs > 0 && err < 10 * selectedVs) || (selectedVs < 0 && err > 10 * selectedVs) || std::abs(err) < 3)
-                vertical = Vertical::AltitudeCapture;
+            const bool ahead = (selectedVs > 0 && err > 0) || (selectedVs < 0 && err < 0);
+            if ((ahead && std::abs(err) < 10 * std::abs(selectedVs)) || std::abs(err) < 3) vertical = Vertical::AltitudeCapture;
         }
         if (vertical == Vertical::AltitudeCapture && std::abs(selectedAltitude - alt) < 15 && std::abs(vs_) < 1) vertical = Vertical::Altitude;
         Real wantPitch = pitchHold_;
         if (vertical != Vertical::Pitch) {
             if (vertical == Vertical::VerticalSpeed) vsCmd_ = selectedVs;
+            else if (vertical == Vertical::GlidePath)
+                // The 3 deg path's sink at the true airspeed, corrected by the
+                // deviation (a 10 s exponential), as the ApproachPilot flies it.
+                vsCmd_ = clamp(-tas * std::sin(kGlidepath) - (vertValid_ ? z_ / 10.0 : 0.0), -8.0, 2.0);
             else vsCmd_ = clamp(0.1 * (selectedAltitude - alt), -std::max(std::abs(selectedVs), 5.0), std::max(std::abs(selectedVs), 5.0));
             // The pitch for the rate: a change of flight path is the rate
             // over the true airspeed (so the gains go as 1/V: fixed, they
@@ -91,7 +214,6 @@ PilotInput Autopilot::update(const Aircraft& ac, const PilotInput& pilot, Real d
             // airplane +-5,000 fpm); a slow integral finds the attitude (it
             // moves with speed and weight).
             const Real e = vsCmd_ - vs_;
-            const Real tas = std::max(ac.telemetry().trueAirspeed, 25.0);
             pitchRef_ = clamp(pitchRef_ + 0.15 / tas * e * dt, -0.17, 0.26);
             wantPitch = pitchRef_ + 0.8 / tas * e;
         }
@@ -108,6 +230,9 @@ PilotInput Autopilot::update(const Aircraft& ac, const PilotInput& pilot, Real d
         in.throttle = thr;
         in.splitThrottles = false;
     }
+    lastLateral_ = lateral;
+    lastVertical_ = vertical;
+    lastAutothrottle_ = autothrottle;
     return in;
 }
 

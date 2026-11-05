@@ -461,6 +461,33 @@ TEST_CASE("failure: vacuum pump failure -- LOW VAC, vacuum gyros run down, elect
     CHECK(f.cs().turnRate > degToRad(1));  // the TC shows the turn
 }
 
+TEST_CASE("attitude: a 172 switched to a glass cockpit's AHRS keeps its attitude and heading through a vacuum failure") {
+    Flight f(100, 1500);
+    f.ac.setAhrsReference(true);
+    CHECK(f.ac.instruments().ahrsReference());
+    f.fly(1);
+    CHECK(!f.cs().attitudeFlag);
+    f.ac.vacuum().setPumpFailed(true);
+    f.pilot.lateral = TestPilot::Lateral::Bank;
+    f.pilot.targetBank = 0;
+    for (int i = 0; i < 10; ++i) f.fly(60);
+    CHECK(f.cs().annunciators & kAnnLowVacuum);  // the pump still fails; nothing the pilot flies by needs it
+    // A 25 deg turn and a minute in it: the AHRS shows it, the heading slaved to the magnetometer.
+    f.pilot.targetBank = degToRad(25);
+    f.fly(60);
+    const Real rollErr = std::abs(f.cs().attitudeRoll - f.truth().roll);
+    const Real hdgErr = std::abs(wrapPi(f.cs().headingIndicator - f.truth().magneticHeading));
+    std::cerr << "  172 on the AHRS, vacuum failed 11 min: bank off by " << radToDeg(rollErr) << " deg, heading by " << radToDeg(hdgErr) << " deg\n";
+    CHECK(rollErr < degToRad(0.5));
+    CHECK(!f.cs().attitudeTumbled && !f.cs().attitudeFlag);
+    CHECK(hdgErr < degToRad(3));
+    // Back to its own instruments: the data's vacuum gyros.
+    f.ac.setAhrsReference(false);
+    CHECK(!f.ac.instruments().ahrsReference());
+    CHECK(f.ac.instruments().def().attitude.power == GyroPower::Vacuum);
+    CHECK(f.ac.instruments().def().heading.slavingRate == 0);
+}
+
 TEST_CASE("failure: electrical failure -- electric instruments and radios flag, vacuum ones keep working") {
     Flight f(100, 1500);
     f.ac.instruments().setNavStandby(0, 113700);
@@ -572,6 +599,84 @@ void forceRoll(Flight& f, Real rate) {
     }
 }
 }  // namespace
+
+TEST_CASE("attitude: a jet's AHRS reads a steady 27 deg turn within 0.5 deg; the 172's vacuum gyro shows its turn error") {
+    // Two minutes in a coordinated 27 deg turn, the case where a vacuum
+    // gyro's pendulous erection works toward the apparent vertical (the cabin
+    // floor's normal) and the display creeps off. The creep's direction turns
+    // with the airplane, so the error circles at about the erection rate over
+    // the turn rate: ~1 deg in the 172's quick turn (6 deg/min, 64 s a
+    // circle), the 2-5 deg the jets' old gyro showed in their slow ones. An
+    // aided AHRS takes the turn's centripetal acceleration out and keeps the
+    // true vertical.
+    static const AircraftDefinition jet = loadReference("top_g");
+    Flight j(250, ftToM(10000), nullptr, jet);
+    Flight f(100, ftToM(4500));
+    Real worstJet = 0, gyroErr = 0;
+    for (Flight* x : {&j, &f}) {
+        x->pilot.lateral = TestPilot::Lateral::Bank;
+        x->pilot.targetBank = degToRad(27);
+        x->pilot.controls.throttle = std::min(1.0, x->trim.throttle + 0.1);
+        x->fly(15);
+        for (int k = 0; k < 105; ++k) {
+            x->fly(1);
+            const Real e = x->cs().attitudeRoll - x->truth().roll;
+            if (x == &j) worstJet = std::max(worstJet, std::abs(e));
+            else gyroErr = std::max(gyroErr, std::abs(e));
+        }
+    }
+    std::cerr << "  after 2 min at 27 deg of bank: the Top G's AHRS within " << radToDeg(worstJet) << " deg (true "
+              << radToDeg(j.truth().roll) << "), the 172's vacuum gyro off by up to " << radToDeg(gyroErr) << " deg (true " << radToDeg(f.truth().roll) << ")\n";
+    CHECK_NEAR(j.truth().roll, degToRad(27), degToRad(2));
+    CHECK(worstJet < degToRad(0.5));
+    CHECK(std::abs(j.cs().attitudePitch - j.truth().pitch) < degToRad(0.5));
+    CHECK(!j.cs().attitudeFlag);
+    CHECK(gyroErr > degToRad(0.7));  // the gyro's turn error is still there
+    CHECK(!f.cs().attitudeFlag);    // a vacuum gyro has no flag
+}
+
+TEST_CASE("attitude: the AHRS flags ATT when it fails or loses power, re-aligns on its reset, and has no tumble") {
+    static const AircraftDefinition jet = loadReference("top_g");
+    Flight j(250, ftToM(10000), nullptr, jet);
+    const Real align = jet.panel.attitude.alignTime;
+    CHECK(jet.panel.attitude.reference == AttitudeReference::Ahrs);
+    // Failed: the red ATT flag, the display held where it was.
+    j.pilot.lateral = TestPilot::Lateral::Bank;
+    j.pilot.targetBank = degToRad(20);
+    j.fly(10);
+    const Real held = j.cs().attitudeRoll;
+    j.ac.instruments().setAttitudeGyroFailed(true);
+    j.fly(0.1);
+    CHECK(j.cs().attitudeFlag);
+    j.pilot.lateral = TestPilot::Lateral::WingsLevel;
+    j.fly(10);
+    CHECK(j.cs().attitudeFlag);
+    CHECK_NEAR(j.cs().attitudeRoll, held, degToRad(0.5));
+    // Restored: it aligns again (in flight, in any attitude) before it shows an attitude.
+    j.ac.instruments().setAttitudeGyroFailed(false);
+    j.fly(align * 0.5);
+    CHECK(j.cs().attitudeFlag);
+    j.fly(align * 0.5 + 1);
+    CHECK(!j.cs().attitudeFlag);
+    CHECK_NEAR(j.cs().attitudeRoll, j.truth().roll, degToRad(0.5));
+    // The reset (the caging knob's place): a fresh alignment.
+    j.ac.instruments().cageAttitude(j.ac.state().body.attitude);
+    j.fly(1);
+    CHECK(j.cs().attitudeFlag);
+    j.fly(align);
+    CHECK(!j.cs().attitudeFlag);
+    // No gimbal stops: through a full aileron roll the attitude stays right.
+    forceRoll(j, 2.0);
+    const Real inRoll = std::abs(wrapPi(j.cs().attitudeRoll - j.truth().roll));
+    // The kinematic roll turns the airframe at ~230 deg/s (the step's own
+    // integration of the rate adds to the set attitude): the 0.05 s filter lags it ~11 deg.
+    CHECK(inRoll < degToRad(15));
+    j.fly(1);
+    CHECK(!j.cs().attitudeTumbled);
+    CHECK(std::abs(wrapPi(j.cs().attitudeRoll - j.truth().roll)) < degToRad(1));
+    std::cerr << "  AHRS: aligns in " << align << " s; rolling at ~230 deg/s it lags " << radToDeg(inRoll) << " deg, a second after "
+              << radToDeg(wrapPi(j.cs().attitudeRoll - j.truth().roll)) << " deg\n";
+}
 
 TEST_CASE("heading: an AHRS (slaved, no gimbal stops) keeps its heading through a full roll; a free DG tumbles") {
     static const AircraftDefinition jet = loadReference("top_g");
