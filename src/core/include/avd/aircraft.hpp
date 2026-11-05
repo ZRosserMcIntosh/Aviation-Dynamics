@@ -32,6 +32,7 @@
 #include "avd/atmosphere.hpp"
 #include "avd/geodesy.hpp"
 #include "avd/ground.hpp"
+#include "avd/icing.hpp"
 #include "avd/instruments.hpp"
 #include "avd/mass.hpp"
 #include "avd/occupant.hpp"
@@ -314,6 +315,16 @@ public:
     Real hydraulicPressure(int i) const { return hydPressure_[static_cast<std::size_t>(i)]; }
     int brakeAccumulatorApplications() const { return brakeAccumulator_; }
 
+    // ---- Ice (avd/icing.hpp) ---------------------------------------------------
+    // Ice on the surfaces, propeller, windshield and in the carburettor, from
+    // the supercooled water of the air the aircraft flies through; its
+    // protection follows the cockpit switches ("anti_ice.<name>",
+    // "engine<N>.carb_heat"). Cleared by setColdAndDark().
+    const IcingModel& icing() const { return icing_; }
+    IcingModel& icing() { return icing_; }
+    // Thermal anti-ice is drawing bleed air (the turbofans' thrust cost).
+    bool antiIceBleed() const;
+
     // ---- Loading -------------------------------------------------------------
     void setStationMass(int station, Real kg);
     Real stationMass(int station) const { return stationMass_[station]; }
@@ -519,6 +530,12 @@ private:
     std::array<bool, kMaxGear> gearFailed_{};
     bool structuralFailure_ = false;
     Real overUltimate_ = 0;  // s past the ultimate load factor
+
+    // Ice.
+    IcingModel icing_;
+    std::array<bool, kMaxEngines> carbHeat_{};          // carb heat levers (HOT)
+    std::array<bool, kIcingMaxSwitches> antiIce_{};     // ice protection switches (IcingModel::switchName order)
+    void updateIcing(Real dt, const Context& c);
 
     std::vector<CockpitControl> cockpit_;
     std::vector<FlightEvent> events_;

@@ -101,6 +101,12 @@
    "note": "VMO 320 KIAS, MMO 0.8; flaps [0, 8, 26, 37] with VFE [180, 170, 150] (some flap placards estimated)."
   },
   {
+   "field": "ice_protection",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Pneumatic de-ice boots on the wing and horizontal-tail leading edges on one switch (the Phenom 300's), heated windshield, an ice detector; the bleed-heated engine inlets are not modelled. Thermal anti-ice takes 4 % of each lit engine's thrust in bleed (Estimated); full heat from 60 % N2."
+  },
+  {
    "field": "turbofans[*].lapse_mach_coefficient",
    "kind": "calibrated",
    "source": "MATTINGLY",
@@ -1036,6 +1042,23 @@
   "alpha_margin_deg": 1.2,
   "pusher_margin_deg": 0.2,
   "pusher_elevator": -0.7
+ },
+ "ice_protection": {
+  "surfaces": [
+   {
+    "surface": 0,
+    "type": "boots",
+    "switch": "wing"
+   },
+   {
+    "surface": 1,
+    "type": "boots",
+    "switch": "wing"
+   }
+  ],
+  "bleed_thrust_loss": 0.04,
+  "windshield_heat": true,
+  "ice_detector": true
  },
  "vacuum": {
   "present": false

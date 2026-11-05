@@ -264,6 +264,31 @@ export default async function createAvdModule(wasmBytes) {
     }
     return out;
   };
+  // Weather: rain (mm/h), a front reaching the field in etaMin minutes
+  // (kind 'cold' | 'warm' | 'none'; the changes behind it), and what the
+  // aircraft and the field have now.
+  A.setRain = (mmPerHour) => ex.avd_set_rain(mmPerHour);
+  const FRONTS = { none: [0, 0, 0, 0, 0], cold: [1, -6, 3, 15, 200], warm: [2, 4, -2, 10, 320] };
+  A.setFront = ({ kind = 'cold', etaMin = 10, dT, dQnhHpa, windKt, windFromDeg } = {}) => {
+    const [k, t, q, w, d] = FRONTS[kind] || FRONTS.none;
+    ex.avd_set_front(k, etaMin, dT ?? t, dQnhHpa ?? q, windKt ?? w, windFromDeg ?? d);
+  };
+  A.weather = () => {
+    const v = new Float64Array(memory.buffer, ex.avd_weather(), 24);
+    return { rain: v[0], visibility: v[1], oat: v[2], qnh: v[3], fieldQnh: v[4], fieldOat: v[5], frontBehind: v[6], frontDistanceKm: v[7],
+      runwayWaterMm: v[8], cloudWater: v[9], supercooledWater: v[10], inCloud: v[11] === 1, rainWater: v[12], freezingRain: v[13] === 1,
+      cloudBase: v[14], cloudTop: v[15], frontEtaMin: v[16] };
+  };
+  // Ice: per surface (mm, clmax loss, glaze share), propeller, carburettor,
+  // protection, windshield, intensity and the stall speeds it makes.
+  A.icing = () => {
+    const v = new Float64Array(memory.buffer, ex.avd_icing(), 48), n = v[0] | 0;
+    const surfaces = Array.from({ length: n }, (_, i) => ({ mm: v[1 + i], clmaxLoss: v[9 + i], glaze: v[17 + i] }));
+    return { surfaces, propellerMm: v[25], propellerThrustLoss: v[26], carbIceG: v[27], carbBlockage: v[28], carbTempC: v[29],
+      carbHeat: v[30], roughness: v[31], carburettor: v[32] === 1, protectionMask: v[33], protectionHeat: v[34], bootsInflating: v[35] === 1,
+      iceDetected: v[36] === 1, iceDetector: v[37] === 1, windshieldMm: v[38], windshieldOpacity: v[39], rateMmPerMin: v[40], intensity: v[41],
+      vsKcas: v[42], vsCleanKcas: v[43], bleed: v[44] === 1, switches: v[45], stallAngleLossDeg: v[46] };
+  };
   A.procedure = () => { const st = ex.avd_procedure_status(); const n = new Uint8Array(memory.buffer, ex.avd_text(0)).indexOf(0); return { status: st, message: A.text(n) }; };
   return A;
 }

@@ -23,6 +23,7 @@
 
 #include "avd/aircraft_def.hpp"
 #include "avd/atmosphere.hpp"
+#include "avd/icing.hpp"
 #include "avd/math.hpp"
 
 namespace avd {
@@ -89,6 +90,9 @@ struct AeroInputs {
     const SlipstreamState* slipstreams = nullptr;
     int slipstreamCount = 0;
     const Real* downwashLagged = nullptr;  // per surface, rad (size = surfaces)
+    // Ice per surface (size = surfaces; avd/icing.hpp), applied to each strip
+    // by the ice height over its own chord. Null: a clean airframe.
+    const SurfaceIce* ice = nullptr;
 };
 
 struct SurfaceOutput {
@@ -113,6 +117,7 @@ struct StripTelemetry {
     bool stalled = false;
     Real attached = 1;         // attached-flow weight of the section polar (tufts, buffet)
     Real gamma = 0;            // bound circulation (m^2/s; lifting-line surfaces)
+    Real iceStallShift = 0;    // how much ice has lowered stallAlpha (rad; 0 clean): a vane trips at the clean angle
 };
 
 struct AeroOutputs {
@@ -279,6 +284,8 @@ private:
 // flight with the elevator trimming the pitching moment about cg, for a flap
 // angle (rad) and Mach number: the basis of stall and V-speeds. Sweeps alpha
 // out of ground effect with no slipstream; elevator saturating limits it.
-Real trimmedMaxLiftCoefficient(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach);
+// With `ice` (per surface), the iced airframe's.
+Real trimmedMaxLiftCoefficient(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach,
+                               const SurfaceIce* ice = nullptr);
 
 }  // namespace avd

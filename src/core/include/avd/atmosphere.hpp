@@ -64,9 +64,24 @@ struct AirSample {
     AirState state;
     Vec3 wind;            // mean + gust + turbulence air velocity
     Mat3 windGradient = Mat3::zero();
-    Real precipitationRate = 0;  // mm/h liquid-equivalent (hook; consumers in M5)
-    Real liquidWaterContent = 0; // g/m^3 cloud liquid water (icing hook; M5)
+    Real precipitationRate = 0;  // mm/h of rain (SimpleWeatherParams::rainRate)
+    Real liquidWaterContent = 0; // g/m^3 cloud liquid water (supercooled below 0 C: icing)
+    Real dropletDiameter = 20e-6;  // m, the cloud's median volume droplet diameter
 };
+
+// Rain (Marshall & Palmer 1948 drop-size distribution, N(D) = N0 e^(-Lambda D),
+// N0 = 8000 m^-3 mm^-1, Lambda = 4.1 R^-0.21 mm^-1): the liquid water it puts
+// in the air, pi rho_w N0 / Lambda^4 = 0.089 R^0.84 g/m^3, and its median
+// volume diameter 3.67 / Lambda = 0.895 R^0.21 mm. R in mm/h.
+Real rainLiquidWaterContent(Real rainRate);    // g/m^3
+Real rainMedianVolumeDiameter(Real rainRate);  // m
+
+// Meteorological visibility (m, Koschmieder: 3.912 / extinction) in the air
+// of a sample: clear air (`clear`, m), cloud droplets (Kunkel 1984,
+// 144.7 LWC^0.88 km^-1, LWC in g/m^3: about 80 m in a 0.3 g/m^3 stratus)
+// and rain (an empirical extinction of 0.25 R^0.63 km^-1, of the order of
+// the published fits, e.g. Atlas 1953: about 4 km in 10 mm/h, 1.3 km in 50).
+Real meteorologicalVisibility(const AirSample& s, Real clear = 40000);
 
 class StandardAtmosphere {
 public:
@@ -143,6 +158,15 @@ struct SimpleWeatherParams {
     // air is below 0 C: an icing layer. cloudTop <= cloudBase: no cloud.
     Real cloudBase = 0, cloudTop = 0;
     Real cloudLiquidWater = 0;
+    // Median volume droplet diameter of the cloud (m): 15-25 um in stratus
+    // (the 14 CFR 25 App. C continuous-maximum envelope), 30-40 in cumulus;
+    // above ~50 um (supercooled large drops) ice runs aft of the protection.
+    Real cloudDropletDiameter = 20e-6;
+    // Rain (mm/h; 0 none, 2.5 moderate, 10 heavy, 50 a tropical downpour)
+    // falling from the cloud layer's top to the ground (everywhere when there
+    // is no cloud layer). In air below 0 C it is freezing rain (supercooled
+    // drops a millimetre across: severe glaze icing).
+    Real rainRate = 0;
 };
 
 // Standard atmosphere + surface wind with a boundary-layer profile, winds
@@ -162,6 +186,11 @@ public:
     Vec3 meanWindAt(const Vec3& positionNed, Real altitudeMsl, Real time) const;
     Real roughnessAt(Real north, Real east) const;
     SurfaceWind surfaceWindAt(Real north, Real east, Real time) const;
+    // The airmass at a place and time: the conditions with every front's
+    // temperature and pressure change applied (= params().conditions with
+    // no airmass fronts), and the local QNH (Pa, MSL pressure) from them.
+    AtmosphereConditions conditionsAt(const Vec3& positionNed, Real time) const;
+    Real qnhAt(const Vec3& positionNed, Real time) const { return conditionsAt(positionNed, time).seaLevelPressure; }
     const BoundaryLayer& boundaryLayer() const { return boundaryLayer_; }
     const AtmosphericTurbulence& turbulence() const { return turbulence_; }
     const ThermalField& thermals() const { return thermals_; }
@@ -174,6 +203,7 @@ private:
     LocalWind localWind(const Vec3& positionNed, Real heightAgl, Real altitudeMsl, Real time) const;
     Params p_;
     bool spatial_ = false;
+    bool airmassFronts_ = false;  // a wind shift changes the temperature or pressure
     StandardAtmosphere atm_;
     BoundaryLayer boundaryLayer_;
     AtmosphericTurbulence turbulence_;

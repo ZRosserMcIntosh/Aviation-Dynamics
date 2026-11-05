@@ -487,5 +487,76 @@ A.avd_set_wake(1);
   tp = K.turboprop();
   check(tp.engines[0].beta && tp.engines[0].blade < 0 && tp.engines[0].thrustKn < -1, `reverse: blade ${tp.engines[0].blade.toFixed(0)} deg, ${tp.engines[0].thrustKn.toFixed(1)} kN`);
   K.setReverse(0);
+// Weather: airframe ice, carburettor ice and carb heat, rain on the runway, a front.
+{
+  const C = await createAvdModule();
+  C.load(json);
+  C.avd_set_airport(0);
+  const fly = (seconds, thr) => { for (let t = 0; t < seconds; t += 0.25) { C.avd_set_input(0, 0, 0, thr, C.avd_trim_mixture(), 0, 0, 0, 0); C.avd_advance(0.25); } };
+  // The C172 in a supercooled stratus at -5 C (0.5 g/m^3): ice on the wing and tail, the stall speed up.
+  C.avd_set_assist(2);
+  C.avd_set_level_hold(1);
+  C.avd_reset_air(0, 0, 900, 120, 100, 0);
+  const alt = C.state()[53] * 0.3048;
+  C.avd_set_weather(0, 0, 0, -5 - (15 - 0.0065 * alt), 0.9);
+  C.avd_set_cloud(alt - 600, alt + 600, 0.5);
+  C.avd_reset_air(0, 0, 900, 120, 100, 0);
+  const thr = C.avd_trim_throttle();
+  const vs0 = C.icing().vsKcas;
+  fly(300, thr);
+  const ic = C.icing(), wx = C.weather();
+  check(wx.inCloud && Math.abs(wx.oat + 5) < 2 && wx.supercooledWater > 0.4, `icing layer: OAT ${wx.oat.toFixed(1)} C, ${wx.supercooledWater.toFixed(2)} g/m3 supercooled, visibility ${wx.visibility.toFixed(0)} m`);
+  check(ic.surfaces.length === 3 && ic.surfaces[0].mm > 0.5 && ic.surfaces[1].clmaxLoss > ic.surfaces[0].clmaxLoss * 0.9 && ic.windshieldOpacity > 0,
+    `5 min at -5 C: wing ${ic.surfaces[0].mm.toFixed(1)} mm (clmax -${(100 * ic.surfaces[0].clmaxLoss).toFixed(0)} %), tail ${ic.surfaces[1].mm.toFixed(1)} mm, windshield ${(100 * ic.windshieldOpacity).toFixed(0)} %, ${ic.rateMmPerMin.toFixed(2)} mm/min (class ${ic.intensity})`);
+  check(ic.vsKcas > ic.vsCleanKcas + 3 && ic.vsKcas > vs0 + 3 && Math.abs(C.jet()[32] - ic.vsKcas) < 0.5 && ic.stallAngleLossDeg > 1,
+    `iced stall speed ${ic.vsKcas.toFixed(1)} KCAS against ${ic.vsCleanKcas.toFixed(1)} clean (stall angle -${ic.stallAngleLossDeg.toFixed(1)} deg)`);
+  check(!ic.iceDetector && ic.switches === 0 && !C.cockpit().some((k) => k.id.startsWith('anti_ice.')), 'the C172 has no ice protection to switch on');
+  // Carburettor ice in clear humid air at +10 C, then carb heat.
+  C.avd_set_cloud(0, 0, 0);
+  C.avd_set_weather(0, 0, 0, 10 - (15 - 0.0065 * alt), 0.9);
+  C.avd_reset_air(0, 0, 900, 120, 100, 0);
+  const thr2 = C.avd_trim_throttle();
+  const map0 = C.state()[20];
+  fly(600, thr2);
+  const ci = C.icing(), map1 = C.state()[20];
+  check(ci.carburettor && ci.carbIceG > 0.5 && map1 < map0 - 0.7 && ci.carbTempC < 0,
+    `carburettor ice: ${ci.carbIceG.toFixed(2)} g after 10 min at +10 C, 90 % RH (throat ${ci.carbTempC.toFixed(0)} C), MAP ${map0.toFixed(1)} -> ${map1.toFixed(1)} inHg`);
+  const heat = C.cockpit().find((k) => k.id === 'engine1.carb_heat');
+  C.avd_cockpit_cycle(heat.index);
+  let rough = 0;
+  for (let t = 0; t < 120; t += 0.25) { fly(0.25, thr2); rough = Math.max(rough, C.icing().roughness); }
+  const ch = C.icing();
+  check(C.cockpit().find((k) => k.id === 'engine1.carb_heat').position === 1 && ch.carbIceG < 0.05 && rough > 0.1 && ch.carbHeat > 0.9,
+    `carb heat: ${ch.carbIceG.toFixed(3)} g left after 2 min, roughness peak ${rough.toFixed(2)}, MAP ${C.state()[20].toFixed(1)} inHg`);
+  // Rain on the field: the runway wets, the visibility falls.
+  C.avd_set_weather(0, 0, 0, 0, 0.9);
+  C.avd_reset(1);
+  C.setRain(10);
+  for (let t = 0; t < 600; t += 0.25) C.avd_advance(0.25);
+  const rw = C.weather();
+  check(rw.rain === 10 && rw.visibility < 6000 && C.state()[63] > 0.4 && C.state()[63] < 1.0 && Math.abs(rw.runwayWaterMm - C.state()[63]) < 1e-9,
+    `rain 10 mm/h: runway water ${C.state()[63].toFixed(2)} mm after 10 min, visibility ${rw.visibility.toFixed(0)} m`);
+  C.setRain(0);
+  // A cold front over the field: the QNH up, the OAT down.
+  C.avd_reset(1);
+  const w0 = C.weather();
+  C.setFront({ kind: 'cold', etaMin: 3 });
+  const w1 = C.weather();
+  for (let t = 0; t < 900; t += 0.25) C.avd_advance(0.25);
+  const w2 = C.weather();
+  check(w1.frontEtaMin > 2.5 && w1.frontEtaMin < 3.5 && w2.frontBehind > 0.9 && w2.fieldQnh > w0.fieldQnh + 2 && w2.fieldOat < w0.fieldOat - 4,
+    `cold front: field QNH ${w0.fieldQnh.toFixed(1)} -> ${w2.fieldQnh.toFixed(1)} hPa, OAT ${w0.fieldOat.toFixed(1)} -> ${w2.fieldOat.toFixed(1)} C (ETA ${w1.frontEtaMin.toFixed(1)} min)`);
+  C.setFront({ kind: 'none' });
+  check(Math.abs(C.weather().fieldQnh - w0.fieldQnh) < 1e-6 && C.weather().frontBehind === -1, 'front cleared');
+  // A jet's ice protection: the CJ4's wing anti-ice (bleed) and tail boots.
+  const cj = await readFile(new URL('./dist/cj4.json', import.meta.url), 'utf8');
+  check(C.load(cj).length === 0, 'CJ4 loaded');
+  C.avd_reset_air(0, 0, 3000, 120, 200, 0);
+  const ids = C.cockpit().filter((k) => k.id.startsWith('anti_ice.')).map((k) => k.id);
+  check(ids.includes('anti_ice.wing') && ids.includes('anti_ice.tail'), `CJ4 ice protection switches: ${ids.join(', ')}`);
+  C.avd_cockpit_cycle(C.cockpit().find((k) => k.id === 'anti_ice.wing').index);
+  for (let t = 0; t < 30; t += 0.25) { C.avd_set_input(0, 0, 0, C.avd_trim_throttle(), 1, 0, 0, 0, 0); C.avd_advance(0.25); }
+  const ji = C.icing();
+  check(ji.bleed && ji.protectionHeat > 0.6 && (ji.protectionMask & 1) === 1 && ji.iceDetector, `CJ4 wing anti-ice on: bleed drawn, leading edge heat ${ji.protectionHeat.toFixed(2)}`);
 }
 process.exit(failures ? 1 : 0);

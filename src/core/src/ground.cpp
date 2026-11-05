@@ -51,6 +51,31 @@ Real wetTyreFriction(const SurfaceProperties& s, Real speed, Real tyrePressure) 
     return std::max(mu, 0.05);
 }
 
+Real rainWaterFilmDepth(Real rainRate, Real drainageLength, Real crossSlope, Real textureDepth) {
+    if (!(rainRate > 0)) return 0;
+    constexpr Real kInch = 0.0254, kFoot = 0.3048;
+    const Real txd = std::max(textureDepth, 1e-5) / kInch;
+    const Real l = std::max(drainageLength, 1.0) / kFoot;
+    const Real i = rainRate / 25.4;
+    const Real sl = std::max(crossSlope, 0.002);
+    const Real wft = 3.38e-3 * std::pow(txd, 0.11) * std::pow(l, 0.43) * std::pow(i, 0.59) * std::pow(1 / sl, 0.42) - txd;
+    return std::max(wft, 0.0) * kInch;
+}
+
+void RunwayWetting::update(Real dt, Real rainRate) {
+    if (!(dt > 0)) return;
+    const Real target = rainWaterFilmDepth(rainRate, length_, slope_, texture_);
+    if (target >= depth_) {
+        depth_ += (target - depth_) * std::min(dt / 180.0, 1.0);
+    } else {
+        depth_ -= (depth_ - target) * std::min(dt / 600.0, 1.0);
+        if (rainRate <= 0) depth_ -= 0.2e-3 / 3600 * dt;  // evaporation
+        // Below a few hundredths of a millimetre the surface is dry again.
+        if (depth_ < 2e-5 && target <= 0) depth_ = 0;
+        depth_ = std::max(depth_, target);
+    }
+}
+
 GroundHit FlatGround::raycast(const Vec3& o, const Vec3& dir, Real maxDistance) const {
     GroundHit h;
     if (dir.z <= 1e-9) return h;  // plane faces up (-Z); only downward rays hit

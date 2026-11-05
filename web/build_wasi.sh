@@ -26,6 +26,7 @@ for f in avd_text avd_load avd_error_text avd_set_weather avd_reset avd_set_inpu
          avd_ground_height avd_route avd_route_text avd_gps avd_set_destination_record \
          avd_terrain_detail avd_taws avd_taws_text avd_taws_config \
          avd_set_prop_lever avd_set_condition avd_set_feather avd_turboprop \
+         avd_set_rain avd_set_front avd_weather avd_icing \
          avd_abi_version avd_layout avd_build_id; do
   EXPORTS="$EXPORTS -Wl,--export=$f"
 done
