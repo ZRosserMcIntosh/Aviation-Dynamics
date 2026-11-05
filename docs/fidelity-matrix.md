@@ -59,7 +59,7 @@ Generated from the test output (`tests/test_validation.cpp`, rows in
 sources and the discussion of every row outside its band are in
 [validation/c172s-validation.md](validation/c172s-validation.md) and
 [validation/top-g-validation.md](validation/top-g-validation.md). The
-whole suite has <!-- validation:begin tests -->262<!-- validation:end --> test cases.
+whole suite has <!-- validation:begin tests -->285<!-- validation:end --> test cases.
 
 ### Tupi T-180 against the Cessna 172S POH
 
