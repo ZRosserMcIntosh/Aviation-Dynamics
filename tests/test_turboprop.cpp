@@ -103,7 +103,8 @@ TEST_CASE("turboprop: PT6A-60A flat rating to the torque limit, the ITT-limited 
 TEST_CASE("turboprop: variable-pitch BEM tables; the fixed-pitch path is unchanged") {
     // Fixed pitch: a zero blade rotation is the old solution bit for bit (the
     // golden traces check the whole C172 on top of this).
-    const PropellerDef& fp = loadReference("tupi_t180").engines[0].propeller;
+    const AircraftDefinition c172 = loadReference("tupi_t180");
+    const PropellerDef& fp = c172.engines[0].propeller;
     for (Real v : {0.0, 30.0, 55.0}) {
         Real t0, q0, t1, q1;
         Propeller::bem(fp, v, 2400 * kTwoPi / 60, 1.1, t0, q0, 340);
