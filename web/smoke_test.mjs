@@ -487,6 +487,8 @@ A.avd_set_wake(1);
   tp = K.turboprop();
   check(tp.engines[0].beta && tp.engines[0].blade < 0 && tp.engines[0].thrustKn < -1, `reverse: blade ${tp.engines[0].blade.toFixed(0)} deg, ${tp.engines[0].thrustKn.toFixed(1)} kN`);
   K.setReverse(0);
+}
+
 // Weather: airframe ice, carburettor ice and carb heat, rain on the runway, a front.
 {
   const C = await createAvdModule();
