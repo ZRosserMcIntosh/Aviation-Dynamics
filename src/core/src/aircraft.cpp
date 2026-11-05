@@ -379,7 +379,15 @@ bool Aircraft::cycleCockpitControl(const std::string& id) {
 
 // ------------------------------------------------------------ set-up ----
 
+void Aircraft::resetDamage() {
+    occupant_.reset();
+    gearFailed_.fill(false);
+    structuralFailure_ = false;
+    overUltimate_ = 0;
+}
+
 void Aircraft::setFlightState(const RigidBodyState& s) {
+    resetDamage();
     s_ = DynamicState{};
     s_.body = s;
     s_.body.attitude.normalize();
@@ -494,6 +502,7 @@ void Aircraft::placeOnGround(Real north, Real east, Real heading, const GroundQu
     s_.wheelOmega.fill(0);
     s_.wheelSteer.fill(0);
     antiSkid_.fill(1.0);
+    resetDamage();  // placed whole: the legs stand
     // Settle on the gear with brakes set and controls neutral.
     const bool pb = parkingBrake_;
     parkingBrake_ = true;
@@ -1177,8 +1186,8 @@ void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, co
             case 0:  // stowed: deploy on the main wheels, idle, still fast
                 if (mains && idle && ias > rv.stowIas + 2.5 && turboState_[i].running && !reverserDone_) ph = 1;
                 break;
-            case 4:  // on the lever: stowed when it comes back, or off the ground
-                if (!manual || !mains) ph = 3;
+            case 4:  // on the levers: stowed when they come back, off the ground, or a throttle advanced
+                if (!manual || !mains || advanced) ph = 3;
                 break;
             case 1:  // reverse thrust down to the stow speed
                 if (advanced || !mains) { ph = 3; reverserDone_ = true; }
@@ -1196,7 +1205,8 @@ void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, co
             // the sleeves travel (the interlock), the lever's own setting once stowed.
             const Real maxReverse = (rv.reverseN1 - eng.def().idleN1) / (1 - eng.def().idleN1);
             if (ph == 1 && pos > 0.95) c.turboIn[i].throttle = maxReverse;
-            else if (ph == 4 && pos > 0.95) c.turboIn[i].throttle = clamp(in.reverse, 0.0, 1.0) * maxReverse;
+            // Reverse idle below 5 kt: no power-back on reverse thrust.
+            else if (ph == 4 && pos > 0.95) c.turboIn[i].throttle = groundSpeed > 2.5 ? clamp(in.reverse, 0.0, 1.0) * maxReverse : 0.0;
             else if (ph != 0) c.turboIn[i].throttle = 0;
         }
     }

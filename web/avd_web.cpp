@@ -143,6 +143,11 @@ struct Sim {
     // vertical speed, autothrottle.
     bool apOn = false;
     scenarios::Autopilot ap;
+    // Whether an automatic pilot (autoland, autopilot, line pilot) flew the
+    // last step, and the throttles it left: when it lets go, the pilot's
+    // levers start from there (not from where the host's levers were left).
+    bool wasAutomatic = false;
+    PilotInput lastIn;
 };
 constexpr Real kOwnWakeAge = 4.0;
 
@@ -517,6 +522,8 @@ void newAircraft() {
     g->jetStart = 0;
     g->trimThrottle = 0;
     g->trimMixture = 1;
+    g->raw = PilotInput{};  // the levers of the last flight do not carry over (a trimmed spawn sets its own)
+    g->wasAutomatic = false;
     g->windAvgValid = false;
     WakeParams wp;
     wp.maxBinsPerSurface = 12;  // the near wake for display and encounters; fewer segments
@@ -605,6 +612,8 @@ void placeTrimmed(Vec3 posNed, Real altMsl, Real track, Real kias, int flapDeten
     const scenarios::TrimResult tr = placeTrimmedOn(*g->ac, posNed, altMsl, track, kias, flapDetent, path, flapDetent >= 2);
     g->trimThrottle = tr.input.throttle;
     g->trimMixture = tr.input.mixture;
+    g->raw.throttle = tr.input.throttle;  // the host's levers start where the trim put them
+    g->raw.mixture = tr.input.mixture;
 }
 
 // Instruments and radios after any reset.
@@ -1110,11 +1119,21 @@ AVD_EXPORT int avd_advance(double seconds) {
             T.wake->update(*T.ac, *g->weather, g->world.get());
         }
         if (g->apOn && g->ac->telemetry().onGround) g->apOn = false;  // disconnects on the ground
+        const bool automatic = g->autolandOn || g->linePilotOn || g->apOn;
+        if (g->wasAutomatic && !automatic) {
+            // Handed back: the levers where the automation left them (an
+            // autoland stops at idle; the host reads them back from avd_state).
+            g->raw.throttle = g->lastIn.splitThrottles ? g->lastIn.throttles[0] : g->lastIn.throttle;
+            g->raw.splitThrottles = false;
+            g->raw.reverse = 0;
+        }
+        g->wasAutomatic = automatic;
         PilotInput in = g->autolandOn ? autolandInput()
                         : g->linePilotOn ? g->linePilot.update(*g->ac, kDt)
                         : g->apOn        ? autopilotInput()
                                          : g->assist.apply(g->raw, *g->ac, kDt);
         if (!g->linePilotOn && !g->autolandOn) g->procedure.update(*g->ac, in, kDt);
+        g->lastIn = in;
         g->ac->step(kDt, in, *g->world, flightAir());
         if (g->wakeOn) g->wake->update(*g->ac, *g->weather, g->world.get());
         if (T.active) {
@@ -1685,7 +1704,7 @@ AVD_EXPORT double* avd_air_velocity(int n) {
 AVD_EXPORT void avd_line_pilot(int on, double kias, double pathDeg) {
     if (!g) return;
     g->linePilotOn = on != 0;
-    if (on) g->apOn = false;
+    if (on) g->apOn = g->autolandOn = false;  // the autoland would otherwise keep priority
     if (!g->linePilotOn) return;
     const AircraftTelemetry& t = g->ac->telemetry();
     scenarios::LinePilot p;

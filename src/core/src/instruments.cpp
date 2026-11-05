@@ -427,6 +427,17 @@ void InstrumentPanel::updateCompass(Real dt, const SensorInputs& in) {
 
 // --------------------------------------------------- engine & systems ----
 
+namespace {
+// A temperature through its sender's lag; 0 (blank) without power. Powered up,
+// it starts from the sender's reading: lagging up from the blank 0 K, the
+// digital readouts showed -344 F for seconds (a needle would rest on its stop).
+Real temperatureGauge(Real shown, Real sensed, Real dt, Real tau) {
+    if (sensed <= 0) return 0.0;
+    if (shown <= 0) return sensed;
+    return firstOrder(shown, sensed, dt, tau);
+}
+}  // namespace
+
 void InstrumentPanel::updateEngineAndSystems(Real dt, const SensorInputs& in) {
     const EngineGaugesDef& e = def_.engine;
     // Mechanical (cable-driven) tachometer.
@@ -445,9 +456,9 @@ void InstrumentPanel::updateEngineAndSystems(Real dt, const SensorInputs& in) {
     }
     oilPressNeedle_.update(p ? in.oilPressure : 0.0, dt, e.needle);
     s_.oilPressure = std::max(oilPressNeedle_.x, 0.0);
-    s_.oilTemperature = firstOrder(s_.oilTemperature, p ? in.oilTemperature : 0.0, dt, tau);
-    s_.egt = firstOrder(s_.egt, p && e.exhaustGasTemperature ? in.egt : 0.0, dt, 3.0);
-    s_.cht = firstOrder(s_.cht, p && e.cylinderHeadTemperature ? in.cht : 0.0, dt, 3.0);
+    s_.oilTemperature = temperatureGauge(s_.oilTemperature, p ? in.oilTemperature : 0.0, dt, tau);
+    s_.egt = temperatureGauge(s_.egt, p && e.exhaustGasTemperature ? in.egt : 0.0, dt, 3.0);
+    s_.cht = temperatureGauge(s_.cht, p && e.cylinderHeadTemperature ? in.cht : 0.0, dt, 3.0);
     s_.fuelFlow = firstOrder(s_.fuelFlow, p && e.fuelFlow ? in.fuelFlow : 0.0, dt, 1.0);
     for (int i = 0; i < 4; ++i) {
         const Real usable = i < in.tankCount ? std::max(in.fuelQuantity[i] - in.fuelUnusable[i], 0.0) : 0.0;
@@ -481,9 +492,9 @@ void InstrumentPanel::updateEngineAndSystems(Real dt, const SensorInputs& in) {
         g.n1 = std::max(n1Needle_[i].x, 0.0);
         g.n2 = std::max(n2Needle_[i].x, 0.0);
         g.oilPressure = std::max(engineOilNeedle_[i].x, 0.0);
-        g.itt = firstOrder(g.itt, itt, dt, 3.0);
+        g.itt = temperatureGauge(g.itt, itt, dt, 3.0);
         g.fuelFlow = firstOrder(g.fuelFlow, ff, dt, 1.0);
-        g.oilTemperature = firstOrder(g.oilTemperature, oilT, dt, tau);
+        g.oilTemperature = temperatureGauge(g.oilTemperature, oilT, dt, tau);
     }
     // Self-powered: ammeter shunt, suction gauge, voltmeter (shows the bus).
     s_.ammeter = -in.batteryCurrent;

@@ -946,17 +946,38 @@ TEST_CASE("top g: the pilot's reverse levers: deploy only on the ground at idle,
     for (int i = 0; i < 240 * 6; ++i) ac.step(kDt, in, ground, atm);
     CHECK(ac.reverserPhase(0) == 4);
     CHECK(ac.reverserPosition(0) > 0.99);
-    const Real n1Full = ac.turbofanState(0).n1;
-    in.reverse = 0.3;
-    for (int i = 0; i < 240 * 6; ++i) ac.step(kDt, in, ground, atm);
-    const Real n1Part = ac.turbofanState(0).n1;
-    std::cerr << "  reverse lever: N1 " << n1Full << " at full reverse, " << n1Part << " at 0.3\n";
+    // At rest the levers give reverse idle only (no power-back).
+    const Real n1Rest = ac.turbofanState(0).n1;
+    CHECK(n1Rest < ac.definition().turbofans[0].idleN1 + 0.05);
+    // Rolling, the levers set the reverse N1.
+    auto rolling = [&](Real lever) {
+        Aircraft r(jet());
+        setup(r, ground, atm);
+        DynamicState st = r.state();
+        st.body.velocity = {ktToMs(100), 0, 0};
+        r.setState(st);
+        PilotInput p;
+        p.reverse = lever;
+        for (int i = 0; i < 240 * 5; ++i) r.step(kDt, p, ground, atm);
+        return r.turbofanState(0).n1;
+    };
+    const Real n1Full = rolling(1), n1Part = rolling(0.3);
+    std::cerr << "  reverse lever: N1 " << n1Rest << " at rest, rolling " << n1Full << " at full reverse, " << n1Part << " at 0.3\n";
     CHECK(n1Full > n1Part + 0.1);
     // Back to 0: stowed.
     in.reverse = 0;
     for (int i = 0; i < 240 * 6; ++i) ac.step(kDt, in, ground, atm);
     CHECK(ac.reverserPhase(0) == 0);
     CHECK(ac.reverserPosition(0) == 0);
+    // A throttle advanced while in reverse stows them.
+    in.reverse = 1;
+    for (int i = 0; i < 240 * 4; ++i) ac.step(kDt, in, ground, atm);
+    CHECK(ac.reverserPhase(0) == 4);
+    in.throttle = 0.6;
+    for (int i = 0; i < 240 * 4; ++i) ac.step(kDt, in, ground, atm);
+    CHECK(ac.reverserPhase(0) != 4);
+    in.throttle = 0;
+    in.reverse = 0;
     // The lever interlock: a throttle above idle, nothing deploys.
     Aircraft open(jet());
     setup(open, ground, atm);

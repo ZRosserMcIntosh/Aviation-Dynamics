@@ -325,7 +325,12 @@ public:
     // Prepare the environment/controls context without stepping (for trim).
     void prepareContext(const PilotInput& in, const GroundQuery& ground, const AtmosphereField& atm);
     // A new state (a spawn, a reset): the crash dummy's readings start over.
-    void setState(const DynamicState& s) { s_ = s; occupant_.reset(); }
+    // A new state starts undamaged: the occupant's readings, collapsed legs
+    // and a structural failure belong to the flight that caused them.
+    void setState(const DynamicState& s) {
+        s_ = s;
+        resetDamage();
+    }
     // Trim/linearisation use quasi-steady downwash (no transport lag);
     // settleDownwash() then initialises the lag states for a following run.
     void setQuasiSteadyDownwash(bool on) { quasiSteadyDownwash_ = on; }
@@ -468,6 +473,7 @@ private:
     bool starvingWas_ = false, stallVane_ = false;
     Real lastSinkRate_ = 0;
     OccupantMonitor occupant_;
+    void resetDamage();
     std::array<bool, kMaxGear> gearFailed_{};
     bool structuralFailure_ = false;
     Real overUltimate_ = 0;  // s past the ultimate load factor

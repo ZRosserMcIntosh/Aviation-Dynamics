@@ -116,7 +116,8 @@ B.setReverse(1);  // the reverse levers at idle on the ground: deployed, reverse
 for (let t = 0; t < 8; t += 0.25) B.avd_advance(0.25);
 {
   const jr = B.jet();
-  check(jr[52] > 0.99 && jr[53] === 4 && jr[54] > 0.99 && jr[55] === 4 && jr[8] > 40, `reverse levers: deployed (phase ${jr[53]}), N1 ${jr[8].toFixed(0)} %`);
+  // Deployed; at rest the N1 stays at reverse idle (no power-back).
+  check(jr[52] > 0.99 && jr[53] === 4 && jr[54] > 0.99 && jr[55] === 4 && jr[8] < 30, `reverse levers: deployed (phase ${jr[53]}), N1 ${jr[8].toFixed(0)} % at rest`);
 }
 B.setReverse(0);
 for (let t = 0; t < 8; t += 0.25) B.avd_advance(0.25);
@@ -247,6 +248,9 @@ check(cg[32] === 109.7 && cg[37] === 1 && cg[40] === 1 && Math.abs(cg[38]) < 0.1
   check(engaged === 1 && st.phase === 4 && sawFlare && !s6[48] && Math.abs(right) < 4 && along > 300 && along < rw[4],
     `autoland: engaged ${engaged}, phase ${st.phase} after ${t.toFixed(0)} s, stopped ${along.toFixed(0)} m down 35L, ${right.toFixed(1)} m right`);
   check(B.autoland(false) === 0 && !B.autolandStatus().on, 'autoland off');
+  // Handed back with the levers where it left them (idle), not where the host's were.
+  B.avd_advance(0.25);
+  check(B.state()[24] < 0.02, `autoland hand-back: the throttle at ${B.state()[24].toFixed(2)}`);
   // The dummy in the pilot's seat rode an ordinary landing: no limit near, nothing broken.
   const o = B.occupant();
   check(o.peakG > 1 && o.peakG < 3 && o.dri > 1 && o.dri < 6 && o.hic < 50 && !o.collapsed.some((c) => c) && !o.structural,
