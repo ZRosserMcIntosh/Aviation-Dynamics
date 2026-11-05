@@ -32,7 +32,7 @@ time-limited after lift-off), as the published figures are.
 | Fuel flow at Mach 0.85, FL450, mid weight<br><small>83 % of the maximum-cruise rating (14.5 kN per engine)</small> | about 2,600-3,400 lb/h (class figures) | 1,456 kg/h | — | 998–1,724 kg/h | within | published long-range cruise burn of the class |
 | Vref (1.23 Vs1g, landing flap) at 27.5 t<br><small>sea level ISA; trimmed CLmax, flaps 39; the square-root-of-weight law, not an independent published point</small> | about 103 KIAS (published 121 kt at MLW scaled by sqrt(W)) | 102 KIAS | — | 100–110 KIAS | within | derived: brokers' MLW Vref (about 121 kt at 37.9 t) x sqrt(27.5 / 37.9) = 103 KIAS; +-5 kt |
 | Vref (1.23 Vs1g, landing flap) at the maximum landing weight, 37.9 t<br><small>sea level ISA; trimmed CLmax, flaps 39</small> | 110-125 KIAS (representative; published values 110-121 kt) | 121 KIAS | — | 110–125 KIAS | within | representative, estimated (G650ER class) |
-| Landing distance from 50 ft, maximum landing weight (37.9 t)<br><small>Vref 121 KIAS (121 at 50 ft), touchdown 447 m past the 50 ft point at 483 fpm; full wheel braking (1 s to the pedals, 1 s ramp), ground spoilers, no reverse credit, dry runway</small> | 3,000 ft (914 m), SL, ISA, MLW | 831 m | -9.0 % | ±15 % | within | Gulfstream G650ER specification sheet (landing distance, SL, ISA, MLW); brokers quote 2,450-3,000 ft |
+| Landing distance from 50 ft, maximum landing weight (37.9 t)<br><small>Vref 121 KIAS (121 at 50 ft), touchdown 476 m past the 50 ft point at 373 fpm; full wheel braking (1 s to the pedals, 1 s ramp), ground spoilers, no reverse credit, dry runway</small> | 3,000 ft (914 m), SL, ISA, MLW | 881 m | -3.6 % | ±15 % | within | Gulfstream G650ER specification sheet (landing distance, SL, ISA, MLW); brokers quote 2,450-3,000 ft |
 <!-- validation:end -->
 
 <!-- validation:begin summary aircraft=top_g -->
@@ -118,6 +118,12 @@ air distance by 6 m. The cause underneath was the method, which put the
 brakes at full in the first instant on the ground. They now come on as in
 the 172's landing row: 1 s to the pedals, then a 1 s ramp to full. The
 reference and band are unchanged.
+
+**Landing distance: 881 m (−3.6 %), the softer autoland flare.** The
+approach pilot's radio-altimeter flare now touches down at about 120–200
+fpm instead of 300–450 (blind-landings.md): here at 373 fpm, 476 m past the
+50 ft point (was 447 m at 483 fpm), so the air distance grew by 29 m and the
+row by 50 m. Reference and band unchanged.
 
 ## Behavioural checks
 
