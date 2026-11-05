@@ -62,12 +62,15 @@ std::vector<Real> tableKey(const PropellerDef& d) {
         k.insert(k.end(), t->xs().begin(), t->xs().end());
         k.insert(k.end(), t->ys().begin(), t->ys().end());
     }
+    if (d.variablePitch) k.insert(k.end(), {1.0, d.reverseBladeAngle, d.featherBladeAngle});
     return k;
 }
 
 struct PropTables {
     std::vector<Real> key;
     Table2D cT, cQ;
+    std::vector<Real> angles;
+    std::vector<Table2D> vcT, vcQ;
 };
 
 Real bestPowerPhi(const Table1D& t) {
@@ -82,7 +85,7 @@ Real bestPowerPhi(const Table1D& t) {
 // ---------------------------------------------------------------------------
 
 void Propeller::bem(const PropellerDef& def, Real v, Real omega, Real rho, Real& thrust, Real& torque,
-                    Real speedOfSound) {
+                    Real speedOfSound, Real pitchOffset) {
     const Real R = 0.5 * def.diameter;
     const Real r0 = def.hubRadiusFraction * R;
     const int n = std::max(def.bemElements, 4);
@@ -92,7 +95,7 @@ void Propeller::bem(const PropellerDef& def, Real v, Real omega, Real rho, Real&
     for (int i = 0; i < n; ++i) {
         const Real r = r0 + (i + 0.5) * dr;
         const Real chord = def.chordVsRadius.empty() ? 0.1 * R : def.chordVsRadius(r / R);
-        const Real theta = std::atan2(def.pitch, kTwoPi * r);
+        const Real theta = std::atan2(def.pitch, kTwoPi * r) + pitchOffset;
 
         Real tipLoss = 1;
         // wt: far-wake swirl velocity; the disk sees ut = Omega r - wt / 2.
@@ -239,8 +242,17 @@ Propeller::Propeller(const PropellerDef& def) : def_(def) {
         if (t.key == key) {
             cT_ = t.cT;
             cQ_ = t.cQ;
+            angles_ = t.angles;
+            vcT_ = t.vcT;
+            vcQ_ = t.vcQ;
             return;
         }
+    if (def_.variablePitch) {
+        buildVariablePitch();
+        if (cache.size() >= 8) cache.erase(cache.begin());
+        cache.push_back({key, cT_, cQ_, angles_, vcT_, vcQ_});
+        return;
+    }
     // Tables over advance angle beta = atan2(V, 0.7 Omega R), normalised by
     // 0.5 rho W^2 A (thrust) and 0.5 rho W^2 A R (torque).
     const Real R = radius(), A = discArea();
@@ -269,7 +281,81 @@ Propeller::Propeller(const PropellerDef& def) : def_(def) {
     cT_ = Table2D(b, mach, ct);
     cQ_ = Table2D(std::move(b), std::move(mach), cq);
     if (cache.size() >= 8) cache.erase(cache.begin());
-    cache.push_back({key, cT_, cQ_});
+    cache.push_back({key, cT_, cQ_, {}, {}, {}});
+}
+
+void Propeller::buildVariablePitch() {
+    // One table pair per blade angle, every 5 deg from the reverse stop to
+    // feather (plus both stops), over advance angle every 2 deg and the Mach
+    // number of W: about 9,000 BEM solutions, solved once per definition.
+    // The twist comes from the geometric pitch; each slice turns the whole
+    // blade by its angle less the geometric blade angle at 0.75 R.
+    const Real R = radius(), A = discArea();
+    const Real aRef = 340.294;
+    const Real deg = kPi / 180;
+    const Real lo = std::min(def_.reverseBladeAngle, def_.fineBladeAngle);
+    const Real hi = std::max(def_.featherBladeAngle, def_.fineBladeAngle);
+    angles_.clear();
+    angles_.push_back(lo);
+    for (Real a = std::ceil(lo / (5 * deg) + 1e-6) * 5 * deg; a < hi - 1e-6; a += 5 * deg) angles_.push_back(a);
+    angles_.push_back(hi);
+    std::vector<Real> b, mach;
+    for (Real d = -20; d <= 90.0001; d += 2.0) b.push_back(d * deg);
+    if (def_.thicknessVsRadius.empty()) mach = {0.0, 1.0};
+    else mach = {0.0, 0.3, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0};
+    const Real geometric = def_.geometricBladeAngle();
+    vcT_.clear();
+    vcQ_.clear();
+    for (Real angle : angles_) {
+        std::vector<Real> ct, cq;
+        for (Real beta : b) {
+            for (Real m : mach) {
+                const bool incompressible = def_.thicknessVsRadius.empty() || m <= 0;
+                const Real w = incompressible ? 50.0 : m * aRef;
+                const Real v = w * std::sin(beta);
+                const Real omega = std::max(w * std::cos(beta), 0.0) / (0.7 * R);
+                Real t, q;
+                bem(def_, v, omega, 1.0, t, q, incompressible ? 0.0 : aRef, angle - geometric);
+                const Real norm = 0.5 * 1.0 * w * w * A;
+                ct.push_back(t / norm);
+                cq.push_back(q / (norm * R));
+            }
+        }
+        vcT_.emplace_back(b, mach, ct);
+        vcQ_.emplace_back(b, mach, cq);
+    }
+    // The fixed tables are the flight-idle (fine) stop's, for code that asks
+    // for one table (diagnostics).
+    std::size_t k = 0;
+    while (k + 1 < angles_.size() && angles_[k] < def_.fineBladeAngle) ++k;
+    cT_ = vcT_[k];
+    cQ_ = vcQ_[k];
+}
+
+PropellerForces Propeller::evaluate(Real axialSpeed, Real omega, Real rho, Real speedOfSound, Real bladeAngle) const {
+    if (!def_.variablePitch || angles_.size() < 2) return evaluate(axialSpeed, omega, rho, speedOfSound);
+    PropellerForces f;
+    const Real R = radius();
+    const Real ut = 0.7 * std::max(omega, 0.0) * R;
+    const Real w2 = axialSpeed * axialSpeed + ut * ut;
+    if (w2 < 1e-10) return f;
+    const Real beta = std::atan2(axialSpeed, ut);
+    const Real q = 0.5 * rho * w2 * discArea();
+    const Real mach = std::sqrt(w2) / std::max(speedOfSound, 1.0);
+    // Blade-angle slices bracketing the angle (clamped to the stops).
+    const Real a = clamp(bladeAngle, angles_.front(), angles_.back());
+    std::size_t k = 0;
+    while (k + 2 < angles_.size() && a > angles_[k + 1]) ++k;
+    const Real u = (a - angles_[k]) / std::max(angles_[k + 1] - angles_[k], 1e-9);
+    const Real ct = (1 - u) * vcT_[k](beta, mach) + u * vcT_[k + 1](beta, mach);
+    const Real cq = (1 - u) * vcQ_[k](beta, mach) + u * vcQ_[k + 1](beta, mach);
+    f.thrust = ct * q;
+    f.torque = cq * q * R;
+    const Real n = omega / kTwoPi;
+    f.advanceRatio = n > 1e-6 ? axialSpeed / (n * def_.diameter) : 1e9;
+    const Real shaft = f.torque * omega;
+    f.efficiency = shaft > 1e-6 ? f.thrust * axialSpeed / shaft : 0;
+    return f;
 }
 
 PropellerForces Propeller::evaluate(Real axialSpeed, Real omega, Real rho, Real speedOfSound) const {
@@ -672,6 +758,213 @@ void TurbofanEngine::setSteady(TurbofanState& s, const TurbofanInputs& in) const
     s.n1 = commandedN1(in);
     s.n2 = n2FromN1(s.n1);
     evaluate(s, in);
+}
+
+// ------------------------------------------------------------ turboprop ----
+
+TurbopropEngine::TurbopropEngine(const TurbopropDef& def) : def_(def) {
+    // Willans line (fuel flow linear in power at a given corrected speed
+    // line, corrected): through the low-idle flow and the published SFC at
+    // the flat rating, both at sea level, static, ISA.
+    const Real pIdle = gasPower(def_.ngLowIdle, 1, 1);
+    const Real pRated = def_.ratedPower * (1 + def_.frictionTorqueFraction);
+    const Real fRated = def_.sfcRated * def_.ratedPower;
+    willansB_ = (fRated - def_.idleFuelFlow) / std::max(pRated - pIdle, 1.0);
+    willansA_ = def_.idleFuelFlow - willansB_ * pIdle;
+}
+
+void TurbopropEngine::inletRatios(Real pressure, Real temperature, Real mach, Real& delta0, Real& theta0) {
+    // Ram rise at the compressor face: total temperature in full, total
+    // pressure with an inlet recovery of 0.95 on the ram rise (a turboprop's
+    // curved plenum intake; Estimated).
+    const Real k = 1 + 0.2 * sq(std::max(mach, 0.0));
+    theta0 = std::max(temperature, 150.0) / isa::kSeaLevelTemperature * k;
+    delta0 = std::max(pressure, 1.0) / isa::kSeaLevelPressure * (1 + 0.95 * (std::pow(k, 3.5) - 1));
+}
+
+Real TurbopropEngine::gasPower(Real ng, Real delta0, Real theta0) const {
+    const Real nc = std::max(ng, 0.0) / std::sqrt(theta0);
+    const Real x = std::max((nc - def_.ngZeroPower) / (1 - def_.ngZeroPower), 0.0);
+    return def_.thermodynamicPower * delta0 * std::sqrt(theta0) * std::pow(x, def_.gasPowerExponent);
+}
+
+Real TurbopropEngine::ngForGasPower(Real power, Real delta0, Real theta0) const {
+    const Real g = std::max(power, 0.0) / (def_.thermodynamicPower * delta0 * std::sqrt(theta0));
+    const Real nc = def_.ngZeroPower + (1 - def_.ngZeroPower) * std::pow(g, 1 / def_.gasPowerExponent);
+    return nc * std::sqrt(theta0);
+}
+
+Real TurbopropEngine::itt(Real ng, Real theta0) const {
+    const Real nc = std::max(ng, 0.0) / std::sqrt(theta0);
+    const Real x = std::max((nc - def_.ngLowIdle) / (1 - def_.ngLowIdle), 0.0);
+    return std::pow(theta0, def_.ittThetaExponent) * (def_.ittIdle + (def_.ittLimit - def_.ittIdle) * std::pow(x, def_.ittExponent));
+}
+
+Real TurbopropEngine::ngForItt(Real ittK, Real theta0) const {
+    const Real tc = ittK / std::pow(theta0, def_.ittThetaExponent);
+    const Real x = std::pow(std::max((tc - def_.ittIdle) / (def_.ittLimit - def_.ittIdle), 0.0), 1 / def_.ittExponent);
+    return (def_.ngLowIdle + (1 - def_.ngLowIdle) * x) * std::sqrt(theta0);
+}
+
+Real TurbopropEngine::turbineTorque(Real power, Real omega) const {
+    // Free power turbine at constant gas conditions: torque falls linearly
+    // with its speed, from the stall torque (r x design) at rest through the
+    // design torque at rated Np, so the power peaks at rated Np
+    // (P = P_gas x (r x - (r - 1) x^2), r = 2). Gearbox and turbine drag ~ Np.
+    const Real wr = def_.ratedOmega();
+    const Real x = std::max(omega, 0.0) / wr;
+    const Real r = std::max(def_.turbineStallTorqueRatio, 1.0);
+    const Real friction = def_.frictionTorqueFraction * def_.ratedTorque() * x;
+    return power / wr * (r - (r - 1) * x) - friction;
+}
+
+Real TurbopropEngine::availablePower(Real pressure, Real temperature, Real mach) const {
+    Real d0, t0;
+    inletRatios(pressure, temperature, mach, d0, t0);
+    const Real ng = std::min(def_.ngMax, ngForItt(def_.ittLimit, t0));
+    const Real q = std::min(turbineTorque(gasPower(ng, d0, t0), def_.ratedOmega()), def_.torqueLimit * def_.ratedTorque());
+    return q * def_.ratedOmega();
+}
+
+Real TurbopropEngine::fuelFlow(Real ng, Real delta0, Real theta0) const {
+    const Real corrected = gasPower(ng / std::sqrt(theta0), 1, 1);
+    const Real flow = willansA_ + willansB_ * corrected;
+    return delta0 * std::sqrt(theta0) * std::max(flow, 0.3 * def_.idleFuelFlow);
+}
+
+Real TurbopropEngine::commandedNg(const TurbopropInputs& in, Real omega) const {
+    const Real idle = idleNg(in.condition);
+    Real d0, t0;
+    inletRatios(in.ambientPressure, in.ambientTemperature, in.mach, d0, t0);
+    const Real wr = def_.ratedOmega();
+    if (in.reverse > def_.betaTravel) {
+        // Reverse: Ng rises with the lever; the power-turbine governor
+        // section of the propeller governor trims fuel to hold Np below the
+        // reverse limit.
+        const Real u = (in.reverse - def_.betaTravel) / std::max(1 - def_.betaTravel, 1e-6);
+        const Real over = omega / wr - def_.reverseNpFraction * in.npSelected;
+        return std::max(idle, idle + (def_.reverseNg - idle) * clamp(u, 0.0, 1.0) - 5 * std::max(over, 0.0));
+    }
+    // Ng governor: the lever schedules Ng from idle to the Ng limit; the
+    // torque limiter and the ITT limiter take the lower of the three.
+    const Real lever = idle + (def_.ngMax - idle) * clamp(in.powerLever, 0.0, 1.0);
+    const Real r = std::max(def_.turbineStallTorqueRatio, 1.0);
+    const Real x = clamp(omega / wr, 0.5, 1.2);
+    const Real torquePower = (def_.torqueLimit * def_.ratedTorque() + def_.frictionTorqueFraction * def_.ratedTorque() * x) *
+                             wr / (r - (r - 1) * x);
+    const Real ngTorque = ngForGasPower(torquePower, d0, t0);
+    const Real ngItt = ngForItt(def_.ittLimit, t0);
+    return std::max(idle, std::min({lever, def_.ngMax, ngTorque, ngItt}));
+}
+
+void TurbopropEngine::evaluate(TurbopropState& s, const TurbopropInputs& in, Real omega) const {
+    Real d0, t0;
+    inletRatios(in.ambientPressure, in.ambientTemperature, in.mach, d0, t0);
+    s.np = std::max(omega, 0.0) / def_.ratedOmega();
+    s.npSet = in.npSelected;
+    if (s.lit) {
+        s.gasPower = gasPower(s.ng, d0, t0);
+        s.fuelFlow = fuelFlow(s.ng, d0, t0);
+        if (!s.running) s.fuelFlow *= std::min(1.0, s.ng / idleNg(in.condition));
+        s.itt = itt(s.ng, t0);
+        // Light-off peak through the start (the PT6's ~700-800 degC start ITT).
+        if (s.starting) s.itt += 250 * std::max(0.0, 1 - std::abs(s.ng - 0.3) / 0.25);
+    } else {
+        s.gasPower = 0;
+        s.fuelFlow = 0;
+    }
+    s.torque = turbineTorque(s.gasPower, omega);
+    s.torqueFraction = s.torque / def_.ratedTorque();
+    s.shaftPower = s.torque * std::max(omega, 0.0);
+    s.oilPressure = s.ng < 0.05 ? 0.0
+                                : def_.oilPressureIdle * std::min(1.0, s.ng / def_.ngLowIdle) +
+                                      (def_.oilPressureMax - def_.oilPressureIdle) *
+                                          clamp((s.ng - def_.ngLowIdle) / (1 - def_.ngLowIdle), 0.0, 1.0);
+}
+
+void TurbopropEngine::step(TurbopropState& s, const TurbopropInputs& in, Real omega, Real dt) const {
+    const bool fuel = in.condition != ConditionLever::CutOff && in.fuelAtEngine;
+    if (s.lit && !fuel) {
+        s.lit = s.running = s.starting = false;  // cut off, or flamed out
+    }
+    // Light-off: fuel with the gas generator turning at light-off speed
+    // (the starter cranking, or still spooling down from a run).
+    if (!s.lit && fuel && s.ng >= def_.lightOffNg && (in.starter || s.ng >= def_.selfSustainingNg)) s.lit = true;
+    const Real idle = idleNg(in.condition);
+    const Real crankRate = def_.lightOffNg / (0.3 * def_.startTime);
+    if (s.lit && s.running) {
+        const Real cmd = commandedNg(in, omega);
+        const Real tau = (cmd > s.ng ? def_.accelerationTime : def_.decelerationTime) / 3;
+        s.ng += (cmd - s.ng) * std::min(dt / tau, 1.0);
+        if (s.ng < idle - 0.03) s.running = false;  // cannot happen with fuel; kept for safety
+    } else if (s.lit) {
+        // Accelerating to idle on fuel; below self-sustaining speed only with the starter.
+        if (in.starter || s.ng >= def_.selfSustainingNg) {
+            s.ng = std::min(s.ng + (idle - def_.lightOffNg) / (0.7 * def_.startTime) * dt, idle);
+        } else {
+            s.ng += (0.0 - s.ng) * std::min(dt / 10.0, 1.0);  // hung: runs down
+            if (s.ng < def_.lightOffNg * 0.8) s.lit = false;
+        }
+        if (s.ng >= idle - 1e-6) s.running = true;
+    } else if (in.starter) {
+        s.ng = s.ng < def_.starterNg ? std::min(s.ng + crankRate * dt, def_.starterNg)
+                                     : s.ng + (def_.starterNg - s.ng) * std::min(dt / 6.0, 1.0);
+    } else {
+        // Spooling down toward the small windmilling speed of the ram air.
+        const Real windmill = std::min(0.12, 0.2 * std::max(in.mach, 0.0));
+        s.ng += (windmill - s.ng) * std::min(dt / 8.0, 1.0);
+    }
+    s.starting = s.lit && !s.running;
+    evaluate(s, in, omega);
+    if (!s.lit) s.itt += (in.ambientTemperature - s.itt) * std::min(dt / 15.0, 1.0);
+    const Real powerFraction = clamp(s.shaftPower / def_.ratedPower, 0.0, 1.2);
+    const Real oilTarget = in.ambientTemperature + (s.lit ? def_.oilTemperatureRise * (0.5 + 0.5 * powerFraction) : 0.0);
+    s.oilTemperature += (oilTarget - s.oilTemperature) * std::min(dt / 240.0, 1.0);
+}
+
+void TurbopropEngine::setSteady(TurbopropState& s, const TurbopropInputs& in, Real omega) const {
+    s.lit = s.running = true;
+    s.starting = false;
+    s.ng = commandedNg(in, omega);
+    evaluate(s, in, omega);
+    const Real powerFraction = clamp(s.shaftPower / def_.ratedPower, 0.0, 1.2);
+    s.oilTemperature = in.ambientTemperature + def_.oilTemperatureRise * (0.5 + 0.5 * powerFraction);
+}
+
+Real TurbopropEngine::betaBladeAngle(Real reverse) const {
+    const PropellerDef& p = def_.propeller;
+    const Real u = clamp(reverse / std::max(def_.betaTravel, 1e-6), 0.0, 1.0);
+    return p.fineBladeAngle + (p.reverseBladeAngle - p.fineBladeAngle) * u;
+}
+
+void TurbopropEngine::stepPropeller(TurbopropState& s, bool feather, bool betaActive, Real betaAngle, Real omega,
+                                    Real omegaDot, Real dt) const {
+    const PropellerDef& p = def_.propeller;
+    const Real wr = def_.ratedOmega();
+    // Governor oil: engine oil (the gas generator's pump, through the
+    // governor's boost pump) or the governor pump on the reduction gearbox
+    // turning with the propeller; without either the feathering spring and
+    // the blade counterweights take the blades to feather (a shut-down on
+    // the ground). A windmilling propeller in flight keeps its oil: it does
+    // not feather by itself. On a start the blades come out of feather as
+    // the engine's oil pressure builds.
+    const bool oil = omega >= def_.governorOilNp * wr || s.oilPressure >= 0.5 * def_.oilPressureIdle;
+    s.beta = false;
+    if (feather || !oil) {
+        s.bladeAngle = approach(s.bladeAngle, p.featherBladeAngle, def_.featherRate * dt);
+    } else if (betaActive) {
+        s.beta = true;
+        s.bladeAngle = approach(s.bladeAngle, betaAngle, def_.pitchRate * dt);
+    } else {
+        // Constant speed: integral action on the speed error with a lead
+        // (the flyweights' pilot valve meters oil at a rate ~ the error).
+        const Real set = std::max(s.npSet, 0.3) * wr;
+        const Real rate = def_.governorGain * ((omega - set) + def_.governorLead * omegaDot) / set;
+        const Real lo = std::min(p.fineBladeAngle, s.bladeAngle);  // out of beta: back up to the stop
+        s.bladeAngle = clamp(s.bladeAngle + clamp(rate, -def_.pitchRate, def_.pitchRate) * dt, lo, p.featherBladeAngle);
+        if (s.bladeAngle < p.fineBladeAngle) s.bladeAngle = approach(s.bladeAngle, p.fineBladeAngle, def_.pitchRate * dt);
+    }
+    s.feathered = s.bladeAngle > p.featherBladeAngle - 0.0175;
 }
 
 }  // namespace avd

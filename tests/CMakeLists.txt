@@ -24,6 +24,7 @@ set(AVD_TEST_SOURCES
   test_traffic.cpp
   test_autopilot.cpp
   test_taws.cpp
+  test_turboprop.cpp
 )
 add_executable(avd_tests ${AVD_TEST_SOURCES})
 target_link_libraries(avd_tests PRIVATE avd_scenarios)

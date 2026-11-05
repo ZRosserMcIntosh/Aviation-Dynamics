@@ -10,7 +10,7 @@ data/aircraft/*.json ──► aircraft_loader ──► AircraftDefinition (val
    Aircraft (avd/aircraft.hpp)                                    InstrumentPanel (avd/instruments.hpp)
    ├─ MassModel          mass, CG, inertia from stations + fuel     sensors ─► instrument dynamics ─► CockpitState
    ├─ AeroModel          strips, fuselage, drag items, slipstream          ▲
-   ├─ Propeller + PistonEngine                                             │ SensorInputs (truth)
+   ├─ Propeller + PistonEngine / TurbopropEngine, TurbofanEngine                                             │ SensorInputs (truth)
    ├─ FuelSystem / ElectricalSystem / VacuumSystem                         │
    ├─ Gear + contacts    over a GroundQuery                                │
    └─ RK4 integrator ────────────────── postStep ──────────────────────────┘
@@ -83,6 +83,15 @@ costs about 30 µs natively (`avdemo bench`).
   (calibrated to rated power) and friction mean effective pressure. The model
   also covers magnetos and the starter, lumped EGT/CHT/oil temperatures, and
   oil pressure from a pump, relief valve and temperature-dependent viscosity.
+- **Turboprop.** A free-turbine engine (`TurbopropEngine`): the gas
+  generator's speed Ng lags the fuel control's target (power lever between
+  the condition lever's idle and the Ng limit, capped by torque and ITT
+  limiters); its power, ITT and fuel flow follow corrected parameters at the
+  compressor face. The power turbine's torque (falling linearly with its
+  speed) drives the propeller shaft, an integrated state; the governor turns
+  the blades (a variable-pitch BEM table per blade angle) to hold the
+  selected Np, feathers them on command, on autofeather or without oil, and
+  hands them to the power lever in ground beta and reverse.
 - **Ground.** Struts are springs with damping and a preload. Tyres use a
   relaxation-length bristle model in both directions with one friction
   ellipse on the resultant: past the peak the tyre slides at
@@ -153,7 +162,11 @@ An aircraft is one JSON file with these sections:
 - metadata, `sources` and `provenance`;
 - `mass` (empty mass, CG, inertia and stations), `reference`;
 - `surfaces`, `fuselages`, `drag_items`;
-- `engines` (engine, propeller and oil system);
+- `engines` (piston engine, fixed-pitch propeller and oil system), or
+  `turbofans`, or `turboprops` (gas generator, power turbine, `governor`,
+  `reverse`, `autofeather` and a `"constant_speed"` propeller with its
+  reverse, flight-idle and feather blade angles; the King Air 350 file is
+  the example);
 - `fuel`, `electrical` (with optional `generators`), `hydraulics` (optional), `vacuum`;
 - `gear`, `contacts`, `controls`;
 - `pitot_static`, `stall_warning`, `panel`, `limits`.

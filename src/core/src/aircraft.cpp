@@ -59,6 +59,16 @@ int turbofanIndexFromId(const std::string& id) {
     return n - 1;
 }
 
+// "engine<N><suffix>" -> N-1, or -1 (turboprop condition lever, starter, feather).
+int engineSuffixIndex(const std::string& id, const char* suffix) {
+    if (id.rfind("engine", 0) != 0) return -1;
+    int n = 0;
+    std::size_t i = 6;
+    for (; i < id.size() && id[i] >= '0' && id[i] <= '9'; ++i) n = n * 10 + (id[i] - '0');
+    if (i == 6 || id.compare(i, std::string::npos, suffix) != 0) return -1;
+    return n - 1;
+}
+
 // "electrical.generator<N>" -> N-1, or -1.
 int generatorIndexFromId(const std::string& id) {
     const std::string prefix = "electrical.generator";
@@ -77,6 +87,10 @@ Real turbofanPumpOutput(const TurbofanState& s, const TurbofanDef& d) {
     return clamp((s.n2 - 0.4 * d.idleN2) / (0.6 * d.idleN2), 0.0, 1.0);
 }
 Real pistonPumpOutput(Real rpm) { return clamp((rpm - 200.0) / 400.0, 0.0, 1.0); }
+Real turbopropPumpOutput(const TurbopropState& s, const TurbopropDef& d) {
+    return clamp((s.ng - 0.4 * d.ngLowIdle) / (0.6 * d.ngLowIdle), 0.0, 1.0);
+}
+Real spinSign(const TurbopropDef& e) { return e.clockwiseFromBehind ? 1.0 : -1.0; }
 
 }  // namespace
 
@@ -96,6 +110,11 @@ Aircraft::Aircraft(const AircraftDefinition& def, const LocalFrame& frame)
         props_.emplace_back(e.propeller);
     }
     for (const TurbofanDef& e : def_.turbofans) turbofans_.emplace_back(e);
+    for (const TurbopropDef& e : def_.turboprops) {
+        turboprops_.emplace_back(e);
+        props_.emplace_back(e.propeller);
+    }
+    autofeatherSwitch_ = !def_.turboprops.empty() && def_.turboprops[0].autofeather;
     stationMass_.resize(def_.stations.size());
     for (std::size_t i = 0; i < def_.stations.size(); ++i) stationMass_[i] = def_.stations[i].initial;
     magnetos_.fill(Magnetos::Off);
@@ -274,6 +293,14 @@ void Aircraft::rebuildCockpit() {
         cockpit_.push_back({n + ".fuel", "Engine " + std::to_string(i + 1) + " Fuel Control Switch (RUN starts the engine)",
                             {"CUTOFF", "RUN"}, 0});
     }
+    for (std::size_t i = 0; i < def_.turboprops.size(); ++i) {
+        const std::string n = "engine" + std::to_string(i + 1), k = std::to_string(i + 1);
+        cockpit_.push_back({n + ".condition", "Engine " + k + " Condition Lever", {"CUT-OFF", "LOW IDLE", "HIGH IDLE"}, 0});
+        cockpit_.push_back({n + ".starter", "Engine " + k + " Ignition and Engine Start (off by itself at idle)", {"OFF", "ON"}, 0});
+        cockpit_.push_back({n + ".feather", "Engine " + k + " Propeller Lever Feather Detent", {"RUN", "FEATHER"}, 0});
+    }
+    if (!def_.turboprops.empty() && def_.turboprops[0].autofeather)
+        cockpit_.push_back({"propeller.autofeather", "Autofeather Switch", {"OFF", "ARM"}, 1});
     if (!def_.fuel.selector.empty()) {
         CockpitControl c{"fuel.selector", "Fuel Selector Valve", {}, 0};
         for (const auto& p : def_.fuel.selector) c.positions.push_back(p.name);
@@ -336,6 +363,10 @@ int Aircraft::cockpitControl(const std::string& id) const {
             if (id == "hydraulics." + def_.hydraulics.systems[k].name + ".pump") return hydPumpOn_[k] ? 1 : 0;
     if (id == "speedbrake.lever") return def_.controls.speedbrake.present ? speedbrakeDetent_ : -1;
     if (const int t = turbofanIndexFromId(id); t >= 0) return t < turbofanCount() ? (turboFuel_[t] ? 1 : 0) : -1;
+    if (const int t = engineSuffixIndex(id, ".condition"); t >= 0) return t < turbopropCount() ? static_cast<int>(condition_[t]) : -1;
+    if (const int t = engineSuffixIndex(id, ".starter"); t >= 0) return t < turbopropCount() ? (tpStarter_[t] ? 1 : 0) : -1;
+    if (const int t = engineSuffixIndex(id, ".feather"); t >= 0) return t < turbopropCount() ? (tpFeather_[t] ? 1 : 0) : -1;
+    if (id == "propeller.autofeather") return !def_.turboprops.empty() && def_.turboprops[0].autofeather ? (autofeatherSwitch_ ? 1 : 0) : -1;
     if (const int e = engineIndexFromId(id); e >= 0 || id.rfind("engine", 0) == 0) {
         if (e < 0 || e >= engineCount()) return -1;
         const Magnetos m = magnetos_[e];
@@ -372,6 +403,16 @@ bool Aircraft::setCockpitControl(const std::string& id, int position) {
     }
     else if (id == "speedbrake.lever") speedbrakeDetent_ = position;
     else if (turbofanIndexFromId(id) >= 0) turboFuel_[turbofanIndexFromId(id)] = position == 1;
+    else if (engineSuffixIndex(id, ".condition") >= 0) condition_[engineSuffixIndex(id, ".condition")] = static_cast<ConditionLever>(position);
+    else if (engineSuffixIndex(id, ".starter") >= 0) tpStarter_[engineSuffixIndex(id, ".starter")] = position == 1;
+    else if (engineSuffixIndex(id, ".feather") >= 0) tpFeather_[engineSuffixIndex(id, ".feather")] = position == 1;
+    else if (id == "propeller.autofeather") {
+        autofeatherSwitch_ = position == 1;
+        if (!autofeatherSwitch_) {
+            autofeatherArmed_ = false;
+            autofeathered_ = {};
+        }
+    }
     else if (engineIndexFromId(id) >= 0) magnetos_[engineIndexFromId(id)] = static_cast<Magnetos>(position);
     else if (id.rfind("electrical.load.", 0) == 0) electrical_.setLoadSwitch(electrical_.loadIndex(id.substr(16)), position == 1);
     cockpit_[idx].position = position;
@@ -404,6 +445,7 @@ void Aircraft::setFlightState(const RigidBodyState& s) {
     antiSkid_.fill(1.0);
     pusher_ = false;
     for (int i = 0; i < engineCount(); ++i) s_.shaftOmega[i] = engineState_[i].omega;
+    for (int i = 0; i < turbopropCount(); ++i) s_.shaftOmega[i] = tpState_[i].np * def_.turboprops[i].ratedOmega();
     faulted_ = false;
     updateTelemetry();
 }
@@ -426,6 +468,18 @@ void Aircraft::setColdAndDark() {
         turboState_[i] = {};
         runningWas_[i] = false;
     }
+    for (int i = 0; i < turbopropCount(); ++i) {
+        const TurbopropDef& d = def_.turboprops[i];
+        condition_[i] = ConditionLever::CutOff;
+        tpStarter_[i] = tpFeather_[i] = autofeathered_[i] = false;
+        tpState_[i] = {};
+        tpState_[i].bladeAngle = d.propeller.featherBladeAngle;  // shut down on the ground: feathered
+        tpState_[i].feathered = true;
+        tpState_[i].itt = tpState_[i].oilTemperature = isa::kSeaLevelTemperature;
+        s_.shaftOmega[i] = 0;
+        runningWas_[i] = false;
+    }
+    autofeatherArmed_ = false;
     gearDown_ = true;
     gearPos_ = 1;
     speedbrakeDetent_ = 0;
@@ -480,13 +534,33 @@ void Aircraft::setEngineRunning(bool running, Real rpm) {
         turboState_[i].itt = def_.turbofans[i].ittIdle;
         runningWas_[i] = true;
     }
+    for (int i = 0; i < turbopropCount(); ++i) {
+        // Low idle, propeller levers forward, the governor settled: on the
+        // ground the blades at the flight-idle stop with Np where the idle
+        // gas power balances them; airborne, the trim or the first steps settle it.
+        condition_[i] = ConditionLever::LowIdle;
+        tpStarter_[i] = tpFeather_[i] = autofeathered_[i] = false;
+        TurbopropInputs ti;
+        ti.condition = ConditionLever::LowIdle;
+        ti.fuelAtEngine = true;
+        ti.ambientPressure = ctx_.air.state.pressure > 0 ? ctx_.air.state.pressure : isa::kSeaLevelPressure;
+        ti.ambientTemperature = ctx_.air.state.temperature > 0 ? ctx_.air.state.temperature : isa::kSeaLevelTemperature;
+        const Real omega = def_.turboprops[i].ratedOmega();
+        turboprops_[i].setSteady(tpState_[i], ti, omega);
+        tpState_[i].npSet = 1;
+        AirSample air = ctx_.air;
+        if (!(air.state.density > 0)) air.state = StandardAtmosphere().at(0);
+        settleTurboprop(i, 0, air);
+        tpState_[i].itt = turboprops_[i].itt(tpState_[i].ng, ti.ambientTemperature / isa::kSeaLevelTemperature);
+        runningWas_[i] = true;
+    }
     vacuum_.step(0, rpm);
     // Engine-driven hydraulic pumps up to pressure.
     for (std::size_t k = 0; k < def_.hydraulics.systems.size(); ++k)
         hydPressure_[k] = def_.hydraulics.systems[k].engines.empty() ? 0.0 : 1.0;
     // Establish bus voltage (battery, then the generators' fields) for the spawn.
     ElectricalInputs ei;
-    ei.alternatorRpm = turbofanCount() > 0 ? 0.0 : rpm;
+    ei.alternatorRpm = turbofanCount() + turbopropCount() > 0 ? 0.0 : rpm;
     ei.generatorDrive.fill(2.0);
     electrical_.step(0, ei);
     electrical_.step(0, ei);
@@ -696,7 +770,80 @@ void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, con
             turbofans_[i].setSteady(turboState_[i], e);
         }
     }
+    // Turboprops: power levers, condition levers, the propeller levers'
+    // governed speed; beta and reverse only with the power lever at idle and
+    // the main wheels on the ground (the flight-idle gate and the squat switch).
+    bool mainsDown = false;
+    for (std::size_t g = 0; g < def_.gear.size(); ++g)
+        mainsDown = mainsDown || (def_.gear[g].attach.x < mass_.cg.x && gearTel_[g].contact);
+    for (int i = 0; i < turbopropCount(); ++i) {
+        TurbopropInputs& e = c.tpIn[i];
+        lever_[i] = clamp(in.engineThrottle(i), 0.0, 1.0);
+        e.powerLever = lever_[i];
+        e.reverse = mainsDown && lever_[i] < 0.05 && in.reverse > 0.02 ? clamp(in.reverse, 0.0, 1.0) : 0.0;
+        e.condition = condition_[i];
+        e.fuelAtEngine = fuel_.fuelAtEngine();
+        e.npSelected = selectedPropOmega(i, in) / def_.turboprops[i].ratedOmega();
+        e.ambientPressure = c.air.state.pressure;
+        e.ambientTemperature = c.air.state.temperature;
+        e.mach = airspeed / c.air.state.speedOfSound;
+        e.starter = false;
+        if (turbofanSteady_) {
+            e.condition = condition_[i] == ConditionLever::CutOff ? ConditionLever::LowIdle : condition_[i];
+            e.fuelAtEngine = true;
+            const Real omega = selectedPropOmega(i, in);
+            turboprops_[i].setSteady(tpState_[i], e, omega);
+            tpState_[i].npSet = e.npSelected;
+            const Vec3 vAir = s_.body.attitude.inverseRotate(s_.body.velocity - c.air.wind);
+            settleTurboprop(i, dot(vAir, normalized(def_.turboprops[i].thrustAxis)), c.air);
+        }
+    }
     if (dt == 0 && turbofanSteady_ && def_.hydraulics.present) settleHydraulics();
+}
+
+Real Aircraft::selectedPropOmega(int i, const PilotInput& in) const {
+    const TurbopropDef& d = def_.turboprops[static_cast<std::size_t>(i)];
+    const Real rpm = d.minGovernedRpm + (d.ratedPropRpm - d.minGovernedRpm) * clamp(in.propLever, 0.0, 1.0);
+    return rpm * kTwoPi / 60;
+}
+
+void Aircraft::settleTurboprop(int i, Real vAx, const AirSample& air) {
+    const TurbopropDef& d = def_.turboprops[static_cast<std::size_t>(i)];
+    const TurbopropEngine& eng = turboprops_[i];
+    TurbopropState& ts = tpState_[i];
+    const Propeller& prop = props_[static_cast<std::size_t>(i)];
+    const Real rho = air.state.density, a = air.state.speedOfSound;
+    const Real fine = d.propeller.fineBladeAngle, feather = d.propeller.featherBladeAngle;
+    auto net = [&](Real angle, Real omega) {
+        return eng.turbineTorque(ts.gasPower, omega) - prop.evaluate(vAx, omega, rho, a, angle).torque;
+    };
+    Real omega = std::max(ts.npSet, 0.3) * d.ratedOmega();
+    if (net(fine, omega) <= 0) {
+        // Underspeed at the flight-idle stop: Np settles where the idle power
+        // balances the fine-pitch propeller.
+        Real lo = 0.05 * d.ratedOmega(), hi = omega;
+        for (int it = 0; it < 50; ++it) {
+            const Real mid = 0.5 * (lo + hi);
+            (net(fine, mid) > 0 ? lo : hi) = mid;
+        }
+        omega = 0.5 * (lo + hi);
+        ts.bladeAngle = fine;
+    } else {
+        // The governor's blade angle: the propeller absorbs the turbine's torque.
+        Real lo = fine, hi = feather;
+        for (int it = 0; it < 50; ++it) {
+            const Real mid = 0.5 * (lo + hi);
+            (net(mid, omega) > 0 ? lo : hi) = mid;
+        }
+        ts.bladeAngle = 0.5 * (lo + hi);
+    }
+    ts.feathered = false;
+    ts.beta = false;
+    ts.np = omega / d.ratedOmega();
+    s_.shaftOmega[static_cast<std::size_t>(i)] = omega;
+    ts.torque = eng.turbineTorque(ts.gasPower, omega);
+    ts.torqueFraction = ts.torque / d.ratedTorque();
+    ts.shaftPower = ts.torque * omega;
 }
 
 // --------------------------------------------------------- derivatives ----
@@ -763,6 +910,55 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
         }
     }
 
+    // ---- Turboprops: power turbine on the propeller shaft (Ng and the blade
+    // angle from the step; the shaft speed is integrated here) ----
+    for (int i = 0; i < turbopropCount(); ++i) {
+        const TurbopropDef& ed = def_.turboprops[i];
+        const Real spin = spinSign(ed);
+        const TurbopropState& ts = tpState_[i];
+        const Real omega = s.shaftOmega[i];
+        const Real qTurbine = turboprops_[i].turbineTorque(ts.gasPower, omega);
+        const Vec3 r = ed.position - cg;
+        const Vec3 vDisc = vBody + cross(w, r) - (windBody + gradBody * r);
+        const Vec3 axis = normalized(ed.thrustAxis);
+        const Real vAx = dot(vDisc, axis);
+        const PropellerForces pf = props_[i].evaluate(vAx, omega, rho, c.air.state.speedOfSound, ts.bladeAngle);
+        const Vec3 thrust = axis * pf.thrust;
+        force += thrust;
+        moment += cross(r, thrust);
+        const Vec3 vIn = vDisc - axis * vAx;
+        const Real vMag = std::max(length(vDisc), 1.0);
+        const Vec3 offset = cross(axis, vIn) * (-spin * ed.pFactorGain * props_[i].radius() / vMag);
+        moment += cross(offset, thrust);
+        // The power turbine's torque reacts on the nacelle; the shaft carries
+        // the angular momentum (the gas generator's is small and ignored).
+        moment -= axis * (spin * qTurbine);
+        rotorH += axis * (spin * ed.inertia * omega);
+        Real accel = (qTurbine - pf.torque) / ed.inertia;
+        if (omega <= 0 && accel < 0) accel = 0;
+        d.shaftAccel[i] = accel;
+        SlipstreamState& ss = slip_[i];
+        const Real A = props_[i].discArea();
+        const Real v0 = std::max(vAx, 0.0);
+        ss.discCentre = ed.position;
+        ss.axis = axis;
+        ss.radius = props_[i].radius();
+        ss.clockwiseFromBehind = ed.clockwiseFromBehind;
+        ss.axialIncrement = pf.thrust > 0 ? std::sqrt(v0 * v0 + 2 * pf.thrust / (rho * A)) - v0 : 0.0;
+        const Real mdot = std::max(rho * A * (v0 + 0.5 * ss.axialIncrement), 1.0);
+        ss.swirlVelocity = ed.slipstreamSwirlFactor * std::max(pf.torque, 0.0) / (mdot * 0.7 * ss.radius);
+        if (record) {
+            TurbopropState& rs = tpState_[i];
+            rs.np = omega / ed.ratedOmega();
+            rs.torque = qTurbine;
+            rs.torqueFraction = qTurbine / ed.ratedTorque();
+            rs.shaftPower = qTurbine * std::max(omega, 0.0);
+            rs.thrust = pf.thrust;
+            rs.propTorque = pf.torque;
+            propState_[i] = pf;
+        }
+    }
+
     // ---- Turbofans: net thrust on the thrust line (spool speeds from the step) ----
     for (int i = 0; i < turbofanCount(); ++i) {
         const TurbofanDef& ed = def_.turbofans[i];
@@ -816,7 +1012,7 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
     ai.heightAboveGround = c.wingHeightAgl;
     ai.groundUpBody = c.groundUpBody;
     ai.slipstreams = slip_.data();
-    ai.slipstreamCount = engineCount();
+    ai.slipstreamCount = propellerCount();
     ai.downwashLagged = quasiSteadyDownwash_ ? nullptr : downwashLag_.data();
     aeroModel_->evaluate(ai, aeroOut_);
     force += aeroOut_.force;
@@ -1109,11 +1305,15 @@ void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, co
         const GeneratorDef& gd = electrical_.generator(k);
         Real drive = 0;
         auto pistonDrive = [&](int e) { return s_.shaftOmega[e] * 60 / kTwoPi / def_.engines[static_cast<std::size_t>(e)].alternatorMinRpm; };
+        // Turboprop starter-generators are on the gas generator: Ng against the cut-in.
         if (def_.electrical.generators.empty()) {
             if (engineCount() > 0) drive = pistonDrive(0);
             for (int i = 0; i < turbofanCount(); ++i) drive = std::max(drive, turboState_[i].n2 / gd.cutInN2);
+            for (int i = 0; i < turbopropCount(); ++i) drive = std::max(drive, tpState_[i].ng / gd.cutInN2);
         } else if (engineCount() > 0) {
             if (gd.engine < engineCount()) drive = pistonDrive(gd.engine);
+        } else if (turbopropCount() > 0) {
+            if (gd.engine < turbopropCount()) drive = tpState_[gd.engine].ng / gd.cutInN2;
         } else if (gd.engine < turbofanCount()) {
             drive = turboState_[gd.engine].n2 / gd.cutInN2;
         }
@@ -1122,6 +1322,8 @@ void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, co
     // Turbofan starter-generators crank while starting.
     for (int i = 0; i < turbofanCount(); ++i)
         if (turboState_[i].starting && turboState_[i].n2 < 0.45) starterCurrent += 250;
+    for (int i = 0; i < turbopropCount(); ++i)
+        if (tpStarter_[i]) starterCurrent += def_.turboprops[i].starterCurrent;
     ei.starterCurrent = starterCurrent;
     ei.flapMotorCurrent = flapMoving_ && def_.controls.flapsElectric ? def_.controls.flapMotorCurrent : 0;
     // The electric fuel pump draws its breaker's declared current while on
@@ -1148,7 +1350,7 @@ void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, co
         const bool landing = airborneTime_ > 2.0;
         // The most advanced lever: every throttle at idle arms the automation.
         Real lever = in.throttle;
-        for (int i = 0; i < engineCount() + turbofanCount(); ++i) lever = i == 0 ? lever_[i] : std::max(lever, lever_[i]);
+        for (int i = 0; i < engineCount() + turbofanCount() + turbopropCount(); ++i) lever = i == 0 ? lever_[i] : std::max(lever, lever_[i]);
         // ---- FADEC rating schedule (ThrustMode::Auto) ----
         if (turbofanCount() > 0) {
             const bool airborne = !mains && !tel_.onGround;
@@ -1224,6 +1426,34 @@ void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, co
     for (int i = 0; i < turbofanCount(); ++i) {
         c.turboIn[i].starterPowered = electrical_.busVoltage() >= kMinStarterVoltage;
         if (!turbofanSteady_) turbofans_[i].step(turboState_[i], c.turboIn[i], dt);
+    }
+    // ---- Turboprops: gas generators, the starter's automatic cut-out, autofeather ----
+    for (int i = 0; i < turbopropCount(); ++i) {
+        c.tpIn[i].starter = tpStarter_[i] && electrical_.busVoltage() >= kMinStarterVoltage;
+        if (!turbofanSteady_) turboprops_[i].step(tpState_[i], c.tpIn[i], s_.shaftOmega[i], dt);
+        if (tpStarter_[i] && tpState_[i].running) {
+            tpStarter_[i] = false;  // the start switch is released at stabilised idle
+            syncCockpitPositions();
+        }
+    }
+    if (turbopropCount() > 1 && def_.turboprops[0].autofeather) {
+        const TurbopropDef& d0 = def_.turboprops[0];
+        bool levers = autofeatherSwitch_, torque = true, any = false;
+        for (int i = 0; i < turbopropCount(); ++i) {
+            levers = levers && lever_[i] >= d0.autofeatherLever;
+            torque = torque && tpState_[i].torqueFraction > 2 * d0.autofeatherTorque;
+            any = any || autofeathered_[i];
+        }
+        // Armed once both engines make torque with the levers up; disarmed
+        // when a lever comes back. One engine only: the other stays as it is.
+        if (!levers) autofeatherArmed_ = false;
+        else if (torque) autofeatherArmed_ = true;
+        if (autofeatherArmed_ && !any)
+            for (int i = 0; i < turbopropCount(); ++i)
+                if (tpState_[i].torqueFraction < d0.autofeatherTorque) {
+                    autofeathered_[i] = true;
+                    break;
+                }
     }
     // Actuators move at their rate times what their hydraulic supply allows
     // (1 without hydraulics). The emergency release lets the gear fall to
@@ -1370,6 +1600,17 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
         }
     }
 
+    // Turboprop propeller governors (blade angle), from the integrated shaft speed.
+    for (int i = 0; i < turbopropCount(); ++i) {
+        if (turbofanSteady_) continue;
+        const std::size_t k = static_cast<std::size_t>(i);
+        const Real omegaDot = (s_.shaftOmega[k] - prev.shaftOmega[k]) / dt;
+        const TurbopropInputs& ti = c.tpIn[k];
+        turboprops_[i].stepPropeller(tpState_[k], tpFeather_[k] || autofeathered_[k], ti.reverse > 0,
+                                     turboprops_[i].betaBladeAngle(ti.reverse), s_.shaftOmega[k], omegaDot, dt);
+        tpState_[k].np = s_.shaftOmega[k] / def_.turboprops[k].ratedOmega();
+    }
+
     // Fuel burn -> mass, CG, inertia.
     Real demand = 0;
     bool rotating = false;
@@ -1380,6 +1621,10 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
     for (int i = 0; i < turbofanCount(); ++i) {
         demand += turboState_[i].fuelFlow;
         rotating = rotating || turboState_[i].n2 > 0.1;  // engine-driven boost pump
+    }
+    for (int i = 0; i < turbopropCount(); ++i) {
+        demand += tpState_[i].fuelFlow;
+        rotating = rotating || tpState_[i].ng > 0.1;
     }
     const int pumpLoad = electrical_.fuelPumpLoad();
     const bool auxPump = fuel_.auxPumpOn() && (pumpLoad >= 0 ? electrical_.loadPowered(pumpLoad) : electrical_.powered());
@@ -1469,6 +1714,12 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
             pushEvent(turboState_[i].running ? FlightEventType::EngineStarted : FlightEventType::EngineStopped,
                       turboState_[i].n2 * 100, i);
         runningWas_[i] = turboState_[i].running;
+    }
+    for (int i = 0; i < turbopropCount(); ++i) {
+        if (tpState_[i].running != runningWas_[i])
+            pushEvent(tpState_[i].running ? FlightEventType::EngineStarted : FlightEventType::EngineStopped,
+                      tpState_[i].ng * 100, i);
+        runningWas_[i] = tpState_[i].running;
     }
     if (fuel_.starving() && !starvingWas_) pushEvent(FlightEventType::FuelStarvation);
     starvingWas_ = fuel_.starving();
@@ -1623,9 +1874,30 @@ SensorInputs Aircraft::sensorInputs() const {
         in.egt = t.itt;
         in.fuelFlow = 0;
         for (int i = 0; i < turbofanCount(); ++i) in.fuelFlow += turboState_[i].fuelFlow;
+    } else if (turbopropCount() > 0) {
+        // Engine 1: the propeller tachometer (Np rpm), ITT as EGT, total fuel flow.
+        const TurbopropState& t = tpState_[0];
+        in.engineRpm = s_.shaftOmega[0] * 60 / kTwoPi;
+        in.oilPressure = t.oilPressure;
+        in.oilTemperature = t.oilTemperature;
+        in.egt = t.itt;
+        in.fuelFlow = 0;
+        for (int i = 0; i < turbopropCount(); ++i) in.fuelFlow += tpState_[i].fuelFlow;
     }
     // Every engine's senders.
-    in.engineCount = std::min(engineCount() + turbofanCount(), 4);
+    in.engineCount = std::min(engineCount() + turbofanCount() + turbopropCount(), 4);
+    for (int i = 0; i < turbopropCount() && i < 4; ++i) {
+        // Turboprops: Ng % as n1, Np % of rated as n2.
+        SensorInputs::EngineSense& es = in.engines[static_cast<std::size_t>(i)];
+        const TurbopropState& t = tpState_[i];
+        es.n1 = t.ng * 100;
+        es.n2 = s_.shaftOmega[i] / def_.turboprops[i].ratedOmega() * 100;
+        es.itt = t.itt;
+        es.fuelFlow = t.fuelFlow;
+        es.oilPressure = t.oilPressure;
+        es.oilTemperature = t.oilTemperature;
+        es.electric = true;
+    }
     for (int i = 0; i < engineCount() && i < 4; ++i) {
         SensorInputs::EngineSense& es = in.engines[static_cast<std::size_t>(i)];
         const PistonEngineState& e = engineState_[i];
@@ -1712,6 +1984,11 @@ void Aircraft::updateTelemetry() {
         t.engines[i].rpm = s_.shaftOmega[i] * 60 / kTwoPi;
     }
     for (int i = 0; i < turbofanCount(); ++i) t.turbofans[i] = turboState_[i];
+    for (int i = 0; i < turbopropCount(); ++i) {
+        t.turboprops[i] = tpState_[i];
+        t.engines[i].prop = propState_[i];
+        t.engines[i].rpm = s_.shaftOmega[i] * 60 / kTwoPi;
+    }
     t.throttles = lever_;
     t.gearPosition = gearPos_;
     t.speedbrake = speedbrakePos_;
@@ -1740,6 +2017,7 @@ Real Aircraft::hydraulicSource(std::size_t k, Real* electricCurrent) const {
     Real source = 0;
     for (int e : sys.engines) {
         if (engineCount() > 0) source = std::max(source, pistonPumpOutput(s_.shaftOmega[e] * 60 / kTwoPi));
+        else if (turbopropCount() > 0) source = std::max(source, turbopropPumpOutput(tpState_[e], def_.turboprops[static_cast<std::size_t>(e)]));
         else source = std::max(source, turbofanPumpOutput(turboState_[e], def_.turbofans[static_cast<std::size_t>(e)]));
     }
     const HydraulicElectricPumpDef& ep = sys.electricPump;

@@ -10,7 +10,7 @@ done badly.
 | 2a | Analog cockpit instrumentation, navigation receivers, 2D browser cockpit | ✅ |
 | 2b | Close the Milestone 1 gaps; world integration | 🟡 every item done except the São Paulo World ground query, blocked on data from the world project; the POH rows added in October 2026 (climb at four altitudes, cruise table, glide, time to climb) pass after the induction-model and brake-capacity fixes (see below) |
 | 3 | Weather and environment: spatial weather, thermals, wake turbulence, icing | 🟡 wind done early ([architecture/wind.md](architecture/wind.md)): boundary layer, MIL-HDBK-1797 turbulence, gusts, microbursts, thermals, ridge/mountain waves, spatial and moving wind. Open: aircraft wake vortices, airframe icing, pressure/temperature fields |
-| 4 | Turboprop and multi-engine: constant-speed propeller, feathering, Vmc | ⛔ |
+| 4 | Turboprop and multi-engine: constant-speed propeller, feathering, Vmc | 🟡 free-turbine turboprop, constant-speed / feathering / reversing propeller, autofeather, engine-out Vmca, the King Air 350 ([validation/king-air-350-validation.md](validation/king-air-350-validation.md)); the PC-12 open |
 | 5 | Jets: turbofan model, transonic and supersonic aerodynamics | 🟡 two-spool turbofans, Mach drag rise, the Top G and five generated jets ([validation/generated-jets.md](validation/generated-jets.md)); supersonic not started |
 | 6 | Helicopters: blade-element rotor, ground resonance, vortex ring state | ⛔ |
 | 7 | Damage, structural loads, fire, bailout | ⛔ |
@@ -82,7 +82,7 @@ the site when it is done.
 | 5 | Navigation: pick a destination airport and get its real ILS tuned and a GPS route (flight plan, legs, CDI/ND); real airport, runway and ILS data for Brazil (source and licence to settle: AIP Brasil / DECEA, OurAirports) | — | ✅ six São Paulo region airports (OurAirports runways, published ILSs), NAV 1 auto-tuned, GPS route with CDI/VDI on the PFD, ND and 172 card, each field at its own elevation ([architecture/navigation.md](architecture/navigation.md)); published procedures and the rest of Brazil open |
 | 6 | Clickable cockpit: first-person mouse look and a pointer on every switch, knob and lever that the core models (fuel cut-off cuts the fuel); few key bindings, the rest by clicking | — | ✅ shipped (172 and the jets) |
 | 7 | Synthesized sound per type (piston, turboprop, turbofan, afterburning turbojet) from the engine states | 8–10 for the new types | |
-| 8 | Turboprop and multi-engine (Milestone 4): constant-speed propeller, feathering, beta and reverse, engine-out and Vmc; **Pilatus PC-12**, **Beechcraft King Air 350** | 3 | |
+| 8 | Turboprop and multi-engine (Milestone 4): constant-speed propeller, feathering, beta and reverse, engine-out and Vmc; **Pilatus PC-12**, **Beechcraft King Air 350** | 3 | 🟡 everything but the PC-12: the King Air 350 flies (native and browser) |
 | 9 | Structural loads, in-flight failure (limit/ultimate, flutter, surfaces and wings separating), crash structure (gear collapse, crush, wing and engine separation), crash dummies (HIC, DRI, chest g; survival probability), crash report | 4 | |
 | 10 | Supersonic aerodynamics (Milestone 5): wave drag, shock-induced separation, Mach tuck, buffet, aerodynamic heating; mixed-compression inlets and afterburning turbojets; **Lockheed SR-71** (inlet unstart, Mach 3.2) | 4 | |
 | 11 | Post-stall and thrust vectoring: high-alpha aerodynamics, 3D thrust vectoring, departure and recovery; **Sukhoi Su-35S** (Cobra, Kulbit) | 4, 10 | |

@@ -25,6 +25,7 @@ for f in avd_text avd_load avd_error_text avd_set_weather avd_reset avd_set_inpu
          avd_set_destination avd_destination avd_destination_runway avd_destinations_text avd_region \
          avd_ground_height avd_route avd_route_text avd_gps avd_set_destination_record \
          avd_terrain_detail avd_taws avd_taws_text avd_taws_config \
+         avd_set_prop_lever avd_set_condition avd_set_feather avd_turboprop \
          avd_abi_version avd_layout avd_build_id; do
   EXPORTS="$EXPORTS -Wl,--export=$f"
 done
@@ -46,5 +47,5 @@ echo "build id: $AVD_BUILD_ID"
 cp "$HERE/avd_loader.mjs" "$OUT/avd.mjs"
 cp "$REPO/data/aircraft/tupi_t180.json" "$OUT/tupi_t180.json"
 cp "$REPO/data/aircraft/top_g.json" "$OUT/top_g.json"
-for t in phenom300 cj4 learjet45 crj700 b738; do cp "$REPO/data/aircraft/$t.json" "$OUT/$t.json"; done
+for t in phenom300 cj4 learjet45 crj700 b738 king_air_350; do cp "$REPO/data/aircraft/$t.json" "$OUT/$t.json"; done
 ls -l "$OUT"

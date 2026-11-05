@@ -38,6 +38,12 @@ public:
     // `axialSpeed`: aircraft speed relative to the air along the thrust axis.
     // `speedOfSound` sets the blade Mach numbers (compressibility).
     PropellerForces evaluate(Real axialSpeed, Real omega, Real density, Real speedOfSound = 340.294) const;
+    // Variable-pitch propeller at blade angle `bladeAngle` (rad at 0.75 R):
+    // the tables at the neighbouring blade angles, interpolated linearly
+    // (PropellerDef::variablePitch; a fixed-pitch propeller ignores the angle).
+    PropellerForces evaluate(Real axialSpeed, Real omega, Real density, Real speedOfSound, Real bladeAngle) const;
+    // Blade angles (rad at 0.75 R) the variable-pitch tables are solved at.
+    const std::vector<Real>& bladeAngles() const { return angles_; }
     Real radius() const { return 0.5 * def_.diameter; }
     Real discArea() const { return kPi * radius() * radius(); }
     const PropellerDef& def() const { return def_; }
@@ -48,12 +54,18 @@ public:
 
     // One BEM solution (exposed for tests). Returns thrust and torque.
     // speedOfSound <= 0: incompressible.
+    // `pitchOffset`: blade rotation in the hub (rad, added to the twist at
+    // every station; 0 for a fixed-pitch propeller).
     static void bem(const PropellerDef& def, Real v, Real omega, Real rho, Real& thrust, Real& torque,
-                    Real speedOfSound = 0);
+                    Real speedOfSound = 0, Real pitchOffset = 0);
 
 private:
+    void buildVariablePitch();
     PropellerDef def_;
     Table2D cT_, cQ_;
+    // Variable pitch: one table pair per blade angle.
+    std::vector<Real> angles_;
+    std::vector<Table2D> vcT_, vcQ_;
 };
 
 enum class Magnetos { Off = 0, Right = 1, Left = 2, Both = 3, Start = 4 };
@@ -193,6 +205,94 @@ public:
 private:
     TurbofanDef def_;
     Real tauUp_ = 1.0;            // s, acceleration time-constant scale (calibrated)
+};
+
+// ---- Turboprop (see TurbopropDef) ------------------------------------------
+
+// Condition lever: fuel cut-off, low idle (ground) or high idle (flight, and
+// a faster-accelerating gas generator).
+enum class ConditionLever { CutOff = 0, LowIdle = 1, HighIdle = 2 };
+
+struct TurbopropInputs {
+    Real powerLever = 0;          // 0 idle .. 1 maximum (the forward stop: the torque / ITT limit)
+    Real reverse = 0;             // 0 .. 1 below idle: beta, then reverse (ground only; the caller gates it)
+    ConditionLever condition = ConditionLever::CutOff;
+    bool fuelAtEngine = false;
+    bool starter = false;         // starter engaged and powered
+    Real npSelected = 1;          // the propeller lever's governed speed, fraction of rated Np
+    Real ambientPressure = isa::kSeaLevelPressure;
+    Real ambientTemperature = isa::kSeaLevelTemperature;
+    Real mach = 0;
+};
+
+struct TurbopropState {
+    Real ng = 0;                  // gas generator speed, fraction of 100 %
+    Real np = 0;                  // propeller speed, fraction of rated (mirrors the integrated shaft speed)
+    bool lit = false;             // burning
+    bool running = false;         // lit and at or above idle
+    bool starting = false;        // lit below idle, accelerating
+    Real gasPower = 0;            // W the gas generator delivers to the power turbine at rated Np
+    Real torque = 0;              // N m, power-turbine output at the propeller shaft (- dragging)
+    Real torqueFraction = 0;      // of the rated torque (the torque gauge, 1 = 100 %)
+    Real shaftPower = 0;          // W
+    Real itt = 288;               // K
+    Real fuelFlow = 0;            // kg/s
+    Real oilPressure = 0;         // Pa
+    Real oilTemperature = 288;    // K
+    Real ngCommand = 0;           // the fuel control's Ng target
+    // Propeller.
+    Real bladeAngle = 0;          // rad at 0.75 R
+    bool feathered = false;       // at (or within 1 deg of) the feather stop
+    bool beta = false;            // blade angle set by the power lever (ground beta / reverse)
+    Real npSet = 0;               // selected Np, fraction of rated (the governor's set point)
+    Real thrust = 0;              // N (from the last recorded evaluation)
+    Real propTorque = 0;          // N m absorbed
+};
+
+class TurbopropEngine {
+public:
+    explicit TurbopropEngine(const TurbopropDef& def);
+    const TurbopropDef& def() const { return def_; }
+    // Compressor-face total pressure and temperature ratios (ram rise).
+    static void inletRatios(Real pressure, Real temperature, Real mach, Real& delta0, Real& theta0);
+    // Gas power (W at rated Np) at a gas generator speed and flight condition.
+    Real gasPower(Real ng, Real delta0, Real theta0) const;
+    // ITT (K) of a lit engine at Ng.
+    Real itt(Real ng, Real theta0) const;
+    // Inverses for the fuel control's limiters: Ng that gives `power` (W of
+    // gas power) and Ng at which the ITT reaches `ittK`.
+    Real ngForGasPower(Real power, Real delta0, Real theta0) const;
+    Real ngForItt(Real ittK, Real theta0) const;
+    // Power-turbine torque (N m) at the propeller shaft for the gas power and
+    // shaft speed (rad/s), friction included.
+    Real turbineTorque(Real gasPower, Real omega) const;
+    // Shaft power available at the flight condition with the propeller at its
+    // rated speed: min(torque limit, ITT limit, Ng limit).
+    Real availablePower(Real pressure, Real temperature, Real mach) const;
+    // Fuel flow (kg/s) of the lit engine at Ng.
+    Real fuelFlow(Real ng, Real delta0, Real theta0) const;
+    // The fuel control's Ng target for the inputs at shaft speed omega.
+    Real commandedNg(const TurbopropInputs& in, Real omega) const;
+    Real idleNg(ConditionLever c) const { return c == ConditionLever::HighIdle ? def_.ngHighIdle : def_.ngLowIdle; }
+    // Gas generator: start, light-off, spool dynamics, shut-down over dt
+    // (the shaft speed omega, rad/s, from the integrator).
+    void step(TurbopropState& s, const TurbopropInputs& in, Real omega, Real dt) const;
+    // Gas power, torque, ITT, fuel flow and oil at the state's Ng (pure).
+    void evaluate(TurbopropState& s, const TurbopropInputs& in, Real omega) const;
+    // Lit and stabilised at the commanded Ng (trim, spawns).
+    void setSteady(TurbopropState& s, const TurbopropInputs& in, Real omega) const;
+    // Propeller governor and pitch-change mechanism over dt: feather (selected,
+    // or no governor oil), the power lever's blade angle in beta, else the
+    // governor holding the selected Np between the flight-idle stop and
+    // feather. omega, omegaDot: shaft speed (rad/s) and its rate.
+    void stepPropeller(TurbopropState& s, bool feather, bool betaActive, Real betaAngle, Real omega, Real omegaDot,
+                       Real dt) const;
+    // Blade angle the power lever sets in beta / reverse (reverse 0..1).
+    Real betaBladeAngle(Real reverse) const;
+
+private:
+    TurbopropDef def_;
+    Real willansA_ = 0, willansB_ = 0;  // corrected fuel flow = A + B x corrected gas power
 };
 
 }  // namespace avd

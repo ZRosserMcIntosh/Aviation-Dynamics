@@ -36,6 +36,7 @@ struct TrimRequest {
     bool solveTas = false;
     Real mixture = -1;         // < 0: best power
     ThrustMode thrustMode = ThrustMode::Auto;  // turbofans: the FADEC rating that caps N1 (Auto: take-off on a fresh aircraft)
+    Real propLever = 1;        // turboprops: the propeller levers (governed Np, PilotInput::propLever)
 };
 
 struct TrimResult {

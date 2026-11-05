@@ -51,7 +51,7 @@ PilotInput LinePilot::update(const Aircraft& ac, Real dt) {
         throttle = 1;
     }
     PilotInput in = pilot_.update(ac, dt);
-    // On a jet, the bank on the ailerons with the approach pilot's law
+    // On a jet (or a turboprop), the bank on the ailerons with the approach pilot's law
     // (ApproachPilot), its gain with the airspeed. The test pilot's roll loop
     // was tuned on the 172 and stays its pilot (the wake demonstration's 172
     // and its tests fly with it); its gain falls with dynamic pressure to a
@@ -59,7 +59,7 @@ PilotInput LinePilot::update(const Aircraft& ac, Real dt) {
     // bank error. The integral and the spiral mode then set the bank, it lagged
     // the line's demand, and the weave grew to hundreds of metres in two
     // minutes (737, CRJ700, Top G).
-    if (ac.turbofanCount() > 0) {
+    if (ac.turbofanCount() + ac.turbopropCount() > 0) {
         const Real ias = std::max(ac.instruments().readings().indicatedAirspeed, 25.0);
         const Real qs = clamp(sq(60.0 / ias), 0.4, 3.0);
         in.roll = clamp((1.6 * (pilot_.targetBank - t.roll) - 0.35 * t.omega.x) * std::min(qs, 1.5), -1.0, 1.0);
