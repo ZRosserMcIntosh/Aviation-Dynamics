@@ -72,6 +72,35 @@ export default async function createAvdModule(wasmBytes) {
     new Uint8Array(memory.buffer, at, b.length).set(b);
     return ex.avd_terrain(b.length);
   };
+  // A finer grid nested in the region's (AVT1 bytes: data/world/terrain_sp_city.avt, 50 m over the city):
+  // the sample count, -1 if malformed; no bytes (or an empty array) removes the detail grids.
+  A.terrainDetail = (bytes) => {
+    const b = bytes ? (bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)) : new Uint8Array(0);
+    const at = ex.avd_text(b.length + 1);  // may grow the memory: take the buffer after
+    new Uint8Array(memory.buffer, at, b.length).set(b);
+    return ex.avd_terrain_detail(b.length);
+  };
+  // TAWS / GPWS: { cls (0 off, 1 B, 2 A), active: [alert ids], top, level (0 none, 1 advisory, 2 caution,
+  // 3 warning), voice, voiceCount, say (the phrase being spoken), alert (the top alert's annunciation),
+  // raFt (-1 no reading), closureFpm, terrainTime (s, -1 none), phase (0 en route, 1 terminal, 2 approach,
+  // 3 departure), rtcFt, altLossFt, takeoff, gsLoud, inhibit, dhFt }. Speak `say` when voiceCount changes.
+  A.taws = () => {
+    const v = new Float64Array(memory.buffer, ex.avd_taws(), 16);
+    const active = [];
+    for (let a = 1; a <= 14; ++a) if (((v[1] >>> 0) >>> (a - 1)) & 1) active.push(a);
+    const r = { cls: v[0], active, top: v[2], level: v[3], voice: v[4], voiceCount: v[5], raFt: v[6], closureFpm: v[7],
+      terrainTime: v[8], phase: v[9], rtcFt: v[10], altLossFt: v[11], takeoff: v[12] === 1, gsLoud: v[13] === 1,
+      inhibit: v[14] === 1, dhFt: v[15] };
+    r.say = A.text(ex.avd_taws_text(0, 0));
+    r.alert = A.text(ex.avd_taws_text(1, 0));
+    return r;
+  };
+  A.tawsVoiceText = (voice) => A.text(ex.avd_taws_text(2, voice));
+  A.tawsAlertText = (alert) => A.text(ex.avd_taws_text(3, alert));
+  // cls -1 the aircraft's own (A jets, B others), 0 off, 1 B, 2 A; decision height ft (radio; < 0 keep);
+  // inhibit: FLTA off; landingDetent: the flap detent counted as landing (-1 the last). Returns the class in force.
+  A.tawsConfig = ({ cls = -1, dhFt = -1, inhibit = false, landingDetent = -1 } = {}) =>
+    ex.avd_taws_config(cls, dhFt, inhibit ? 1 : 0, landingDetent);
   A.load = (json) => {
     const b = enc.encode(json);
     const at = ex.avd_text(b.length + 1);  // may grow the memory: take the buffer after

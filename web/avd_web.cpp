@@ -185,14 +185,41 @@ int regionCount() { return static_cast<int>(g_airports.size()); }
 void rebuildWeather();
 void rebuildAir();
 
-// The region's terrain (avd_terrain), kept across ground rebuilds.
+// The region's terrain (avd_terrain) and the finer grids nested in it
+// (avd_terrain_detail: the city's), kept across ground rebuilds.
 std::shared_ptr<const ElevationGrid> g_terrain;
+std::vector<std::shared_ptr<const ElevationGrid>> g_terrainDetail;
+
+// The TAWS settings (avd_taws_config), kept across aircraft loads: class
+// (-1 the aircraft's own: A in the jets, B in the others), decision height
+// (m, radio), terrain inhibit, landing flap detent (-1 the last).
+struct TawsSettings {
+    int cls = -1;
+    double decisionHeight = 60.96;
+    bool inhibit = false;
+    int landingDetent = -1;
+} g_taws;
+
+// An aircraft's TAWS: the settings and the airports' runways for its terrain database.
+void configureTaws(Aircraft& ac) {
+    TawsMonitor& t = ac.taws();
+    if (g_taws.cls >= 0 && static_cast<int>(t.tawsClass()) != g_taws.cls) t.setClass(static_cast<TawsClass>(std::clamp(g_taws.cls, 0, 2)));
+    t.setDecisionHeight(g_taws.decisionHeight);
+    t.setTerrainInhibit(g_taws.inhibit);
+    t.setLandingFlapDetent(g_taws.landingDetent);
+    std::vector<TawsRunway> rw;
+    for (const scenarios::Airport& a : g_airports)
+        for (const RunwayDef& r : a.runways) rw.push_back({r.threshold, r.headingTrue, r.length});
+    t.setRunways(std::move(rw));
+}
 
 // The buildings stand on the region's ground; after it is rebuilt they stand on the new one.
 void groundChanged() {
     g->ground->setTerrain(g_terrain);
+    for (const auto& d : g_terrainDetail) g->ground->addTerrain(d);
     if (g->world) g->world->setInner(*g->ground);
     else g->world = std::make_unique<BuildingLayer>(*g->ground);
+    if (g->ac) configureTaws(*g->ac);  // the airports may have changed
 }
 
 void buildAirport() {
@@ -446,6 +473,7 @@ AVD_EXPORT int avd_load(int length) {
     for (const FuelTankDef& t : g->def.fuel.tanks) g->loadTanks.push_back(t.initial);
     g->ac = std::make_unique<Aircraft>(g->def, g->frame);
     g->ac->setNavEnvironment(&navEnvironment());
+    configureTaws(*g->ac);
     applyLoad(*g->ac);
     return 0;
 }
@@ -509,6 +537,7 @@ void newAircraft() {
         rebuildWeather();
     }
     g->ac->setNavEnvironment(&navEnvironment());
+    configureTaws(*g->ac);
     applyLoad(*g->ac);
     g->procedure = ProcedureRunner{};
     g->assist.reset();
@@ -1288,6 +1317,33 @@ AVD_EXPORT int avd_terrain(int len) {
     return g_terrain->nx() * g_terrain->ny();
 }
 
+// A finer grid nested in the region's (AVT1 bytes already written to
+// avd_text; the city's: data/world/terrain_sp_city.avt, 50 m): it wins where
+// it lies, blended into the region's over its last 2 km. One with the same
+// extent replaces it; len 0 removes every detail grid. Returns its sample
+// count (0 when cleared), -1 if malformed. avd_terrain's region grid is set
+// apart from it and keeps its meaning.
+AVD_EXPORT int avd_terrain_detail(int len) {
+    if (len < 0 || len > g_textCap) return -1;
+    if (len == 0) {
+        g_terrainDetail.clear();
+        if (g) groundChanged();
+        return 0;
+    }
+    auto grid = std::make_shared<ElevationGrid>();
+    if (!grid->parse(reinterpret_cast<const unsigned char*>(g_text), static_cast<std::size_t>(len))) return -1;
+    const int n = grid->nx() * grid->ny();
+    g_terrainDetail.erase(std::remove_if(g_terrainDetail.begin(), g_terrainDetail.end(),
+                                         [&](const std::shared_ptr<const ElevationGrid>& d) {
+                                             return d->nx() == grid->nx() && d->ny() == grid->ny() && d->spacing() == grid->spacing() &&
+                                                    d->east0() == grid->east0() && d->north0() == grid->north0();
+                                         }),
+                          g_terrainDetail.end());
+    g_terrainDetail.push_back(std::move(grid));
+    if (g) groundChanged();
+    return n;
+}
+
 AVD_EXPORT double avd_ground_height(double east, double north) {
     if (!g) return 0;
     return -g->ground->terrainDown(north, east);
@@ -1543,6 +1599,7 @@ AVD_EXPORT int avd_traffic_spawn(double east, double north, double heightAboveFi
     T.active = false;
     T.ac = std::make_unique<Aircraft>(T.def, g->frame);
     T.ac->setNavEnvironment(&navEnvironment());
+    T.ac->taws().setClass(TawsClass::Off);  // nobody hears the traffic's
     const std::vector<Real>& det = T.def.controls.flapDetents;
     const int flap = std::clamp(flapDetent, 0, static_cast<int>(det.size()) - 1);
     const Vec3 ned = world::nedFromEnu({east, north, 0});
@@ -1880,6 +1937,73 @@ AVD_EXPORT double* avd_occupant() {
     g_occupant[5] = mask;
     g_occupant[6] = g->ac->structurallyFailed();
     return g_occupant;
+}
+
+// TAWS / GPWS (avd/taws.hpp): [0] class (0 off, 1 B, 2 A), [1] active
+// alerts (bit 1 << (alert - 1)), [2] the highest-priority alert (0 none,
+// 1 PULL UP sink rate, 2 PULL UP closure, 3 TERRAIN AHEAD PULL UP, 4 TERRAIN
+// TERRAIN, 5 MINIMUMS, 6 CAUTION TERRAIN, 7 TOO LOW TERRAIN, 8 altitude
+// callout, 9 TOO LOW GEAR, 10 TOO LOW FLAPS, 11 SINK RATE, 12 DON'T SINK,
+// 13 GLIDESLOPE, 14 BANK ANGLE), [3] its level (0 none, 1 advisory,
+// 2 caution amber, 3 warning red), [4] the phrase being spoken (TawsVoice, 0
+// none), [5] phrases begun (a new value: say it), [6] radio altitude ft (-1
+// no reading), [7] terrain closure rate ft/min, [8] FLTA: s until the path
+// meets the required clearance (-1 none), [9] phase (0 en route, 1 terminal,
+// 2 approach, 3 departure), [10] required terrain clearance ft, [11] Mode 3
+// altitude loss ft, [12] take-off phase, [13] glideslope alert loud,
+// [14] terrain inhibit, [15] decision height ft.
+double g_tawsOut[16];
+AVD_EXPORT double* avd_taws() {
+    std::fill(std::begin(g_tawsOut), std::end(g_tawsOut), 0.0);
+    if (!g || !g->ac) return g_tawsOut;
+    const TawsMonitor& m = g->ac->taws();
+    const TawsStatus& s = m.status();
+    double* o = g_tawsOut;
+    o[0] = static_cast<int>(m.tawsClass());
+    o[1] = s.active;
+    o[2] = static_cast<int>(s.top);
+    o[3] = s.level;
+    o[4] = static_cast<int>(s.voice);
+    o[5] = s.voiceCount;
+    o[6] = s.radioAltitudeValid ? mToFt(s.radioAltitude) : -1.0;
+    o[7] = msToFpm(s.closureRate);
+    o[8] = s.terrainTime;
+    o[9] = static_cast<int>(s.phase);
+    o[10] = mToFt(s.requiredClearance);
+    o[11] = mToFt(s.altitudeLoss);
+    o[12] = s.takeoffPhase;
+    o[13] = s.glideslopeLoud;
+    o[14] = m.terrainInhibit();
+    o[15] = mToFt(m.decisionHeight());
+    return g_tawsOut;
+}
+static_assert(sizeof(g_tawsOut) / sizeof(double) == 16, "avd_taws: 16 doubles (web/README.md)");
+
+// Text for the TAWS (in the text buffer; returns its length): which 0 the
+// phrase being spoken ("TERRAIN AHEAD, PULL UP"), 1 the top alert's
+// annunciation ("TOO LOW GEAR"), 2 phrase `index`'s text, 3 alert `index`'s.
+AVD_EXPORT int avd_taws_text(int which, int index) {
+    if (which == 2) return putText(tawsVoiceText(static_cast<TawsVoice>(index)));
+    if (which == 3) return putText(tawsAlertText(static_cast<TawsAlert>(index)));
+    if (!g || !g->ac) return putText("");
+    const TawsStatus& s = g->ac->taws().status();
+    return putText(which == 0 ? tawsVoiceText(s.voice) : tawsAlertText(s.top));
+}
+
+// TAWS settings, kept across aircraft loads and resets: class (-1 the
+// aircraft's own: A in the jets, B in the others; 0 off, 1 B, 2 A),
+// decision height ft on the radio altimeter for MINIMUMS (0 none; < 0 keep),
+// terrain inhibit (FLTA off) 0/1, the flap detent from which the flaps count
+// as landing (-1 the last). Returns the class in force.
+AVD_EXPORT int avd_taws_config(int cls, double decisionHeightFt, int inhibit, int landingDetent) {
+    g_taws.cls = std::clamp(cls, -1, 2);
+    if (decisionHeightFt >= 0) g_taws.decisionHeight = ftToM(decisionHeightFt);
+    g_taws.inhibit = inhibit != 0;
+    g_taws.landingDetent = landingDetent;
+    if (!g || !g->ac) return g_taws.cls;
+    if (g_taws.cls < 0) g->ac->taws().setClass(g->ac->turbofanCount() > 0 ? TawsClass::A : TawsClass::B);
+    configureTaws(*g->ac);
+    return static_cast<int>(g->ac->taws().tawsClass());
 }
 
 // The wind (ENU, m/s, the air's own velocity) on an nx x ny x nz grid over

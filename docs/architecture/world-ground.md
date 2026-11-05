@@ -18,7 +18,7 @@ the axis swap in `world_frame.hpp`.
 |---|---|---|
 | `below(p)` | gear, hard points, wing height for ground effect | Highest surface at or below the point (0.5 m tolerance): terrain, or a roof. An aircraft can stand on a roof. |
 | `solidAt(p)` | hard points (wingtips, tail, propeller, belly) | Inside a building: the nearest exit (a wall or the roof) with its outward normal. The hard-point spring pushes the point out, and the aircraft raises a `HardPointContact` (or `PropStrike`) event whose `value` is the surface id (5 = building). |
-| `raycast(o, d, max)` | renderers, sensors, future radar altimeter | Terrain by safe-step marching and bisection; buildings by exact ray/prism intersection (roof and walls). |
+| `raycast(o, d, max)` | renderers, sensors | Terrain by safe-step marching and bisection; buildings by exact ray/prism intersection (roof and walls). |
 
 Beyond the loaded tiles there is a flat plane at a configurable MSL height,
 so an aircraft flying off the data still has a ground. Per-step cost is
@@ -75,36 +75,73 @@ terrain reaches the aircraft another way, below.
 
 ## The region's terrain: `ElevationGrid` on `RegionGround`
 
-`tools/terrain/make_terrain.py` builds `data/world/terrain_sp.avt`:
+`tools/terrain/make_terrain.py` builds two grids from SRTM 1 arc-second
+(NASA/USGS, public domain, from the AWS Terrain Tiles mirror), in the map's
+projection (EPSG:31983 less the map origin, as the airports and buildings),
+heights in decimetres:
 
-- **Source.** SRTM 1 arc-second (NASA/USGS, public domain), from the AWS
-  Terrain Tiles mirror.
-- **Grid.** 200 m over 220 × 180 km around MASP (1101 × 901 samples), in
-  the map's projection (EPSG:31983 less the map origin, as the airports and
-  buildings), heights in decimetres: 2 MB.
-- **Ground, not roofs.** SRTM is a surface model; each cell takes the 20th
-  percentile of the ~40 one-arc-second samples inside it (the open ground
-  between buildings and trees). Voids are filled from their neighbours, the
-  sea is 0.
+| File | Grid | Ground filter | Size |
+|---|---|---|---|
+| `data/world/terrain_sp.avt` (the region) | 200 m over 220 × 180 km around MASP (1101 × 901) | the 20th percentile of the ~40 one-arc-second samples in each cell (the open ground between buildings and trees) | 2.0 MB |
+| `data/world/terrain_sp_city.avt` (the city, `--detail`) | 50 m over 50 × 62 km (east −20 to +30 km, north −38 to +24 km of MASP; 1001 × 1241): the São Paulo municipality to the Billings and Guarapiranga reservoirs, the Pico do Jaraguá, the Serra da Cantareira, Guarulhos | a morphological ground filter (below) | 2.5 MB |
+
+**The city's ground filter.** A 50 m cell holds only two or three SRTM
+samples, so a percentile has nothing to choose from. On a 25 m resampling
+of the model, its opening (the local minimum, then the local maximum, over
+a 400 m square) keeps planar slopes and valleys as they are and takes off
+what stands above the ground over less than that width: blocks of
+buildings and stands of trees, but also the tops of hills. So the
+correction (the surface less its opening, at most 10 m, the surface model's
+bias over the high-rises) is applied in full only where the terrain is
+gentle and fades out between 8 % and 20 % slope (the steepest of the
+smoothed model within 400 m): a summit or a ridge, with steep ground all
+round it, keeps its height. The correction, not the ground, is smoothed over
+150 m, so the peaks stay sharp. Voids are filled from their neighbours, the
+sea is 0.
+
+| Landmark (SRTM / reference) | Region grid (200 m) | City grid (50 m) |
+|---|---|---|
+| Pico do Jaraguá summit (SRTM 1,132 m; 1,135 m surveyed) | 1,033 m | 1,118 m |
+| Cantareira, highest (SRTM 1,195 m) | — | 1,194 m |
+| Pedra Grande, Cantareira (~1,010 m) | — | 1,031 m |
+| MASP on the Paulista ridge (~820 m) | 821 m | 818 m |
+| Pinheiros floor (~720 m) | 728 m | 726 m |
+| Tietê floor at the Ponte das Bandeiras (~720 m) | — | 724 m |
+| Congonhas (field 802 m; flat at it in `RegionGround`) | — | 793 m at its reference point |
+| Campo de Marte (field 722 m) | — | 720 m |
 
 **AVT1** (little-endian): `"AVT1"`, int32 nx, int32 ny, float64 east0, north0
 (the south-west sample), float64 spacing, float64 scale (m per unit), then
 nx × ny int16, rows from the south, each row west to east.
 
-`RegionGround::setTerrain` takes the grid (`scenarios::saoPauloTerrain()`
-natively, `avd_terrain` in the browser):
+`RegionGround::setTerrain` takes the region grid (`scenarios::saoPauloTerrain()`
+natively, `avd_terrain` in the browser) and replaces any grids set before;
+`addTerrain(grid, blend = 2000)` nests a finer one in it
+(`scenarios::saoPauloCityTerrain()`, `avd_terrain_detail`;
+`scenarios::makeSaoPauloGround()` is the region's ground with both). The
+grids are kept coarsest first and the finest wins:
 
 | Where | Ground |
 |---|---|
 | A field's flat area (its runways and 1.5 km around them) | the field's elevation, as before |
-| The next 2 km | the grid, blended into the field's elevation (smoothstep) |
-| Elsewhere on the grid | the grid, bilinear |
-| The grid's last 5 km, and off it | blended into the fields' inverse-distance blend, as before |
+| The next 2 km | the grids, blended into the field's elevation (smoothstep) |
+| Inside a nested grid | that grid, bilinear; over its last 2 km inside its edge blended (smoothstep) into the coarser grid under it, so its edge has no step |
+| Elsewhere on the region grid | the region grid, bilinear |
+| The region grid's last 5 km, and off it | blended into the fields' inverse-distance blend, as before |
 
 Normals come from central differences; vertical rays (`below`) read it
 directly; oblique rays march in steps of half the height above the ground
 (at least 5 m) and bisect the crossing. The buildings (`BuildingLayer`) stand
-on it, and the browser's ground mesh samples it.
+on it, the browser's ground mesh samples it (`avd_ground_height`), the radio
+altimeter reads it and the TAWS looks ahead along it (`avd/taws.hpp`).
+
+Tested in `tests/test_world.cpp` ("region terrain"): the landmarks on both
+grids (the city grid keeps the Jaraguá summit 85 m above the region grid's
+rounded cell), the city grid inside it and the region's well off it, no
+step across the city grid's edge (just inside and just outside agree within
+0.06 m at 1,020 crossings; through the blend no faster than the grids' own
+slopes plus 1 m per 25 m), every field flat with no cliff at its edge, a
+level ray at 1,110 m meets the Jaraguá summit only with the city grid.
 
 ## Buildings on another ground: `BuildingLayer`
 

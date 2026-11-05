@@ -11,6 +11,7 @@ let failures = 0;
 const check = (ok, msg) => { console.log((ok ? 'ok   ' : 'FAIL ') + msg); if (!ok) failures++; };
 check(A.abiVersion === A.avd_abi_version() && A.layout.state === 64 && A.layout.flow === 1352, `ABI version ${A.abiVersion}, layout ${JSON.stringify(A.layout)}`);
 check(A.buildId().length > 0, `build id "${A.buildId()}"`);
+check(A.taws().cls === 1, 'TAWS: Class B in the 172');
 
 A.avd_set_airport(0);                // Campo de Marte runway 12 (Congonhas is the default; checked below)
 A.avd_reset(1);                      // engine running on runway 12 at Campo de Marte
@@ -262,6 +263,43 @@ check(cg[32] === 109.7 && cg[37] === 1 && cg[40] === 1 && Math.abs(cg[38]) < 0.1
   check(n === 1101 * 901 && peak > 950 && peak < 1140 && Math.abs(after - field) < 1e-6,
     `terrain: ${n} samples; Pico do Jaraguá ${peak.toFixed(0)} m (the blend gave ${before.toFixed(0)}), the runway ${after.toFixed(1)} m as before`);
   check(B.terrain(new Uint8Array(16)) === -1, 'terrain: a malformed file is refused');
+  // The city's 50 m grid nested in it (data/world/terrain_sp_city.avt): the
+  // summit itself (SRTM 1,132 m at -23.4592, -46.7669), the runway unchanged.
+  const summitE = -11462, summitN = 11227, coarse = B.avd_ground_height(summitE, summitN);
+  const city = await readFile(new URL('../data/world/terrain_sp_city.avt', import.meta.url));
+  const nd = B.terrainDetail(city);
+  const fine = B.avd_ground_height(summitE, summitN), runwayNow = B.avd_ground_height(rw0[0], rw0[1]);
+  check(nd === 1001 * 1241 && fine > 1100 && fine > coarse + 40 && Math.abs(runwayNow - field) < 1e-6,
+    `terrain detail: ${nd} samples; the Jaraguá summit ${fine.toFixed(0)} m (region grid ${coarse.toFixed(0)}), the runway as before`);
+  check(B.terrainDetail(new Uint8Array(16)) === -1, 'terrain detail: a malformed file is refused');
+}
+// TAWS: the Top G (Class A) level at 1,067 m MSL toward the Jaraguá summit at
+// 220 kt, on the autopilot's ROL and ALT: CAUTION TERRAIN, then TERRAIN AHEAD,
+// PULL UP, each spoken (a new voiceCount with the phrase), tens of seconds out.
+{
+  const rw0 = B.runway(), field = B.avd_ground_height(rw0[0], rw0[1]);
+  const summitE = -11462, summitN = 11227, hdg = 340 * Math.PI / 180;
+  B.avd_reset_air(summitE - 12000 * Math.sin(hdg), summitN - 12000 * Math.cos(hdg), 1067 - field, 340, 220, 0);
+  const t0 = B.taws();
+  check(t0.cls === 2 && t0.active.length === 0, `TAWS: class ${t0.cls} (A), quiet at the spawn (radio altitude ${t0.raFt.toFixed(0)} ft)`);
+  const alt = B.state()[13];
+  B.autopilot({ lateral: 1, vertical: 2, altFt: alt });
+  let caution = -1, warning = -1, impact = -1, count = t0.voiceCount;
+  const said = [];
+  for (let t = 0; t < 140 && impact < 0; t += 0.25) {
+    B.avd_advance(0.25);
+    const w = B.taws(), s = B.state();
+    if (caution < 0 && w.active.includes(6)) caution = t;
+    if (warning < 0 && w.active.includes(3)) warning = t;
+    if (w.voiceCount !== count) { count = w.voiceCount; if (said.at(-1) !== w.say) said.push(w.say); }
+    if (s[48] || B.avd_ground_height(s[0], s[1]) > s[2] - 10) impact = t;
+  }
+  check(caution > 0 && warning > caution && impact - caution > 25 && impact - warning > 15 && said.indexOf('CAUTION TERRAIN, CAUTION TERRAIN') >= 0 &&
+        said.indexOf('TERRAIN AHEAD, PULL UP') > said.indexOf('CAUTION TERRAIN, CAUTION TERRAIN'),
+    `TAWS: CAUTION TERRAIN ${(impact - caution).toFixed(0)} s and TERRAIN AHEAD PULL UP ${(impact - warning).toFixed(0)} s before the hill; said: ${said.join(' / ')}`);
+  B.autopilot({});
+  check(B.tawsConfig({ inhibit: true }) === 2 && B.taws().inhibit && B.tawsConfig({}) === 2 && !B.taws().inhibit, 'TAWS: terrain inhibit on and off');
+  check(B.tawsVoiceText(3) === 'TERRAIN, TERRAIN' && B.tawsAlertText(9) === 'TOO LOW GEAR', 'TAWS: phrase and alert texts');
 }
 // Autopilot: refused on the ground; on the Top G's final, HDG on the bug 60 deg
 // right, ALT on the present altitude, the autothrottle 10 kt faster.

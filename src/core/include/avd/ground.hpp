@@ -148,12 +148,18 @@ private:
 
 // Several airfields in one region, each at its own elevation: flat within
 // `radius` of its centre (with its runways). Between the fields, the
-// elevation grid if one is set (the region's real hills and valleys, blended
-// to each field's elevation over 2 km beyond its flat area, and to the
-// fields' blend over the last 5 km inside the grid's edge); without one, or
-// off it, a smooth blend of the fields' elevations (inverse-distance
-// weighting, power 2, on the distance beyond each field's flat area). Grass
-// off the runways.
+// elevation grids if any are set (the region's real hills and valleys,
+// blended to each field's elevation over 2 km beyond its flat area, and to
+// the fields' blend over the region grid's last 5 km inside its edge);
+// without one, or off them, a smooth blend of the fields' elevations
+// (inverse-distance weighting, power 2, on the distance beyond each field's
+// flat area). Grass off the runways.
+//
+// Grids nest: a finer grid (a smaller spacing) over part of the region wins
+// where it lies, blended into the coarser ones over its own last `blend`
+// metres inside its edge, so its edge has no step (setTerrain: the region
+// grid; addTerrain: a detail grid such as the city's, data/world/
+// terrain_sp_city.avt).
 class RegionGround final : public GroundQuery {
 public:
     struct Field {
@@ -166,9 +172,23 @@ public:
     const std::vector<Field>& fields() const { return fields_; }
     void setWaterDepth(Real m) { waterDepth_ = std::max(m, 0.0); }
     Real waterDepth() const { return waterDepth_; }
-    // The region's terrain between the fields (nullptr: the blend alone).
-    void setTerrain(std::shared_ptr<const ElevationGrid> grid) { terrain_ = std::move(grid); }
-    const ElevationGrid* terrain() const { return terrain_.get(); }
+    // The region's terrain between the fields (nullptr: the blend alone),
+    // blended into the fields' blend over its last 5 km. Replaces every grid.
+    void setTerrain(std::shared_ptr<const ElevationGrid> grid);
+    // A nested grid (finer than those it lies over), blended into them over
+    // its last `blend` m inside its edge. One with the same origin, spacing
+    // and size as one already set replaces it.
+    void addTerrain(std::shared_ptr<const ElevationGrid> grid, Real blend = 2000);
+    // The coarsest grid (the region's; nullptr without one), and all of them
+    // from the coarsest to the finest.
+    const ElevationGrid* terrain() const { return grids_.empty() ? nullptr : grids_.front().grid.get(); }
+    int terrainCount() const { return static_cast<int>(grids_.size()); }
+    const ElevationGrid* terrain(int i) const { return grids_[static_cast<std::size_t>(i)].grid.get(); }
+    // The grids' height at a horizontal position (m above the frame's
+    // origin, before any blending into the fields) and how far it is the
+    // grids' (1 well inside the region grid, 0 off every grid: then the
+    // fields' blend alone).
+    Real gridHeight(Real north, Real east, Real& cover) const;
     // The terrain's down coordinate at a horizontal position (runways lie on it).
     Real terrainDown(Real north, Real east) const;
     void surfaceAt(Real north, Real east, Real& down, Vec3& normal, SurfaceProperties& s) const;
@@ -176,9 +196,13 @@ public:
 
 private:
     Real blendDown(Real north, Real east) const;
+    struct Grid {
+        std::shared_ptr<const ElevationGrid> grid;
+        Real blend = 5000;  // m inside its edge over which it blends into what lies under it
+    };
     Real waterDepth_ = 0;
     std::vector<Field> fields_;
-    std::shared_ptr<const ElevationGrid> terrain_;
+    std::vector<Grid> grids_;  // coarsest first
 };
 
 }  // namespace avd
