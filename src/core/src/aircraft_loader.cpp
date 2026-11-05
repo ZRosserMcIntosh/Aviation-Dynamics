@@ -242,6 +242,13 @@ void readPanel(Obj& o, InstrumentPanelDef& p) {
         a.num("spin_up_time_constant_s", p.attitude.spinUpTime);
         a.num("spin_down_time_constant_s", p.attitude.spinDownTime);
         a.num("minimum_useful_spin", p.attitude.minimumUsefulSpin);
+        std::string reference = "gyro";
+        a.str("reference", reference);
+        if (reference == "gyro") p.attitude.reference = AttitudeReference::Gyro;
+        else if (reference == "ahrs") p.attitude.reference = AttitudeReference::Ahrs;
+        else a.err(a.path() + ".reference", "must be gyro or ahrs");
+        a.num("ahrs_time_constant_s", p.attitude.ahrsTimeConstant);
+        a.num("align_time_s", p.attitude.alignTime);
     }
     if (o.has("heading_indicator")) {
         Obj a = o.child("heading_indicator");

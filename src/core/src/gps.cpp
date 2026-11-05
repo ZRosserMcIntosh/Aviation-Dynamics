@@ -49,7 +49,7 @@ const GpsIndication& GpsNavigator::update(const Vec3& pos, Real altitudeMsl, Rea
     const int last = static_cast<int>(route_.size()) - 1;
     auto from = [&]() { return direct_ || active_ == 0 ? directFrom_ : route_[static_cast<std::size_t>(active_ - 1)].position; };
     // Sequence: past the leg's end, or inside the turn anticipation distance
-    // of a fly-by waypoint (a standard-rate-ish 25 deg bank turn at this speed).
+    // of a fly-by waypoint (a 25 deg bank turn at this speed, and its roll-in).
     for (int k = 0; k < 2 && active_ < last; ++k) {
         const Vec3 a = from(), b = route_[static_cast<std::size_t>(active_)].position;
         const Real len = horizontal(a, b), t = track(a, b);
@@ -59,7 +59,12 @@ const GpsIndication& GpsNavigator::update(const Vec3& pos, Real altitudeMsl, Rea
             const Real turn = std::abs(wrapPi(track(b, route_[static_cast<std::size_t>(active_ + 1)].position) - t));
             const Real v = std::max(groundSpeed, 30.0);
             const Real r = v * v / (kStandardGravity * std::tan(0.4363));
-            anticipate = std::min(r * std::tan(0.5 * std::min(turn, 2.2)), 5000.0);
+            // Plus the roll-in: at an autopilot's 5 deg/s the bank takes ~5 s
+            // to build, the path curving from about half-way (an FMS's turn
+            // anticipation includes it; without, a jet overshot the next leg by
+            // half a kilometre).
+            const Real rollIn = v * 2.5 * std::min(turn / 0.4363, 1.0);
+            anticipate = std::min(r * std::tan(0.5 * std::min(turn, 2.2)) + rollIn, 5000.0);
         }
         if (along < len - anticipate) break;
         ++active_;

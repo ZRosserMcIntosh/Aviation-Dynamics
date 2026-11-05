@@ -1181,14 +1181,11 @@
    "dial_range_fpm": 6000
   },
   "attitude_indicator": {
+   "reference": "ahrs",
    "power": "electric",
    "electrical_load": "ahrs",
-   "erection_rate_deg_per_min": 10,
-   "pitch_limit_deg": 90,
-   "roll_limit_deg": 0,
-   "spin_up_time_constant_s": 5,
-   "spin_down_time_constant_s": 30,
-   "minimum_useful_spin": 0.5
+   "ahrs_time_constant_s": 0.05,
+   "align_time_s": 30
   },
   "heading_indicator": {
    "power": "electric",

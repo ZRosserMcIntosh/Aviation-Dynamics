@@ -112,9 +112,13 @@ struct CockpitState {
     Real altimeterSetting = 101325;  // Pa (Kollsman window)
     // Vertical speed indicator.
     Real verticalSpeed = 0;        // m/s (needle, limited by the dial)
-    // Attitude indicator (as displayed by the gyro).
+    // Attitude indicator (as displayed by the gyro, or by the AHRS).
     Real attitudePitch = 0, attitudeRoll = 0;
     bool attitudeTumbled = false;
+    // No valid attitude: an AHRS aligning, unpowered or failed (the red ATT
+    // flag; the display holds its last attitude), or an electric gyro's OFF
+    // flag without power. A vacuum gyro has no flag.
+    bool attitudeFlag = false;
     // Heading indicator.
     Real headingIndicator = 0;     // rad (card)
     Real headingBug = 0;           // rad
@@ -177,7 +181,7 @@ struct InstrumentTruth {
     Vec3 omegaBody;
     Real slipAngle = 0;            // rad, apparent-vertical lateral angle (ball equilibrium)
     Real staticPressureMeasured = 0, totalPressureMeasured = 0;
-    Real attitudeGyroSpin = 0, headingGyroSpin = 0, turnGyroSpin = 0;
+    Real attitudeGyroSpin = 0, headingGyroSpin = 0, turnGyroSpin = 0;  // 0..1 (an AHRS: its alignment)
     Real pitotIce = 0;             // kg of ice on the pitot probe
     Real pitotHeat = 0;            // 0..1 heater effectiveness (warm-up)
     bool pitotIced = false;        // ice has closed the ram inlet
@@ -234,8 +238,17 @@ public:
     const PitotStaticFaults& faults() const { return faults_; }
     void setAttitudeGyroFailed(bool f) { aiFailed_ = f; }
     // Caging knob: square the attitude gyro to the case and clear a tumble.
+    // On an AHRS, the reset: it re-aligns (the ATT flag for its alignment
+    // time), from whatever attitude it is in.
     void cageAttitude(const Quat& attitude);
     void setHeadingGyroFailed(bool f) { hiFailed_ = f; }
+    // A glass cockpit's attitude and heading reference (a G1000's AHRS and
+    // magnetometer, on the main bus) in place of the aircraft's own gyros, or
+    // (false) back to what its data fit. Switched aligned and on the current
+    // attitude, as if it had been flying all along. The aircraft's sensor
+    // power follows def() (Aircraft::setAhrsReference).
+    void setAhrsReference(bool on, const Quat& attitude);
+    bool ahrsReference() const { return def_.attitude.reference == AttitudeReference::Ahrs; }
 
     // Standard relations (exposed for tests).
     static Real impactPressure(Real staticPressure, Real mach);
@@ -245,6 +258,7 @@ public:
 private:
     void updatePitotStatic(Real dt, const SensorInputs& in);
     void updateAttitude(Real dt, const SensorInputs& in);
+    void updateAhrs(Real dt, const SensorInputs& in);
     void updateHeading(Real dt, const SensorInputs& in);
     void updateTurnAndSlip(Real dt, const SensorInputs& in);
     void updateCompass(Real dt, const SensorInputs& in);
@@ -253,6 +267,8 @@ private:
     Real spinTarget(GyroPower p, bool electricPowered, Real suction) const;
 
     InstrumentPanelDef def_;
+    AttitudeIndicatorDef dataAttitude_;  // as the aircraft's data fit them (setAhrsReference(false))
+    HeadingIndicatorDef dataHeading_;
     Table1D staticError_;
     Real regulatedSuction_ = 16932;
     PitotStaticFaults faults_;
@@ -272,6 +288,9 @@ private:
     bool aiAtStop_ = false;
     Real aiSpin_ = 0;
     bool aiFailed_ = false;
+    // AHRS: the filter's attitude estimate and the alignment's progress (s).
+    Quat ahrsAttitude_;
+    Real ahrsAlign_ = 0;
     // Directional gyro: horizontal spin-axis azimuth (true, rad) and card offset.
     Real dgAxisAzimuth_ = 0, dgCardOffset_ = 0, dgSpin_ = 0;
     Real dgLastHeading_ = 0;            // true heading last step (a stopped rotor turns with the case)
