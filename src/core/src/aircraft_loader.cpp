@@ -242,6 +242,13 @@ void readPanel(Obj& o, InstrumentPanelDef& p) {
         a.num("spin_up_time_constant_s", p.attitude.spinUpTime);
         a.num("spin_down_time_constant_s", p.attitude.spinDownTime);
         a.num("minimum_useful_spin", p.attitude.minimumUsefulSpin);
+        std::string reference = "gyro";
+        a.str("reference", reference);
+        if (reference == "gyro") p.attitude.reference = AttitudeReference::Gyro;
+        else if (reference == "ahrs") p.attitude.reference = AttitudeReference::Ahrs;
+        else a.err(a.path() + ".reference", "must be gyro or ahrs");
+        a.num("ahrs_time_constant_s", p.attitude.ahrsTimeConstant);
+        a.num("align_time_s", p.attitude.alignTime);
     }
     if (o.has("heading_indicator")) {
         Obj a = o.child("heading_indicator");
@@ -509,6 +516,36 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         }
         d.dragItems.push_back(di);
     });
+    // Propeller block: "fixed_pitch" (piston engines) or "constant_speed"
+    // (turboprops: variable pitch with feather and reverse stops).
+    auto readPropeller = [&](Obj& o, PropellerDef& prop, bool constantSpeed) {
+        Obj pr = o.child("propeller", true);
+        std::string ptype = constantSpeed ? "constant_speed" : "fixed_pitch";
+        pr.str("type", ptype);
+        if (!constantSpeed && ptype != "fixed_pitch")
+            pr.err(pr.path() + ".type", "piston engines take a \"fixed_pitch\" propeller in schema v1");
+        if (constantSpeed && ptype != "constant_speed")
+            pr.err(pr.path() + ".type", "turboprops take a \"constant_speed\" propeller");
+        prop.variablePitch = constantSpeed;
+        pr.num("diameter_m", prop.diameter, 1, true);
+        pr.integer("blades", prop.blades, true);
+        pr.num("pitch_m", prop.pitch, 1, true);
+        pr.num("hub_radius_fraction", prop.hubRadiusFraction);
+        pr.table("chord", "r_over_r", "chord_m", prop.chordVsRadius);
+        if (pr.has("thickness")) pr.table("thickness", "r_over_r", "t_over_c", prop.thicknessVsRadius);
+        pr.num("korn_factor", prop.kornFactor);
+        if (pr.has("section")) {
+            Obj sec = pr.child("section");
+            readSection(sec, prop.section);
+        }
+        pr.num("inertia_kgm2", prop.inertia, 1, true);
+        pr.integer("bem_elements", prop.bemElements);
+        if (constantSpeed) {
+            pr.num("reverse_blade_angle_deg", prop.reverseBladeAngle, kDeg);
+            pr.num("fine_blade_angle_deg", prop.fineBladeAngle, kDeg);
+            pr.num("feather_blade_angle_deg", prop.featherBladeAngle, kDeg);
+        }
+    };
     r.each("engines", [&](Obj& o, std::size_t) {
         PistonEngineDef e;
         std::string type = "piston";
@@ -546,24 +583,21 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("oil_pump_psi_per_rpm", e.oilPumpPressurePerRpm, kPsi);
         o.num("oil_relief_psi", e.oilReliefPressure, kPsi);
         o.num("oil_viscosity_temperature_scale_k", e.oilViscosityTemperatureScale);
-        {
-            Obj pr = o.child("propeller", true);
-            std::string ptype = "fixed_pitch";
-            pr.str("type", ptype);
-            if (ptype != "fixed_pitch") pr.err(pr.path() + ".type", "only \"fixed_pitch\" is supported in schema v1");
-            pr.num("diameter_m", e.propeller.diameter, 1, true);
-            pr.integer("blades", e.propeller.blades, true);
-            pr.num("pitch_m", e.propeller.pitch, 1, true);
-            pr.num("hub_radius_fraction", e.propeller.hubRadiusFraction);
-            pr.table("chord", "r_over_r", "chord_m", e.propeller.chordVsRadius);
-            if (pr.has("thickness")) pr.table("thickness", "r_over_r", "t_over_c", e.propeller.thicknessVsRadius);
-            pr.num("korn_factor", e.propeller.kornFactor);
-            if (pr.has("section")) {
-                Obj sec = pr.child("section");
-                readSection(sec, e.propeller.section);
-            }
-            pr.num("inertia_kgm2", e.propeller.inertia, 1, true);
-            pr.integer("bem_elements", e.propeller.bemElements);
+        readPropeller(o, e.propeller, false);
+        // A float carburettor (absent: fuel injected): carburettor ice and
+        // the carb heat lever.
+        if (o.has("carburettor")) {
+            Obj cb = o.child("carburettor");
+            CarburettorDef& c = e.carburettor;
+            c.present = true;
+            cb.num("heat_rise_k", c.heatRise);
+            cb.num("heat_time_constant_s", c.heatTimeConstant);
+            cb.num("fuel_evaporation", c.fuelEvaporation);
+            cb.num("fuel_latent_heat_kj_per_kg", c.fuelLatentHeat, 1000);
+            cb.num("throttle_cooling", c.throttleCooling);
+            cb.num("capture_fraction", c.captureFraction);
+            cb.num("ice_to_close_g", c.iceToClose, 1e-3);
+            cb.num("melt_efficiency", c.meltEfficiency);
         }
         d.engines.push_back(e);
     });
@@ -613,6 +647,73 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
             rv.num("cowl_radius_m", e.reverser.cowlRadius);
         }
         d.turbofans.push_back(e);
+    });
+    r.each("turboprops", [&](Obj& o, std::size_t) {
+        TurbopropDef e;
+        constexpr Real kShp = 745.69987158227022;
+        o.str("name", e.name);
+        o.vec3("position_m", e.position, 1, true);
+        o.vec3("thrust_axis", e.thrustAxis);
+        o.boolean("clockwise_from_behind", e.clockwiseFromBehind);
+        o.num("rated_power_shp", e.ratedPower, kShp, true);
+        o.num("rated_prop_rpm", e.ratedPropRpm, 1, true);
+        o.num("min_governed_rpm", e.minGovernedRpm);
+        o.num("torque_limit", e.torqueLimit);
+        o.num("thermodynamic_power_shp", e.thermodynamicPower, kShp, true);
+        o.num("ng_max", e.ngMax);
+        o.num("ng_low_idle", e.ngLowIdle);
+        o.num("ng_high_idle", e.ngHighIdle);
+        o.num("ng_zero_power", e.ngZeroPower);
+        o.num("gas_power_exponent", e.gasPowerExponent);
+        o.num("ng_rpm", e.ngRpm);
+        // Celsius in the file (as the cockpit's ITT gauge), kelvin inside.
+        Real ittLimitC = e.ittLimit - 273.15, ittIdleC = e.ittIdle - 273.15;
+        o.num("itt_limit_c", ittLimitC);
+        o.num("itt_idle_c", ittIdleC);
+        e.ittLimit = ittLimitC + 273.15;
+        e.ittIdle = ittIdleC + 273.15;
+        o.num("itt_exponent", e.ittExponent);
+        o.num("itt_theta_exponent", e.ittThetaExponent);
+        o.num("turbine_stall_torque_ratio", e.turbineStallTorqueRatio);
+        o.num("acceleration_time_s", e.accelerationTime);
+        o.num("deceleration_time_s", e.decelerationTime);
+        o.num("start_time_s", e.startTime);
+        o.num("light_off_ng", e.lightOffNg);
+        o.num("starter_ng", e.starterNg);
+        o.num("self_sustaining_ng", e.selfSustainingNg);
+        o.num("starter_current_a", e.starterCurrent);
+        o.num("sfc_lb_per_shp_h", e.sfcRated, 0.45359237 / (kShp * 3600));
+        o.num("idle_fuel_flow_lb_per_h", e.idleFuelFlow, 0.45359237 / 3600);
+        o.num("oil_pressure_idle_psi", e.oilPressureIdle, kPsi);
+        o.num("oil_pressure_max_psi", e.oilPressureMax, kPsi);
+        o.num("oil_temperature_rise_k", e.oilTemperatureRise);
+        o.num("inertia_kgm2", e.inertia, 1, true);
+        o.num("friction_torque_fraction", e.frictionTorqueFraction);
+        if (o.has("governor")) {
+            Obj gv = o.child("governor");
+            gv.num("gain_deg_per_s_per_pct", e.governorGain, 100 * kDeg);
+            gv.num("lead_s", e.governorLead);
+            gv.num("pitch_rate_deg_per_s", e.pitchRate, kDeg);
+            gv.num("feather_rate_deg_per_s", e.featherRate, kDeg);
+            gv.num("oil_np_fraction", e.governorOilNp);
+        }
+        if (o.has("reverse")) {
+            Obj rv = o.child("reverse");
+            rv.num("beta_travel", e.betaTravel);
+            rv.num("reverse_ng", e.reverseNg);
+            rv.num("np_fraction", e.reverseNpFraction);
+        }
+        if (o.has("autofeather")) {
+            Obj af = o.child("autofeather");
+            e.autofeather = true;
+            af.num("arm_power_lever", e.autofeatherLever);
+            af.num("torque_fraction", e.autofeatherTorque);
+        }
+        o.num("p_factor_gain", e.pFactorGain);
+        o.num("slipstream_swirl_factor", e.slipstreamSwirlFactor);
+        o.integer("fuel_feed", e.fuelFeed);
+        readPropeller(o, e.propeller, true);
+        d.turboprops.push_back(e);
     });
     if (r.has("fuel")) {
         Obj f = r.child("fuel");
@@ -816,8 +917,33 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         s.num("alpha_margin_deg", d.stallWarning.alphaMargin, kDeg);
         s.num("pusher_margin_deg", d.stallWarning.pusherMargin, kDeg);
         s.num("pusher_elevator", d.stallWarning.pusherElevator);
+        s.num("icing_alpha_shift_deg", d.stallWarning.icingAlphaShift, kDeg);
     } else {
         d.stallWarning.present = false;
+    }
+    if (r.has("ice_protection")) {
+        // Airframe ice protection: which surfaces, by what, on which switch.
+        Obj ip = r.child("ice_protection");
+        IceProtectionDef& p = d.iceProtection;
+        ip.each("surfaces", [&](Obj& o, std::size_t) {
+            SurfaceIceProtectionDef sp;
+            std::string type = "thermal";
+            o.integer("surface", sp.surface, true);
+            o.str("type", type);
+            if (type == "thermal") sp.type = IceProtectionType::Thermal;
+            else if (type == "boots") sp.type = IceProtectionType::Boots;
+            else o.err(o.path() + ".type", "must be \"thermal\" or \"boots\"");
+            o.str("switch", sp.switchName);
+            p.surfaces.push_back(sp);
+        });
+        ip.num("bleed_thrust_loss", p.bleedThrustLoss);
+        ip.num("heat_flux_kw_per_m2", p.heatFlux, 1000);
+        ip.num("heat_time_constant_s", p.heatTimeConstant);
+        ip.num("minimum_n2", p.minimumN2);
+        ip.num("boot_cycle_s", p.bootCycle);
+        ip.num("boot_residual_mm", p.bootResidual, 1e-3);
+        ip.boolean("windshield_heat", p.windshieldHeat);
+        ip.boolean("ice_detector", p.iceDetector);
     }
     if (r.has("vacuum")) {
         Obj v = r.child("vacuum");

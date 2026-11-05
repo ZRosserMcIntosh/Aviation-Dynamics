@@ -97,6 +97,12 @@
    "note": "VMO 335 KIAS, MMO 0.85; flaps [0, 1, 8, 20, 30, 45] with VFE [230, 230, 220, 185, 170] (some flap placards estimated)."
   },
   {
+   "field": "ice_protection",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Bleed-air wing leading-edge anti-ice; the tail is unprotected (the CRJ's); heated windshield, an ice detector. Thermal anti-ice takes 4 % of each lit engine's thrust in bleed (Estimated); full heat from 60 % N2."
+  },
+  {
    "field": "surfaces[0].panels[*].controls[flap].clmax_increment_ratio",
    "kind": "calibrated",
    "source": "EST",
@@ -1057,6 +1063,18 @@
   "pusher_margin_deg": 0.2,
   "pusher_elevator": -0.7
  },
+ "ice_protection": {
+  "surfaces": [
+   {
+    "surface": 0,
+    "type": "thermal",
+    "switch": "wing"
+   }
+  ],
+  "bleed_thrust_loss": 0.04,
+  "windshield_heat": true,
+  "ice_detector": true
+ },
  "vacuum": {
   "present": false
  },
@@ -1119,14 +1137,11 @@
    "dial_range_fpm": 6000
   },
   "attitude_indicator": {
+   "reference": "ahrs",
    "power": "electric",
    "electrical_load": "ahrs",
-   "erection_rate_deg_per_min": 10,
-   "pitch_limit_deg": 90,
-   "roll_limit_deg": 0,
-   "spin_up_time_constant_s": 5,
-   "spin_down_time_constant_s": 30,
-   "minimum_useful_spin": 0.5
+   "ahrs_time_constant_s": 0.05,
+   "align_time_s": 30
   },
   "heading_indicator": {
    "power": "electric",

@@ -62,8 +62,11 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
     ac.setCockpitControl("brakes.parking", 0);
     ac.setQuasiSteadyDownwash(true);
     // Piston + propeller: the shaft speed is a fourth unknown (shaft
-    // acceleration = 0). Turbofans are held at their commanded fan speed.
+    // acceleration = 0). Turbofans are held at their commanded fan speed;
+    // turboprops at their commanded Ng with the governor's blade angle
+    // holding the selected Np (Aircraft::setTurbofansSteady).
     const bool piston = ac.engineCount() > 0;
+    const bool turboprop = ac.turbopropCount() > 0;
     const bool ths = ac.hasTrimmableStabilizer();
     ac.setTurbofansSteady(!piston);
     const int n = piston ? 4 : 3;
@@ -96,6 +99,7 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
         in.throttle = t.v[Throttle];
         in.mixture = mixture;
         in.thrustMode = req.thrustMode;
+        in.propLever = req.propLever;
     };
     auto residual = [&](const TrimVars& t, Real r[4]) {
         DynamicState s;
@@ -103,6 +107,7 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
         build(t, s, in);
         ac.setState(s);
         ac.prepareContext(in, ground, atm);
+        for (int i = 0; turboprop && i < ac.turbopropCount(); ++i) s.shaftOmega[i] = ac.state().shaftOmega[i];  // settled Np
         const Aircraft::Derivatives d = ac.evaluate(s);
         const Vec3 aBody = s.body.attitude.inverseRotate(d.body.velocity);
         r[0] = aBody.x / kStandardGravity;
@@ -114,47 +119,58 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
     const Real step[6] = {1e-4, 1e-4, 1e-2, 1e-4, 1e-5, 1e-3};
     const Real maxStep[6] = {0.08, 0.2, 30, 0.15, 0.05, 3};
     Real r[4];
-    for (int it = 0; it < 80; ++it) {
-        residual(x, r);
-        res.residual = std::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2] + r[3] * r[3]);
-        if (res.residual < 1e-7) { res.converged = true; break; }
-        Real J[4][4];
-        for (int j = 0; j < n; ++j) {
-            TrimVars xp = x;
-            xp.v[unknown[j]] += step[unknown[j]];
-            Real rp[4];
-            residual(xp, rp);
-            for (int i = 0; i < n; ++i) J[i][j] = (rp[i] - r[i]) / step[unknown[j]];
+    // Turboprops: the fuel control's limiters make the power flat beyond the
+    // torque limit, where a Newton step can strand the lever (a zero
+    // derivative); if so, start again from other lever guesses.
+    const TrimVars x0 = x;
+    const int attempts = turboprop && req.throttle < 0 ? 3 : 1;
+    for (int attempt = 0; attempt < attempts && !res.converged; ++attempt) {
+        if (attempt > 0) {
+            x = x0;
+            x.v[Throttle] = attempt == 1 ? 0.3 : 0.9;
         }
-        Real b[4] = {-r[0], -r[1], -r[2], -r[3]}, dx[4] = {};
-        if (!solveN(n, J, b, dx)) break;
-        // Backtracking line search on the residual norm.
-        Real lambda = 1.0;
-        TrimVars best = x;
-        Real bestNorm = res.residual;
-        for (int ls = 0; ls < 8; ++ls, lambda *= 0.5) {
-            TrimVars xt = x;
+        for (int it = 0; it < 80; ++it) {
+            residual(x, r);
+            res.residual = std::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2] + r[3] * r[3]);
+            if (res.residual < 1e-7) { res.converged = true; break; }
+            Real J[4][4];
             for (int j = 0; j < n; ++j) {
-                const int u = unknown[j];
-                xt.v[u] += clamp(lambda * dx[j], -maxStep[u], maxStep[u]);
+                TrimVars xp = x;
+                xp.v[unknown[j]] += step[unknown[j]];
+                Real rp[4];
+                residual(xp, rp);
+                for (int i = 0; i < n; ++i) J[i][j] = (rp[i] - r[i]) / step[unknown[j]];
             }
-            xt.v[Elevator] = clamp(xt.v[Elevator], ths ? -2.0 : -1.0, ths ? 2.0 : 1.0);
-            xt.v[Throttle] = clamp(xt.v[Throttle], 0.0, 1.0);
-            xt.v[Omega] = std::max(xt.v[Omega], 20.0);
-            xt.v[Tas] = std::max(xt.v[Tas], 10.0);
-            Real rt[4];
-            residual(xt, rt);
-            const Real norm = std::sqrt(rt[0] * rt[0] + rt[1] * rt[1] + rt[2] * rt[2] + rt[3] * rt[3]);
-            if (norm < bestNorm) {
-                best = xt;
-                bestNorm = norm;
-                break;
+            Real b[4] = {-r[0], -r[1], -r[2], -r[3]}, dx[4] = {};
+            if (!solveN(n, J, b, dx)) break;
+            // Backtracking line search on the residual norm.
+            Real lambda = 1.0;
+            TrimVars best = x;
+            Real bestNorm = res.residual;
+            for (int ls = 0; ls < 8; ++ls, lambda *= 0.5) {
+                TrimVars xt = x;
+                for (int j = 0; j < n; ++j) {
+                    const int u = unknown[j];
+                    xt.v[u] += clamp(lambda * dx[j], -maxStep[u], maxStep[u]);
+                }
+                xt.v[Elevator] = clamp(xt.v[Elevator], ths ? -2.0 : -1.0, ths ? 2.0 : 1.0);
+                xt.v[Throttle] = clamp(xt.v[Throttle], 0.0, 1.0);
+                xt.v[Omega] = std::max(xt.v[Omega], 20.0);
+                xt.v[Tas] = std::max(xt.v[Tas], 10.0);
+                Real rt[4];
+                residual(xt, rt);
+                const Real norm = std::sqrt(rt[0] * rt[0] + rt[1] * rt[1] + rt[2] * rt[2] + rt[3] * rt[3]);
+                if (norm < bestNorm) {
+                    best = xt;
+                    bestNorm = norm;
+                    break;
+                }
             }
+            if (bestNorm >= res.residual) break;  // stalled
+            x = best;
         }
-        if (bestNorm >= res.residual) break;  // stalled
-        x = best;
+        if (!res.converged && res.residual < 1e-4) res.converged = true;
     }
-    if (!res.converged && res.residual < 1e-4) res.converged = true;
 
     DynamicState s;
     PilotInput in;
@@ -182,7 +198,20 @@ TrimResult trim(Aircraft& ac, const TrimRequest& req, const AtmosphereField& atm
     res.tas = x.v[Tas];
     res.state = ac.state();
     res.input = in;
-    if (!piston) {
+    if (turboprop) {
+        const AirSample a = atm.sample(s.body.position, req.altitude, 0);
+        res.rpm = ac.state().shaftOmega[0] * 60 / kTwoPi;
+        for (int i = 0; i < ac.turbopropCount(); ++i) {
+            const TurbopropState& ts = ac.turbopropState(i);
+            const Real omega = ac.state().shaftOmega[i];
+            const PropellerForces pf = ac.propeller(i).evaluate(x.v[Tas] * std::cos(res.alpha), omega, a.state.density,
+                                                                a.state.speedOfSound, ts.bladeAngle);
+            res.thrust += pf.thrust;
+            res.brakePower += ts.shaftPower;
+            res.fuelFlow += ts.fuelFlow;
+            res.propEfficiency = pf.efficiency;
+        }
+    } else if (!piston) {
         for (int i = 0; i < ac.turbofanCount(); ++i) {
             res.thrust += ac.turbofanState(i).thrust;
             res.fuelFlow += ac.turbofanState(i).fuelFlow;

@@ -81,6 +81,12 @@ range (FAA handbooks, manufacturer data for typical instruments) in
    heading bug), turn coordinator (canted rate gyro, power flag), inclinometer
    (damped ball on apparent gravity), magnetic compass (pendulous card in the local
    field with dip: turning and acceleration errors emerge; deviation card).
+   An AHRS attitude source for the jets (`attitude_indicator.reference: "ahrs"`):
+   the truth through a 0.05 s filter lag, no erection or turn errors, no gimbal
+   stops; a red ATT flag (`CockpitState::attitudeFlag`) while it aligns (30 s from
+   power or a reset, in any attitude), unpowered or failed, the display holding.
+   `Aircraft::setAhrsReference(true)` puts a gyro aircraft (a G1000 172) on an
+   AHRS attitude and magnetometer-slaved heading at run time.
 4. ✅ Engine/system gauges: tachometer, oil pressure (pump + relief valve + viscosity),
    oil temperature, fuel quantity L/R, EGT/fuel flow, ammeter, suction, annunciators
    (OIL PRESS, LOW VAC, VOLTS, L/R LOW FUEL), clock, OAT; stall warning stays the

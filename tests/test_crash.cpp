@@ -77,6 +77,10 @@ TEST_CASE("crash: a firm drop is absorbed; past the reserve-energy sink rate the
         CHECK(bellyContact);
         CHECK(h.dri > f.dri && h.peakG > f.peakG);
         CHECK(!hard.faulted());
+        // Placed again, it stands on its legs: the damage was that flight's.
+        hard.placeOnGround(0, 0, 0, g, atm);
+        CHECK(!collapsedAny(hard) && !hard.structurallyFailed());
+        CHECK(hard.occupant().peakG < 1.5);
     }
 }
 

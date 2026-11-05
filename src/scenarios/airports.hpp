@@ -106,6 +106,14 @@ std::unique_ptr<RegionGround> makeRegionGround(const std::vector<Airport>& airpo
 // SRTM 1", 200 m grid), read once; nullptr if the file is missing. Give it to
 // a RegionGround with setTerrain for the hills between the fields.
 std::shared_ptr<const ElevationGrid> saoPauloTerrain();
+// The city's finer terrain (data/world/terrain_sp_city.avt, tools/terrain
+// --detail: 50 m over the São Paulo municipality, the Pico do Jaraguá and the
+// Serra da Cantareira, the buildings' bias filtered out), read once; nullptr
+// if the file is missing. Nest it in the region's with RegionGround::addTerrain.
+std::shared_ptr<const ElevationGrid> saoPauloCityTerrain();
+// A RegionGround with both of them (what the browser's ground is with
+// avd_terrain and avd_terrain_detail): the region's fields, terrain and city detail.
+std::unique_ptr<RegionGround> makeSaoPauloGround();
 
 // The landing threshold of runway end `r` (past any displaced threshold).
 Vec3 landingThreshold(const RunwayDef& r);

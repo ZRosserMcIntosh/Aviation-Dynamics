@@ -377,6 +377,18 @@ struct WindStation {
 // a thunderstorm outflow. Behind the front the surface wind is the new one,
 // through a layer `depth` deep; the change happens across `width`. A gust
 // front's head lifts the air along its leading edge (`noseUpdraft`).
+//
+// A front can also bring a new airmass (opt-in; all zero: the wind only).
+// Behind it the temperature deviation and the mean-sea-level pressure (QNH)
+// differ by `temperatureChange` and `pressureChange`, across a transition
+// `airmassWidth` wide (0: the wind's `width`); the pressure trough that runs
+// with a front (the barometer falls ahead, rises behind) is `pressureTrough`
+// deep at the line, over the same width. A cold front: about -3..-10 K and
+// +1..+5 hPa behind, a trough of 1-3 hPa; a warm front: +2..+5 K, the
+// pressure falling ahead of it and steady behind (Wallace & Hobbs,
+// "Atmospheric Science", 2nd ed., ch. 8). The airmass applies to the whole
+// column over the front's surface position (hydrostatic with the new
+// temperature): the frontal slope (~1:50 to 1:200) is not modelled.
 struct WindShift {
     Real north = 0, east = 0;     // a point on the front at startTime
     Real heading = 0;             // rad, direction the front moves
@@ -387,9 +399,18 @@ struct WindShift {
     Real newFromDirection = 0;    // rad
     Real depth = 1000;            // m AGL of the new airmass
     Real noseUpdraft = 0;         // m/s at the leading edge
+    Real temperatureChange = 0;   // K, behind minus ahead
+    Real pressureChange = 0;      // Pa, MSL pressure behind minus ahead
+    Real pressureTrough = 0;      // Pa (>= 0), extra dip at the front line
+    Real airmassWidth = 0;        // m, temperature/pressure transition (0: width)
     // 0 ahead of the front, 1 behind it (at a height AGL).
     Real behind(const Vec3& x, Real heightAgl, Real t) const;
     Real updraft(const Vec3& x, Real heightAgl, Real t) const;  // m/s, + up
+    // The airmass change: 0 ahead .. 1 behind (whole column), and the trough
+    // (Pa, >= 0) at a place and time.
+    bool changesAirmass() const { return temperatureChange != 0 || pressureChange != 0 || pressureTrough != 0; }
+    Real airmass(const Vec3& x, Real t) const;
+    Real trough(const Vec3& x, Real t) const;
 };
 
 // A building, hangar or tree line: a velocity deficit and extra turbulence

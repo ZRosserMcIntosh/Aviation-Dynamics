@@ -11,6 +11,23 @@ constexpr Real kGlidepath = 0.0524;      // 3 deg
 constexpr Real kGsFullScale = 0.0122;    // 0.7 deg
 }  // namespace
 
+BeamDeviation ilsDeviation(const NavIndication& n, Real range, Real runwayLength) {
+    BeamDeviation d;
+    if (n.valid && n.localizer) {
+        d.lateralValid = true;
+        d.lateral = -n.cdi * 106.7 * std::max(range + runwayLength + 300, 300.0) / (runwayLength + 300);
+    }
+    if (n.valid && n.glideslopeValid) {
+        d.verticalValid = true;
+        d.vertical = -n.glideslope * std::tan(kGsFullScale) * std::max(range + 300, 150.0);
+    }
+    return d;
+}
+
+Real rangeOnGlidepath(Real heightAboveThreshold, Real thresholdCrossing) {
+    return std::max((heightAboveThreshold - thresholdCrossing) / std::tan(kGlidepath), 0.0);
+}
+
 PilotInput ApproachPilot::update(const Aircraft& ac, Real dt) {
     PilotInput in = controls;
     const CockpitState& r = ac.instruments().readings();
@@ -53,18 +70,13 @@ PilotInput ApproachPilot::update(const Aircraft& ac, Real dt) {
     // Distance to the threshold from the height on the path; past it (below
     // the crossing height) the distance flown since, at the airspeed.
     if (phase_ != Phase::Intercept && baroHeight < thresholdCrossing) pastThreshold_ += ias * dt;
-    const Real range = pastThreshold_ > 0 ? -pastThreshold_ : std::max((baroHeight - thresholdCrossing) / std::tan(kGlidepath), 0.0);
+    const Real range = pastThreshold_ > 0 ? -pastThreshold_ : rangeOnGlidepath(baroHeight, thresholdCrossing);
     if (source == Source::Ils) {
-        const NavIndication& n = r.nav1;
-        if (n.valid && n.localizer) {
-            latValid = true;
-            // The localizer antenna is ~300 m beyond the far end; full scale is 106.7 m at the threshold.
-            y_ = -n.cdi * 106.7 * std::max(range + runwayLength + 300, 300.0) / (runwayLength + 300);
-        }
-        if (n.valid && n.glideslopeValid) {
-            vertValid = true;
-            z_ = -n.glideslope * std::tan(kGsFullScale) * std::max(range + 300, 150.0);
-        }
+        const BeamDeviation d = ilsDeviation(r.nav1, range, runwayLength);
+        latValid = d.lateralValid;
+        vertValid = d.verticalValid;
+        if (latValid) y_ = d.lateral;
+        if (vertValid) z_ = d.vertical;
     } else if (gps && gps->valid) {
         latValid = true;
         y_ = gps->crossTrack;
@@ -103,7 +115,10 @@ PilotInput ApproachPilot::update(const Aircraft& ac, Real dt) {
     // heavy jet sinks faster on its approach and needs the room), at least
     // 40 ft on the radio altimeter (15 ft on the barometric one).
     const Real flareAt = flareHeight > 0 ? flareHeight : std::max(radioAltimeter ? 12.0 : 5.0, -5.0 * vsNow);
-    const Real idleAt = idleHeight > 0 ? idleHeight : (radioAltimeter ? 6.0 : 3.0);
+    // The retard: at 10 ft on the radio altimeter (a 737's autoland retards
+    // at 27 ft and is at idle at touchdown; begun at 20 ft, the speed it bled
+    // off in the last metres sank the jets in at 280-430 fpm).
+    const Real idleAt = idleHeight > 0 ? idleHeight : 3.0;
     if (phase_ == Phase::Intercept && vertValid && z_ > -8 && std::abs(y_) < 150) phase_ = Phase::Final;
     if (phase_ == Phase::Final && height < flareAt) {
         phase_ = Phase::Flare;
@@ -177,7 +192,7 @@ PilotInput ApproachPilot::update(const Aircraft& ac, Real dt) {
         // (time constant set so it matches the sink at flare entry) plus a
         // small touchdown sink, so the path meets the runway gently instead of
         // levelling off above it.
-        const Real touchdown = radioAltimeter ? 0.6 : 0.3;
+        const Real touchdown = radioAltimeter ? 0.4 : 0.3;
         const Real tau = flareH_ / std::max(-flareVs_ - touchdown, 0.3);
         vsTarget = -(std::max(height, 0.0) / tau + touchdown);
     }
@@ -190,6 +205,7 @@ PilotInput ApproachPilot::update(const Aircraft& ac, Real dt) {
     // attitude once the sink matches (proportional alone let the nose back
     // down and dropped the airplane the last few metres), at most 7 deg above
     // the entry attitude.
+    const Real flareIntPrev = flareInt_;
     if (phase_ == Phase::Flare) flareInt_ = clamp(flareInt_ + 0.015 * (vsTarget - vsNow) * dt, -0.05, 0.12);
     // Never more than 1 deg below the highest flare attitude yet: lowering the
     // nose in the flare is how a pilot (and this one did) drops it in. Once
@@ -197,10 +213,38 @@ PilotInput ApproachPilot::update(const Aircraft& ac, Real dt) {
     // floor levelled a CRJ off at 20 ft and floated it 800 m.
     const bool arrested = vsNow > vsTarget + 0.3;
     if (phase_ == Phase::Flare) flareMax_ = std::max(flareMax_, pitchTarget_);
-    const Real floor = arrested ? std::max(flarePitch_ - 0.035, flareMax_ - 0.04) : std::max(flarePitch_, flareMax_ - 0.017);
-    const Real want = phase_ == Phase::Flare
-                          ? clamp(flarePitch_ + 0.025 * (vsTarget - vsNow) + flareInt_, floor, flarePitch_ + 0.12)
+    Real floor = arrested ? std::max(flarePitch_ - 0.035, flareMax_ - 0.04) : std::max(flarePitch_, flareMax_ - 0.017);
+    // Below 2 m (the radio altimeter's flare) the nose is never lowered at
+    // all: there the wing loses lift as the ground comes up (see below) and
+    // a nose let down 2 deg after a level-off at 6 ft dropped a 737 in.
+    if (radioAltimeter && arrested && height < 2.0) floor = std::max(floor, flareMax_);
+    // The radio altimeter's law is firmer, and firmer still in the last 3 m
+    // (up to 11 times at the runway): the wing's lift falls about 10 % at a
+    // fixed attitude from 10 m down to 2 m of wheel height in this model's
+    // ground effect, the sink grows there whatever the attitude was, and only
+    // a quick answer to it in the last seconds holds the touchdown under
+    // 200 fpm. (Firmer all the way down, the flare arrested high in the
+    // city's turbulence, floated and dropped a CRJ in at 700 fpm.)
+    const Real flareK = radioAltimeter ? 0.03 * (1 + 10 * clamp((3.0 - height) / 3.0, 0.0, 1.0)) : 0.025;
+    const Real rawFlare = flarePitch_ + flareK * (vsTarget - vsNow) + flareInt_;
+    Real want = phase_ == Phase::Flare
+                          ? clamp(rawFlare, floor, flarePitch_ + 0.12)
                           : clamp(pitchRef + vsPid_.update(vsTarget - vsNow, dt), -0.2, 0.25);
+    // The stall warning (the shaker, the horn) caps the nose where it is:
+    // nothing more is asked of the wing (in ground effect its stalling angle
+    // falls; a Top G's flare reached its pusher at 7 deg of alpha).
+    const bool shaker = phase_ == Phase::Flare && radioAltimeter && r.stallHorn;
+    if (shaker) want = std::min(want, pitch - 0.005);
+    // The integral is kept from winding against the limits (radio altimeter
+    // law): held while the floor, the ceiling or the shaker holds the nose;
+    // and while the floor holds it, set so the law stands at the floor, so
+    // the first sign of a sink raises the nose from there (wound down in a
+    // float, it left the attitude on the floor while a CRJ sank in at 500 fpm).
+    if (phase_ == Phase::Flare && radioAltimeter) {
+        const Real e = vsTarget - vsNow;
+        if ((rawFlare <= floor && e < 0) || ((rawFlare >= flarePitch_ + 0.12 || shaker) && e > 0)) flareInt_ = flareIntPrev;
+        if (rawFlare < floor) flareInt_ = std::min(flareInt_ + (floor - rawFlare), 0.15);
+    }
     if (!havePitchTarget_) pitchTarget_ = pitch, havePitchTarget_ = true;
     const Real slew = (phase_ == Phase::Flare ? 0.052 : 0.035) * dt;
     pitchTarget_ += clamp(want - pitchTarget_, -slew, slew);

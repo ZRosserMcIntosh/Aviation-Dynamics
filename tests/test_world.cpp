@@ -329,3 +329,119 @@ TEST_CASE("region terrain: the SRTM grid between the fields -- the hills where t
     CHECK(!bad.parse(junk, sizeof junk));
     CHECK(bad.empty());
 }
+
+TEST_CASE("region terrain: the city's 50 m grid nested in the region's -- the peaks kept, the floors and ridges where they are, no step at its edge") {
+    const auto coarse = scenarios::saoPauloTerrain();
+    const auto city = scenarios::saoPauloCityTerrain();
+    CHECK(coarse != nullptr && city != nullptr);
+    if (!coarse || !city) return;
+    CHECK_NEAR(city->spacing(), 50, 1e-9);
+    CHECK(city->nx() > 900 && city->ny() > 1100);
+    auto fine = [&](Real lat, Real lon) {
+        const Vec3 p = scenarios::saoPauloMapNed(lat, lon);
+        return city->heightAt(p.x, p.y);
+    };
+    auto region = [&](Real lat, Real lon) {
+        const Vec3 p = scenarios::saoPauloMapNed(lat, lon);
+        return coarse->heightAt(p.x, p.y);
+    };
+    // The summit of the Pico do Jaraguá (1,135 m; SRTM's highest return
+    // there, 1,132 m, is at -23.4592, -46.7669), the Cantareira's highest
+    // (SRTM 1,195 m) and its Pedra Grande (~1,010 m), MASP on the Paulista
+    // ridge (~820 m), the Pinheiros and Tietê floors (~720 m), Congonhas'
+    // plateau (field 802 m) and Campo de Marte on the Tietê (722 m).
+    const Real jaragua = fine(-23.4592, -46.7669), jaraguaCoarse = region(-23.4592, -46.7669);
+    const Real cantareira = fine(-23.4164, -46.6233), pedraGrande = fine(-23.4256, -46.6347);
+    const Real masp = fine(-23.5611, -46.6558), pinheiros = fine(-23.5865, -46.6955), tiete = fine(-23.5205, -46.6330);
+    const Real congonhas = fine(-23.6261, -46.6564), marte = fine(-23.5092, -46.6378);
+    std::cerr << "  city grid: Jaragua " << jaragua << " m (region grid " << jaraguaCoarse << "), Cantareira " << cantareira
+              << ", Pedra Grande " << pedraGrande << ", MASP " << masp << ", Pinheiros " << pinheiros << ", Tiete " << tiete
+              << ", Congonhas " << congonhas << ", Campo de Marte " << marte << "\n";
+    CHECK_RANGE(jaragua, 1100, 1140);
+    CHECK(jaragua > jaraguaCoarse + 40);  // the 200 m cell's percentile rounds the peak off
+    CHECK_RANGE(cantareira, 1150, 1200);
+    CHECK_RANGE(pedraGrande, 990, 1040);
+    CHECK_RANGE(masp, 805, 830);
+    CHECK_RANGE(pinheiros, 715, 732);
+    CHECK_RANGE(tiete, 715, 732);
+    CHECK_RANGE(congonhas, 785, 805);
+    CHECK_RANGE(marte, 712, 728);
+
+    // The ground with both grids: the city's inside it, the region's well off
+    // it, and no step across its edge.
+    const auto both = scenarios::makeSaoPauloGround();
+    CHECK(both->terrainCount() == 2 && both->terrain() == coarse.get() && both->terrain(1) == city.get());
+    const Vec3 jp = scenarios::saoPauloMapNed(-23.4592, -46.7669);
+    CHECK_NEAR(-both->terrainDown(jp.x, jp.y), city->heightAt(jp.x, jp.y), 1e-6);
+    const Vec3 far = scenarios::saoPauloMapNed(-23.30, -47.10);  // beyond the city grid, between the fields
+    CHECK(city->inside(far.x, far.y) < 0);
+    CHECK_NEAR(-both->terrainDown(far.x, far.y), coarse->heightAt(far.x, far.y), 1e-6);
+    // Across each edge, every 200 m along it: just inside and just outside
+    // agree, and through the 2 km blend the ground rises or falls no faster
+    // than the grids themselves.
+    const Real w = (city->nx() - 1) * city->spacing(), h = (city->ny() - 1) * city->spacing();
+    const Real e0 = city->east0(), n0 = city->north0();
+    Real worstStep = 0, worstBlend = 0, worstGrid = 0;
+    int crossings = 0;
+    for (int side = 0; side < 4; ++side) {
+        const Real len = side < 2 ? h : w;
+        for (Real s = 2500; s < len - 2500; s += 200) {
+            // Point on the edge and the inward direction.
+            Real n = 0, e = 0, dn = 0, de = 0;
+            if (side == 0) n = n0 + s, e = e0, de = 1;
+            if (side == 1) n = n0 + s, e = e0 + w, de = -1;
+            if (side == 2) n = n0, e = e0 + s, dn = 1;
+            if (side == 3) n = n0 + h, e = e0 + s, dn = -1;
+            worstStep = std::max(worstStep, std::abs(both->terrainDown(n + 0.05 * dn, e + 0.05 * de) -
+                                                     both->terrainDown(n - 0.05 * dn, e - 0.05 * de)));
+            Real prev = both->terrainDown(n - 100 * dn, e - 100 * de);
+            for (Real d = -75; d <= 2500; d += 25) {
+                const Real cur = both->terrainDown(n + d * dn, e + d * de);
+                // The grids' own change over the same 25 m (the steeper of the two).
+                const Real gc = std::abs(coarse->heightAt(n + d * dn, e + d * de) - coarse->heightAt(n + (d - 25) * dn, e + (d - 25) * de));
+                const Real gf = d >= 25 ? std::abs(city->heightAt(n + d * dn, e + d * de) - city->heightAt(n + (d - 25) * dn, e + (d - 25) * de)) : 0;
+                worstBlend = std::max(worstBlend, std::abs(cur - prev) - std::max(gc, gf));
+                worstGrid = std::max(worstGrid, std::max(gc, gf));
+                prev = cur;
+            }
+            ++crossings;
+        }
+    }
+    std::cerr << "  city grid edge: " << crossings << " crossings, step at the edge " << worstStep
+              << " m, worst excess over the grids' own slope in the blend " << worstBlend << " m per 25 m (steepest grid "
+              << worstGrid << ")\n";
+    CHECK(crossings > 400);
+    CHECK(worstStep < 0.2);
+    CHECK(worstBlend < 2.0);
+
+    // The fields stay flat, the city's two included, and there is no cliff at their edges.
+    for (const RegionGround::Field& f : both->fields()) {
+        CHECK(std::abs(both->terrainDown(f.north, f.east) - f.down) < 1e-9);
+        for (const RunwayDef& r : f.runways) CHECK(std::abs(both->terrainDown(r.threshold.x, r.threshold.y) - f.down) < 1e-9);
+        for (int k = 0; k < 8; ++k) {
+            const Real ang = k * kPi / 4;
+            Real prev = f.down, worst = 0;
+            for (Real d = f.radius; d < f.radius + 4000; d += 25) {
+                const Real hh = both->terrainDown(f.north + d * std::cos(ang), f.east + d * std::sin(ang));
+                worst = std::max(worst, std::abs(hh - prev));
+                prev = hh;
+            }
+            CHECK(worst < 15);
+        }
+    }
+    // A level ray at 1,110 m MSL toward the Jaraguá summit meets it on the
+    // city grid; on the region grid alone it passes over the rounded top.
+    const Vec3 from{jp.x - 3000, jp.y, -1110};
+    const GroundHit hit = both->raycast(from, {1, 0, 0}, 6000);
+    RegionGround regionOnly = *scenarios::makeRegionGround(scenarios::saoPauloRegionAirports());
+    regionOnly.setTerrain(coarse);
+    std::cerr << "  ray at 1,110 m: city grid hit at " << (hit.hit ? hit.distance : -1) << " m\n";
+    CHECK(hit.hit && hit.distance > 2500 && hit.distance < 3100);
+    CHECK(!regionOnly.raycast(from, {1, 0, 0}, 6000).hit);
+    // setTerrain replaces every grid; the same grid added again replaces itself.
+    RegionGround g2 = *both;
+    g2.addTerrain(city);
+    CHECK(g2.terrainCount() == 2);
+    g2.setTerrain(coarse);
+    CHECK(g2.terrainCount() == 1);
+}

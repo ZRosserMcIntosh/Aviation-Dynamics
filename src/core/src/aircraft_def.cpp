@@ -142,7 +142,7 @@ std::vector<std::string> AircraftDefinition::validate() const {
         c.finite(p + ".downwashGradient", L.downwashGradient);
         c.range(p + ".downwashAtZeroLift", L.downwashAtZeroLift, -0.3, 0.3);
         c.range(p + ".slipstreamExposure", L.slipstreamExposure, 0, 1);
-        if (L.slipstreamEngine >= static_cast<int>(engines.size())) c.add(p + ".slipstreamEngine", "no such engine");
+        if (L.slipstreamEngine >= static_cast<int>(engines.size() + turboprops.size())) c.add(p + ".slipstreamEngine", "no such engine");
         c.range(p + ".thicknessRatio", L.thicknessRatio, 0.01, 0.4);
         c.range(p + ".kornFactor", L.kornFactor, 0.7, 1.0);
         c.range(p + ".machClMaxKnee", L.machClMaxKnee, 0.3, 1.0);
@@ -205,6 +205,75 @@ std::vector<std::string> AircraftDefinition::validate() const {
     if (engines.size() > 4) c.add("engines", "at most 4 engines");
     if (turbofans.size() > 4) c.add("turbofans", "at most 4 engines");
     if (!engines.empty() && !turbofans.empty()) c.add("turbofans", "piston engines and turbofans cannot be mixed");
+    if (turboprops.size() > 4) c.add("turboprops", "at most 4 engines");
+    if (!turboprops.empty() && (!engines.empty() || !turbofans.empty()))
+        c.add("turboprops", "turboprops cannot be mixed with piston engines or turbofans");
+    auto checkPropeller = [&](const std::string& p, const PropellerDef& pr) {
+        c.range(p + ".diameter", pr.diameter, 0.3, 7);
+        c.range(p + ".blades", pr.blades, 1, 8);
+        c.range(p + ".pitch", pr.pitch, 0.1, 8);
+        c.range(p + ".hubRadiusFraction", pr.hubRadiusFraction, 0.02, 0.5);
+        c.table(p + ".chord", pr.chordVsRadius, true);
+        for (Real v : pr.chordVsRadius.ys())
+            if (!(v > 0 && v < pr.diameter)) { c.add(p + ".chord", "chords must be in (0, diameter)"); break; }
+        checkSection(c, p + ".section", pr.section);
+        c.positive(p + ".inertia", pr.inertia);
+        c.range(p + ".bemElements", pr.bemElements, 4, 100);
+        if (pr.variablePitch) {
+            c.range(p + ".reverseBladeAngle", pr.reverseBladeAngle, -0.6, 0.3);
+            c.range(p + ".fineBladeAngle", pr.fineBladeAngle, pr.reverseBladeAngle, 1.0);
+            c.range(p + ".featherBladeAngle", pr.featherBladeAngle, pr.fineBladeAngle + 0.1, 1.6);
+        }
+    };
+    for (std::size_t i = 0; i < turboprops.size(); ++i) {
+        const TurbopropDef& e = turboprops[i];
+        const auto p = idx("turboprops", i);
+        c.finite(p + ".position", e.position);
+        if (!(length(e.thrustAxis) > 0.5)) c.add(p + ".thrustAxis", "must be a non-zero vector");
+        c.positive(p + ".ratedPower", e.ratedPower);
+        c.range(p + ".ratedPropRpm", e.ratedPropRpm, 500, 10000);
+        c.range(p + ".minGovernedRpm", e.minGovernedRpm, 0.4 * e.ratedPropRpm, e.ratedPropRpm);
+        c.range(p + ".torqueLimit", e.torqueLimit, 0.3, 1.5);
+        c.range(p + ".thermodynamicPower", e.thermodynamicPower, 0.5 * e.ratedPower, 5 * e.ratedPower);
+        c.range(p + ".ngMax", e.ngMax, 0.9, 1.2);
+        c.range(p + ".ngLowIdle", e.ngLowIdle, 0.4, 0.85);
+        c.range(p + ".ngHighIdle", e.ngHighIdle, e.ngLowIdle, 0.95);
+        c.range(p + ".ngZeroPower", e.ngZeroPower, 0.1, e.ngLowIdle - 0.01);
+        c.range(p + ".gasPowerExponent", e.gasPowerExponent, 0.5, 6);
+        c.range(p + ".ittIdle", e.ittIdle, 500, e.ittLimit);
+        c.range(p + ".ittLimit", e.ittLimit, 800, 1700);
+        c.range(p + ".ittExponent", e.ittExponent, 0.3, 4);
+        c.range(p + ".ittThetaExponent", e.ittThetaExponent, 0, 2);
+        c.range(p + ".turbineStallTorqueRatio", e.turbineStallTorqueRatio, 1, 4);
+        c.positive(p + ".accelerationTime", e.accelerationTime);
+        c.positive(p + ".decelerationTime", e.decelerationTime);
+        c.positive(p + ".startTime", e.startTime);
+        c.range(p + ".lightOffNg", e.lightOffNg, 0.05, 0.4);
+        c.range(p + ".starterNg", e.starterNg, e.lightOffNg, 0.5);
+        c.range(p + ".selfSustainingNg", e.selfSustainingNg, e.lightOffNg, e.ngLowIdle);
+        c.nonNegative(p + ".starterCurrent", e.starterCurrent);
+        c.positive(p + ".sfcRated", e.sfcRated);
+        c.positive(p + ".idleFuelFlow", e.idleFuelFlow);
+        c.nonNegative(p + ".oilPressureIdle", e.oilPressureIdle);
+        c.nonNegative(p + ".oilPressureMax", e.oilPressureMax);
+        c.positive(p + ".inertia", e.inertia);
+        c.range(p + ".frictionTorqueFraction", e.frictionTorqueFraction, 0, 0.2);
+        c.positive(p + ".governorGain", e.governorGain);
+        c.range(p + ".governorLead", e.governorLead, 0, 2);
+        c.positive(p + ".pitchRate", e.pitchRate);
+        c.positive(p + ".featherRate", e.featherRate);
+        c.range(p + ".governorOilNp", e.governorOilNp, 0, 0.9);
+        c.range(p + ".betaTravel", e.betaTravel, 0.05, 0.95);
+        c.range(p + ".reverseNg", e.reverseNg, e.ngLowIdle, e.ngMax);
+        c.range(p + ".reverseNpFraction", e.reverseNpFraction, 0.5, 1.05);
+        c.range(p + ".autofeatherLever", e.autofeatherLever, 0, 1);
+        c.range(p + ".autofeatherTorque", e.autofeatherTorque, 0, 0.5);
+        c.range(p + ".pFactorGain", e.pFactorGain, 0, 1);
+        c.range(p + ".slipstreamSwirlFactor", e.slipstreamSwirlFactor, 0, 3);
+        if (e.fuelFeed != 0) c.add(p + ".fuelFeed", "only feed 0 is supported in schema v1");
+        if (!e.propeller.variablePitch) c.add(p + ".propeller", "a turboprop needs a variable-pitch (constant-speed) propeller");
+        checkPropeller(p + ".propeller", e.propeller);
+    }
     for (std::size_t i = 0; i < turbofans.size(); ++i) {
         const TurbofanDef& e = turbofans[i];
         const auto p = idx("turbofans", i);
@@ -257,6 +326,17 @@ std::vector<std::string> AircraftDefinition::validate() const {
         c.nonNegative(p + ".starterTorque", e.starterTorque);
         c.nonNegative(p + ".starterCurrent", e.starterCurrent);
         c.range(p + ".singleMagnetoPowerFactor", e.singleMagnetoPowerFactor, 0.5, 1);
+        if (e.carburettor.present) {
+            const CarburettorDef& cb = e.carburettor;
+            c.range(p + ".carburettor.heatRise", cb.heatRise, 0, 150);
+            c.positive(p + ".carburettor.heatTimeConstant", cb.heatTimeConstant);
+            c.range(p + ".carburettor.fuelEvaporation", cb.fuelEvaporation, 0, 1);
+            c.positive(p + ".carburettor.fuelLatentHeat", cb.fuelLatentHeat);
+            c.range(p + ".carburettor.throttleCooling", cb.throttleCooling, 0, 1);
+            c.range(p + ".carburettor.captureFraction", cb.captureFraction, 0, 1);
+            c.positive(p + ".carburettor.iceToClose", cb.iceToClose);
+            c.range(p + ".carburettor.meltEfficiency", cb.meltEfficiency, 0, 1);
+        }
         c.range(p + ".mixtureRichPhi", e.mixtureRichPhi, 0.8, 2.5);
         c.positive(p + ".fuelHeatingValue", e.fuelHeatingValue);
         c.range(p + ".stoichiometricFar", e.stoichiometricFar, 0.03, 0.12);
@@ -264,17 +344,8 @@ std::vector<std::string> AircraftDefinition::validate() const {
         c.range(p + ".pFactorGain", e.pFactorGain, 0, 1);
         c.range(p + ".slipstreamSwirlFactor", e.slipstreamSwirlFactor, 0, 3);
         if (e.fuelFeed != 0) c.add(p + ".fuelFeed", "only feed 0 is supported in schema v1");
-        const PropellerDef& pr = e.propeller;
-        c.range(p + ".propeller.diameter", pr.diameter, 0.3, 7);
-        c.range(p + ".propeller.blades", pr.blades, 1, 8);
-        c.range(p + ".propeller.pitch", pr.pitch, 0.1, 8);
-        c.range(p + ".propeller.hubRadiusFraction", pr.hubRadiusFraction, 0.02, 0.5);
-        c.table(p + ".propeller.chord", pr.chordVsRadius, true);
-        for (Real v : pr.chordVsRadius.ys())
-            if (!(v > 0 && v < pr.diameter)) { c.add(p + ".propeller.chord", "chords must be in (0, diameter)"); break; }
-        checkSection(c, p + ".propeller.section", pr.section);
-        c.positive(p + ".propeller.inertia", pr.inertia);
-        c.range(p + ".propeller.bemElements", pr.bemElements, 4, 100);
+        if (e.propeller.variablePitch) c.add(p + ".propeller", "piston engines drive fixed-pitch propellers in schema v1");
+        checkPropeller(p + ".propeller", e.propeller);
     }
 
     c.range("fuel.density", fuel.density, 500, 1000);
@@ -301,7 +372,7 @@ std::vector<std::string> AircraftDefinition::validate() const {
         c.nonNegative(idx("electrical.loads", i) + ".current", electrical.loads[i].current);
         c.nonNegative(idx("electrical.loads", i) + ".minimumVoltage", electrical.loads[i].minimumVoltage);
     }
-    const int engineTotal = static_cast<int>(engines.size() + turbofans.size());
+    const int engineTotal = static_cast<int>(engines.size() + turbofans.size() + turboprops.size());
     if (electrical.generators.size() > 4) c.add("electrical.generators", "at most 4 generators");
     for (std::size_t i = 0; i < electrical.generators.size(); ++i) {
         const GeneratorDef& g = electrical.generators[i];
@@ -423,6 +494,19 @@ std::vector<std::string> AircraftDefinition::validate() const {
     c.range("stallWarning.alphaMargin", stallWarning.alphaMargin, 0, 0.3);
     c.range("stallWarning.pusherMargin", stallWarning.pusherMargin, 0, stallWarning.alphaMargin);
     c.range("stallWarning.pusherElevator", stallWarning.pusherElevator, -1, 0);
+    c.range("stallWarning.icingAlphaShift", stallWarning.icingAlphaShift, 0, 0.3);
+    for (std::size_t k = 0; k < iceProtection.surfaces.size(); ++k) {
+        const SurfaceIceProtectionDef& ip = iceProtection.surfaces[k];
+        const std::string f = "iceProtection.surfaces[" + std::to_string(k) + "]";
+        if (ip.surface < 0 || ip.surface >= static_cast<int>(surfaces.size())) c.add(f + ".surface", "no such surface");
+        if (ip.switchName.empty()) c.add(f + ".switchName", "must not be empty");
+    }
+    c.range("iceProtection.bleedThrustLoss", iceProtection.bleedThrustLoss, 0, 0.3);
+    c.nonNegative("iceProtection.heatFlux", iceProtection.heatFlux);
+    c.positive("iceProtection.heatTimeConstant", iceProtection.heatTimeConstant);
+    c.range("iceProtection.minimumN2", iceProtection.minimumN2, 0.45, 1.0);
+    c.positive("iceProtection.bootCycle", iceProtection.bootCycle);
+    c.nonNegative("iceProtection.bootResidual", iceProtection.bootResidual);
     c.positive("vacuum.regulatedSuction", vacuum.regulatedSuction);
     c.positive("vacuum.rpmForRegulated", vacuum.rpmForRegulated);
     c.positive("vacuum.gyroSpinUpTime", vacuum.gyroSpinUpTime);
@@ -450,6 +534,8 @@ std::vector<std::string> AircraftDefinition::validate() const {
         c.positive("panel.attitude.spinUpTime", p.attitude.spinUpTime);
         c.positive("panel.attitude.spinDownTime", p.attitude.spinDownTime);
         c.range("panel.attitude.minimumUsefulSpin", p.attitude.minimumUsefulSpin, 0.05, 1);
+        c.range("panel.attitude.ahrsTimeConstant", p.attitude.ahrsTimeConstant, 0, 2);
+        c.range("panel.attitude.alignTime", p.attitude.alignTime, 0, 600);
         c.range("panel.heading.mechanicalDrift", p.heading.mechanicalDrift, -0.01, 0.01);
         if (p.heading.gimbalLimit != 0) c.range("panel.heading.gimbalLimit", p.heading.gimbalLimit, 0.2, kPi / 2);
         c.range("panel.heading.slavingRate", p.heading.slavingRate, 0, 0.5);

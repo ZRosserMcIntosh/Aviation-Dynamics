@@ -748,8 +748,10 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
 
         // Section evaluation of strip i at its velocity relative to the air v
         // (body axes; with the lifting line, including the induced flow).
+        const SurfaceIce* ice = in.ice && in.ice[si].thickness > 0 ? &in.ice[si] : nullptr;
         struct StripEval {
             Real alpha = 0, cs = 1, an = 0, q = 0, qFree = 0, cdWave = 0, extension = 0, stallAlpha = 0, zeroLiftAlpha = 0;
+            Real iceShift = 0;
             Real gamma = 0;  // bound circulation the section's lift implies (Kutta-Joukowski)
             Vec3 vPerp;
             SectionResult sec;
@@ -784,8 +786,7 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             // Lifting line: the normal section's own 2-D slope (Prandtl-Glauert
             // on the normal Mach number); the finite span is in the induced
             // flow. Strip theory: the surface's 3-D slope.
-            const Real an = ll ? S.def.section.liftSlope / std::sqrt(1 - std::min(vp2 / sq(in.speedOfSound), 0.81)) : a3 / cs;
-            e.an = an;
+            Real an = ll ? S.def.section.liftSlope / std::sqrt(1 - std::min(vp2 / sq(in.speedOfSound), 0.81)) : a3 / cs;
             // Transonic section behaviour on the normal Mach number mn (the
             // free-stream equivalent m = mn / cos(sweep) is what Korn's
             // equation is written for). Above the knee the section's lift
@@ -805,7 +806,22 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             // Controls on this strip (deflections normal to the hinge line),
             // spread spanwise over half a chord on a lifting-line surface.
             const std::array<Real, 6> ctl = ll ? out.llControl[static_cast<std::size_t>(&st - strips_.data())] : controlEffects(st, in.controls);
-            const Real dAlpha0 = ctl[0] * ctlEff, dClMax = ctl[1] * an * ctlEff, dCm = ctl[2] * ctlEff, dCd = ctl[3], extension = ctl[4], spoiled = ctl[5];
+            const Real dAlpha0 = ctl[0] * ctlEff, dCm = ctl[2] * ctlEff, dCd = ctl[3], extension = ctl[4], spoiled = ctl[5];
+            Real dClMax = ctl[1] * an * ctlEff;
+            // Ice (avd/icing.hpp): the lift limits (flapped too), slope and
+            // drag of the section by the ice height over this strip's chord.
+            if (ice) {
+                const IceSectionEffect ie = iceSectionEffect(ice->thickness / std::max(st.chord, 1e-3), ice->glaze);
+                const Real clean = (sp.clMax + dClMax) / an;
+                an *= ie.liftSlopeFactor;
+                dClMax *= ie.clMaxFactor * ie.liftSlopeFactor;
+                sp.clMax *= ie.clMaxFactor;
+                sp.clMin *= ie.clMaxFactor;
+                sp.cdMin += ie.cdIncrement;
+                sp.cdQuadratic *= ie.cdQuadraticFactor;
+                e.iceShift = (clean - (sp.clMax + dClMax) / an) * cs;
+            }
+            e.an = an;
             // The separated section's normal force (Viterna's CDmax sets the
             // post-stall level) follows the same span factor: the inboard
             // separation of a swept wing is drained outboard (thin, a low base
@@ -990,6 +1006,7 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             tel.attached = sec.attached;
             tel.stallAlpha = e.stallAlpha;
             tel.zeroLiftAlpha = e.zeroLiftAlpha;
+            tel.iceStallShift = e.iceShift;
             if (ll) tel.gamma = e.gamma;
             liftSum += q * area * sec.cl;
             qaFree += qFree * area;
@@ -1068,9 +1085,10 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
     }
 }
 
-Real trimmedMaxLiftCoefficient(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach) {
+Real trimmedMaxLiftCoefficient(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach, const SurfaceIce* ice) {
     const Real a = 340.3, v = std::max(mach, 0.15) * a;
     AeroInputs in;
+    in.ice = ice;
     in.density = isa::kSeaLevelDensity;
     in.speedOfSound = a;
     in.cg = cg;

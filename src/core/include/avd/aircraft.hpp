@@ -32,11 +32,13 @@
 #include "avd/atmosphere.hpp"
 #include "avd/geodesy.hpp"
 #include "avd/ground.hpp"
+#include "avd/icing.hpp"
 #include "avd/instruments.hpp"
 #include "avd/mass.hpp"
 #include "avd/occupant.hpp"
 #include "avd/propulsion.hpp"
 #include "avd/systems.hpp"
+#include "avd/taws.hpp"
 
 namespace avd {
 
@@ -75,7 +77,15 @@ struct PilotInput {
     // ground they deploy the reversers; once deployed the lever sets the
     // reverse N1 from idle up to the reverser's reverse N1. Back to 0 stows
     // them. Left at 0 the automatic sequence (on the landing roll) runs.
+    // Turboprops: the power levers' travel below idle (beta and reverse,
+    // with the power levers at idle and the main wheels on the ground):
+    // 0 .. TurbopropDef::betaTravel takes the blades from the flight-idle stop
+    // to the reverse stop at idle Ng, the rest raises Ng to reverse power.
     Real reverse = 0;
+    // Turboprops: the propeller levers, 0 (minimum governed rpm) .. 1 (maximum,
+    // the rated Np); each engine's feather detent is its cockpit control
+    // "engine<N>.feather".
+    Real propLever = 1;
     bool starterHeld = false;  // ignition key held at START
 };
 
@@ -168,6 +178,7 @@ struct AircraftTelemetry {
     AirSample air;
     std::array<EngineTelemetry, kMaxEngines> engines{};
     std::array<TurbofanState, kMaxEngines> turbofans{};
+    std::array<TurbopropState, kMaxEngines> turboprops{};
     std::array<Real, kMaxEngines> throttles{};  // lever position each engine followed this step
     Real gearPosition = 1;                   // 0 up and locked .. 1 down and locked
     Real speedbrake = 0;                     // 0 retracted .. 1 fully deployed
@@ -203,6 +214,11 @@ public:
     // prepareContext() (or step) first, or the pitot-static instruments are
     // seeded with the air at the previous position.
     void resetInstrumentsToTruth();
+    // A glass cockpit (a G1000 172): the attitude and heading from an AHRS
+    // and magnetometer on the main bus instead of the data's vacuum gyros
+    // (false: back to them). The vacuum system then drives nothing the pilot
+    // flies by.
+    void setAhrsReference(bool on) { instruments_.setAhrsReference(on, s_.body.attitude); }
     void setColdAndDark();
     // Initial-condition setters (spawn/trim): flaps already at a detent, trim position.
     void setFlapsImmediately(int detent);
@@ -250,6 +266,11 @@ public:
     // Past the ultimate load factor (1.5 x the limit) for 50 ms: the structure
     // has failed (reported; the airframe flies on as it was).
     bool structurallyFailed() const { return structuralFailure_; }
+    // Terrain awareness and ground proximity warning (avd/taws.hpp), run each
+    // step on the ground the aircraft flies over: Class A in the jets, Class
+    // B in the others; configure it here (class, runways, decision height).
+    const TawsMonitor& taws() const { return taws_; }
+    TawsMonitor& taws() { return taws_; }
     Real altitudeMsl() const { return frame_.origin().height - s_.body.position.z; }
     // Datum (structural origin) in the local NED frame.
     Vec3 datumPosition() const;
@@ -269,8 +290,21 @@ public:
     // The FADEC rating in force (ThrustMode::Auto's schedule, or the forced one).
     ThrustRating activeThrustRating() const { return activeRating_; }
     Real takeoffRatingTime() const { return takeoffRatingTimer_; }
-    // Trim/spawn: turbofans lit and held at the commanded fan speed (no spool lag).
+    // Trim/spawn: turbofans lit and held at the commanded fan speed (no spool
+    // lag); turboprops lit at the commanded Ng with the blade angle that
+    // holds the selected Np at the current airspeed (the governor settled).
     void setTurbofansSteady(bool on) { turbofanSteady_ = on; }
+    int turbopropCount() const { return static_cast<int>(turboprops_.size()); }
+    const TurbopropEngine& turboprop(int i) const { return turboprops_[i]; }
+    const TurbopropState& turbopropState(int i) const { return tpState_[i]; }
+    // Engines that drive a propeller (pistons or turboprops; Aircraft::propeller(i)).
+    int propellerCount() const { return static_cast<int>(props_.size()); }
+    // Shaft speed (rad/s) the propeller lever selects for turboprop i.
+    Real selectedPropOmega(int i, const PilotInput& in) const;
+    // Autofeather armed (switch on, power levers up, both engines making torque).
+    bool autofeatherArmed() const { return autofeatherArmed_; }
+    // Turboprop i's propeller was feathered by the autofeather (latched until the switch goes off).
+    bool autofeathered(int i) const { return autofeathered_[static_cast<std::size_t>(i)]; }
     Real gearPosition() const { return gearPos_; }
     // Propeller slipstream of engine i at the last recorded evaluation (visualisation).
     const SlipstreamState& slipstream(int i) const { return slip_[i]; }
@@ -285,6 +319,16 @@ public:
     int hydraulicSystemCount() const { return static_cast<int>(def_.hydraulics.systems.size()); }
     Real hydraulicPressure(int i) const { return hydPressure_[static_cast<std::size_t>(i)]; }
     int brakeAccumulatorApplications() const { return brakeAccumulator_; }
+
+    // ---- Ice (avd/icing.hpp) ---------------------------------------------------
+    // Ice on the surfaces, propeller, windshield and in the carburettor, from
+    // the supercooled water of the air the aircraft flies through; its
+    // protection follows the cockpit switches ("anti_ice.<name>",
+    // "engine<N>.carb_heat"). Cleared by setColdAndDark().
+    const IcingModel& icing() const { return icing_; }
+    IcingModel& icing() { return icing_; }
+    // Thermal anti-ice is drawing bleed air (the turbofans' thrust cost).
+    bool antiIceBleed() const;
 
     // ---- Loading -------------------------------------------------------------
     void setStationMass(int station, Real kg);
@@ -325,7 +369,14 @@ public:
     // Prepare the environment/controls context without stepping (for trim).
     void prepareContext(const PilotInput& in, const GroundQuery& ground, const AtmosphereField& atm);
     // A new state (a spawn, a reset): the crash dummy's readings start over.
-    void setState(const DynamicState& s) { s_ = s; occupant_.reset(); }
+    // A new state starts undamaged: the occupant's readings, collapsed legs
+    // and a structural failure belong to the flight that caused them; the
+    // TAWS starts over too.
+    void setState(const DynamicState& s) {
+        s_ = s;
+        resetDamage();
+        taws_.reset();
+    }
     // Trim/linearisation use quasi-steady downwash (no transport lag);
     // settleDownwash() then initialises the lag states for a following run.
     void setQuasiSteadyDownwash(bool on) { quasiSteadyDownwash_ = on; }
@@ -347,6 +398,7 @@ private:
         ControlDeflections controls;
         std::array<PistonEngineInputs, kMaxEngines> engineIn{};
         std::array<TurbofanInputs, kMaxEngines> turboIn{};
+        std::array<TurbopropInputs, kMaxEngines> tpIn{};
         Real brakeLeft = 0, brakeRight = 0;
         std::array<Real, kMaxGear> steer{};  // wheel steering command (rad)
         std::array<Real, kMaxGear> brakeModulation{};  // anti-skid: fraction of the pedal's torque let through
@@ -364,6 +416,10 @@ private:
         Real oleoFe = 0, oleoL = 1, oleoN = 1, oleoC2 = 0, oleoC1 = 0;
     };
     void prepareGear();
+    // Turboprop i with its gas generator steady: the blade angle (between the
+    // flight-idle stop and feather) that balances the shaft at the selected
+    // Np at axial speed vAx, or at the flight-idle stop the Np where it balances.
+    void settleTurboprop(int i, Real vAx, const AirSample& air);
     Real corneringStiffness(std::size_t leg, Real normalForce) const;
 
     void rebuildCockpit();
@@ -375,6 +431,7 @@ private:
     SensorInputs sensorInputs() const;
     bool loadPowered(const std::string& name, bool fallback) const;
     void updateTelemetry();
+    void updateTaws(Real dt, const GroundQuery& ground);
     // Pressure available to an actuator fed by `systems` (1 when the list is
     // empty or no hydraulics are fitted), and the rate factor it moves at.
     Real hydraulicSupply(const std::vector<int>& systems) const;
@@ -390,6 +447,7 @@ private:
     std::vector<PistonEngine> engines_;
     std::vector<Propeller> props_;
     std::vector<TurbofanEngine> turbofans_;
+    std::vector<TurbopropEngine> turboprops_;
     FuelSystem fuel_;
     ElectricalSystem electrical_;
     VacuumSystem vacuum_;
@@ -415,6 +473,10 @@ private:
     std::array<bool, kMaxEngines> turboFuel_{};     // fuel control switches at RUN
     std::array<TurbofanState, kMaxEngines> turboState_{};
     bool turbofanSteady_ = false;
+    mutable std::array<TurbopropState, kMaxEngines> tpState_{};  // the recorded evaluation writes torque and thrust
+    std::array<ConditionLever, kMaxEngines> condition_{};
+    std::array<bool, kMaxEngines> tpStarter_{}, tpFeather_{}, autofeathered_{};
+    bool autofeatherSwitch_ = false, autofeatherArmed_ = false;
     bool gearDown_ = true;
     Real gearPos_ = 1;
     int speedbrakeDetent_ = 0;
@@ -468,9 +530,17 @@ private:
     bool starvingWas_ = false, stallVane_ = false;
     Real lastSinkRate_ = 0;
     OccupantMonitor occupant_;
+    void resetDamage();
+    TawsMonitor taws_;
     std::array<bool, kMaxGear> gearFailed_{};
     bool structuralFailure_ = false;
     Real overUltimate_ = 0;  // s past the ultimate load factor
+
+    // Ice.
+    IcingModel icing_;
+    std::array<bool, kMaxEngines> carbHeat_{};          // carb heat levers (HOT)
+    std::array<bool, kIcingMaxSwitches> antiIce_{};     // ice protection switches (IcingModel::switchName order)
+    void updateIcing(Real dt, const Context& c);
 
     std::vector<CockpitControl> cockpit_;
     std::vector<FlightEvent> events_;

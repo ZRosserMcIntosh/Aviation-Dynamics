@@ -38,6 +38,7 @@ add_library(avd_core
   src/core/src/geodesy.cpp
   src/core/src/atmosphere.cpp
   src/core/src/wind.cpp
+  src/core/src/icing.cpp
   src/core/src/mass.cpp
   src/core/src/aero.cpp
   src/core/src/propulsion.cpp
@@ -57,6 +58,7 @@ add_library(avd_core
   src/core/src/gps.cpp
   src/core/src/world_ground.cpp
   src/core/src/occupant.cpp
+  src/core/src/taws.cpp
 )
 add_library(avd::core ALIAS avd_core)
 target_include_directories(avd_core PUBLIC src/core/include)

@@ -11,6 +11,7 @@ let failures = 0;
 const check = (ok, msg) => { console.log((ok ? 'ok   ' : 'FAIL ') + msg); if (!ok) failures++; };
 check(A.abiVersion === A.avd_abi_version() && A.layout.state === 64 && A.layout.flow === 1352, `ABI version ${A.abiVersion}, layout ${JSON.stringify(A.layout)}`);
 check(A.buildId().length > 0, `build id "${A.buildId()}"`);
+check(A.taws().cls === 1, 'TAWS: Class B in the 172');
 
 A.avd_set_airport(0);                // Campo de Marte runway 12 (Congonhas is the default; checked below)
 A.avd_reset(1);                      // engine running on runway 12 at Campo de Marte
@@ -100,6 +101,25 @@ c = A.cockpitState();
 check(c[6] === 0 && Math.abs(c[5] - c[55]) < 5, `steep roll: AI ${c[5].toFixed(0)} deg vs ${c[55].toFixed(0)} deg, not tumbled`);
 A.avd_ai_cage();
 check(A.cockpitState()[6] === 0, 'caging knob');
+// A G1000 172: the attitude and heading from an AHRS. Four minutes after a
+// vacuum failure (its gyro would be down to a third of its speed and frozen)
+// a 30 deg bank is shown right (rolling, within the AHRS's 0.05 s filter
+// lag), no flag, no tumble; back to the data's gyros.
+{
+  A.avd_reset_air(0, 0, 900, 0, 110, 0);
+  check(A.setAttitudeReference('ahrs') === 'ahrs' && A.attitude().ahrs && !A.attitude().attFlag, 'G1000 172: AHRS attitude, aligned');
+  A.avd_failure(2, 1);
+  A.avd_set_assist(2);
+  for (let t = 0; t < 240; t += 0.25) { A.avd_set_input(0, 0, 0, A.avd_trim_throttle(), A.avd_trim_mixture(), 0, 0, 0, 0); A.avd_advance(0.25); }
+  A.avd_set_assist(0);
+  for (let i = 0; i < 12 && Math.abs(A.cockpitState()[55]) < 30; ++i) { A.avd_set_input(0, 0.4, 0, A.avd_trim_throttle(), A.avd_trim_mixture(), 0, 0, 0, 0); A.avd_advance(0.25); }
+  c = A.cockpitState();
+  const at = A.attitude();
+  check(Math.abs(c[5] - c[55]) < 2 && Math.abs(c[55]) > 15 && !at.attFlag && !at.tumbled && c[6] === 0,
+    `G1000 172, vacuum failed 4 min: AI ${c[5].toFixed(1)} deg vs ${c[55].toFixed(1)} deg, no flag, no tumble`);
+  A.avd_failure(2, 0);
+  check(A.setAttitudeReference('data') === 'gyro' && !A.attitude().ahrs, 'back to the vacuum gyros');
+}
 
 // ---- The Top G (turbofan, retractable gear, speedbrake) ----
 const B = await createAvdModule();
@@ -116,7 +136,8 @@ B.setReverse(1);  // the reverse levers at idle on the ground: deployed, reverse
 for (let t = 0; t < 8; t += 0.25) B.avd_advance(0.25);
 {
   const jr = B.jet();
-  check(jr[52] > 0.99 && jr[53] === 4 && jr[54] > 0.99 && jr[55] === 4 && jr[8] > 40, `reverse levers: deployed (phase ${jr[53]}), N1 ${jr[8].toFixed(0)} %`);
+  // Deployed; at rest the N1 stays at reverse idle (no power-back).
+  check(jr[52] > 0.99 && jr[53] === 4 && jr[54] > 0.99 && jr[55] === 4 && jr[8] < 30, `reverse levers: deployed (phase ${jr[53]}), N1 ${jr[8].toFixed(0)} % at rest`);
 }
 B.setReverse(0);
 for (let t = 0; t < 8; t += 0.25) B.avd_advance(0.25);
@@ -247,6 +268,9 @@ check(cg[32] === 109.7 && cg[37] === 1 && cg[40] === 1 && Math.abs(cg[38]) < 0.1
   check(engaged === 1 && st.phase === 4 && sawFlare && !s6[48] && Math.abs(right) < 4 && along > 300 && along < rw[4],
     `autoland: engaged ${engaged}, phase ${st.phase} after ${t.toFixed(0)} s, stopped ${along.toFixed(0)} m down 35L, ${right.toFixed(1)} m right`);
   check(B.autoland(false) === 0 && !B.autolandStatus().on, 'autoland off');
+  // Handed back with the levers where it left them (idle), not where the host's were.
+  B.avd_advance(0.25);
+  check(B.state()[24] < 0.02, `autoland hand-back: the throttle at ${B.state()[24].toFixed(2)}`);
   // The dummy in the pilot's seat rode an ordinary landing: no limit near, nothing broken.
   const o = B.occupant();
   check(o.peakG > 1 && o.peakG < 3 && o.dri > 1 && o.dri < 6 && o.hic < 50 && !o.collapsed.some((c) => c) && !o.structural,
@@ -262,6 +286,43 @@ check(cg[32] === 109.7 && cg[37] === 1 && cg[40] === 1 && Math.abs(cg[38]) < 0.1
   check(n === 1101 * 901 && peak > 950 && peak < 1140 && Math.abs(after - field) < 1e-6,
     `terrain: ${n} samples; Pico do Jaraguá ${peak.toFixed(0)} m (the blend gave ${before.toFixed(0)}), the runway ${after.toFixed(1)} m as before`);
   check(B.terrain(new Uint8Array(16)) === -1, 'terrain: a malformed file is refused');
+  // The city's 50 m grid nested in it (data/world/terrain_sp_city.avt): the
+  // summit itself (SRTM 1,132 m at -23.4592, -46.7669), the runway unchanged.
+  const summitE = -11462, summitN = 11227, coarse = B.avd_ground_height(summitE, summitN);
+  const city = await readFile(new URL('../data/world/terrain_sp_city.avt', import.meta.url));
+  const nd = B.terrainDetail(city);
+  const fine = B.avd_ground_height(summitE, summitN), runwayNow = B.avd_ground_height(rw0[0], rw0[1]);
+  check(nd === 1001 * 1241 && fine > 1100 && fine > coarse + 40 && Math.abs(runwayNow - field) < 1e-6,
+    `terrain detail: ${nd} samples; the Jaraguá summit ${fine.toFixed(0)} m (region grid ${coarse.toFixed(0)}), the runway as before`);
+  check(B.terrainDetail(new Uint8Array(16)) === -1, 'terrain detail: a malformed file is refused');
+}
+// TAWS: the Top G (Class A) level at 1,067 m MSL toward the Jaraguá summit at
+// 220 kt, on the autopilot's ROL and ALT: CAUTION TERRAIN, then TERRAIN AHEAD,
+// PULL UP, each spoken (a new voiceCount with the phrase), tens of seconds out.
+{
+  const rw0 = B.runway(), field = B.avd_ground_height(rw0[0], rw0[1]);
+  const summitE = -11462, summitN = 11227, hdg = 340 * Math.PI / 180;
+  B.avd_reset_air(summitE - 12000 * Math.sin(hdg), summitN - 12000 * Math.cos(hdg), 1067 - field, 340, 220, 0);
+  const t0 = B.taws();
+  check(t0.cls === 2 && t0.active.length === 0, `TAWS: class ${t0.cls} (A), quiet at the spawn (radio altitude ${t0.raFt.toFixed(0)} ft)`);
+  const alt = B.state()[13];
+  B.autopilot({ lateral: 1, vertical: 2, altFt: alt });
+  let caution = -1, warning = -1, impact = -1, count = t0.voiceCount;
+  const said = [];
+  for (let t = 0; t < 140 && impact < 0; t += 0.25) {
+    B.avd_advance(0.25);
+    const w = B.taws(), s = B.state();
+    if (caution < 0 && w.active.includes(6)) caution = t;
+    if (warning < 0 && w.active.includes(3)) warning = t;
+    if (w.voiceCount !== count) { count = w.voiceCount; if (said.at(-1) !== w.say) said.push(w.say); }
+    if (s[48] || B.avd_ground_height(s[0], s[1]) > s[2] - 10) impact = t;
+  }
+  check(caution > 0 && warning > caution && impact - caution > 25 && impact - warning > 15 && said.indexOf('CAUTION TERRAIN, CAUTION TERRAIN') >= 0 &&
+        said.indexOf('TERRAIN AHEAD, PULL UP') > said.indexOf('CAUTION TERRAIN, CAUTION TERRAIN'),
+    `TAWS: CAUTION TERRAIN ${(impact - caution).toFixed(0)} s and TERRAIN AHEAD PULL UP ${(impact - warning).toFixed(0)} s before the hill; said: ${said.join(' / ')}`);
+  B.autopilot({});
+  check(B.tawsConfig({ inhibit: true }) === 2 && B.taws().inhibit && B.tawsConfig({}) === 2 && !B.taws().inhibit, 'TAWS: terrain inhibit on and off');
+  check(B.tawsVoiceText(3) === 'TERRAIN, TERRAIN' && B.tawsAlertText(9) === 'TOO LOW GEAR', 'TAWS: phrase and alert texts');
 }
 // Autopilot: refused on the ground; on the Top G's final, HDG on the bug 60 deg
 // right, ALT on the present altitude, the autothrottle 10 kt faster.
@@ -281,6 +342,31 @@ check(cg[32] === 109.7 && cg[37] === 1 && cg[40] === 1 && Math.abs(cg[38]) < 0.1
   check(r === 1 && st.on && st.lateral === 2 && st.vertical === 2 && Math.abs(off) < 3 && worstAlt < 120 && Math.abs(s1[10] - ias) < 5,
     `autopilot: HDG ${off.toFixed(1)} deg off the bug after 90 s, altitude within ${worstAlt.toFixed(0)} ft, ${s1[10].toFixed(0)} kt on ${ias}`);
   check(B.autopilot({}) === 0 && !B.autopilotStatus().on, 'autopilot off');
+}
+// APR: the Top G 10 NM out on the Congonhas 35L final, level at the path's
+// altitude, ILS ISO on NAV 1: the localizer and glideslope captured, flown to
+// DA (200 ft above the field), where the autopilot disconnects (the
+// autothrottle stays). The jet's attitude is its AHRS: no ATT flag.
+{
+  B.avd_reset(4);
+  const s0 = B.state().slice();
+  check(B.attitude().ahrs && !B.attitude().attFlag, 'Top G: AHRS attitude, aligned');
+  B.avd_heading_bug(s0[37]);
+  const set = B.autopilotApproach({ source: 'ils' });
+  const r = B.autopilot({ lateral: 4, vertical: 2, autothrottle: true, altFt: s0[13], vsFpm: 0, iasKt: Math.round(s0[10]) });
+  let st = B.autopilotStatus(), t = 0, sawLoc = false, sawGs = false, worstLoc = 0, worstGs = 0;
+  for (; t < 400 && st.apr !== 4; t += 0.25) {
+    B.avd_advance(0.25);
+    st = B.autopilotStatus();
+    sawLoc = sawLoc || st.apr === 2;
+    sawGs = sawGs || (st.apr === 3 && st.vertical === 5);
+    if (st.apr === 3) { worstLoc = Math.max(worstLoc, Math.abs(st.locDots)); worstGs = Math.max(worstGs, Math.abs(st.gsDots)); }
+  }
+  const above = B.state()[14];
+  check(set === 1 && r === 1 && sawLoc && sawGs && st.apr === 4 && st.on && st.lateral === 0 && st.vertical === 0 && st.autothrottle &&
+    worstLoc < 1 && worstGs < 1 && st.daFt > 2750 && st.daFt < 2900,  // Congonhas 2,631 ft + 200
+    `APR: ILS 35L captured, coupled within ${worstLoc.toFixed(2)} / ${worstGs.toFixed(2)} dots, MINIMUMS at DA ${st.daFt.toFixed(0)} ft after ${t.toFixed(0)} s (${above.toFixed(0)} ft above the ground), A/T on`);
+  check(B.autopilot({}) === 0 && B.autopilotStatus().apr === 0, 'autopilot off after minimums');
 }
 // Anywhere in Brazil (data/world/airports_br.json): Galeão 15's ILS (IGL)
 // at its 10 NM fix, 360 km away; a region airport's record maps onto the
@@ -384,5 +470,139 @@ A.avd_set_wake(1);
   check(strike !== '', `buildings: flown into, ${strike || 'no strike'}`);
   A.avd_buildings_drop(ti, tj);
   check(A.avd_buildings_count() === 0, 'buildings: the tile dropped');
+}
+
+// ---- The King Air 350 (turboprops: power, propeller and condition levers) ----
+{
+  const K = await createAvdModule();
+  const kErrors = K.load(await readFile(new URL('./dist/king_air_350.json', import.meta.url), 'utf8'));
+  check(kErrors.length === 0, `king_air_350.json loads${kErrors.length ? ': ' + kErrors.join('; ') : ''}`);
+  K.avd_set_assist(0);
+  K.avd_reset(1);
+  let tp = K.turboprop();
+  check(tp.count === 2 && tp.engines[0].running && tp.engines[1].running && tp.engines[0].condition === 1 && K.state()[30] === 1,
+    `turboprop: two PT6As at low idle (Ng ${tp.engines[0].ng.toFixed(0)} %, Np ${tp.engines[0].np.toFixed(0)} rpm, ITT ${tp.engines[0].itt.toFixed(0)} C)`);
+  check(K.setCondition(-1, 2) === 2, 'condition levers to HIGH IDLE');
+  for (let t = 0; t < 4; t += 0.25) K.avd_advance(0.25);
+  tp = K.turboprop();
+  check(Math.abs(tp.engines[0].ng - 72) < 1 && tp.engines[1].condition === 2, `high idle: Ng ${tp.engines[0].ng.toFixed(1)} %`);
+  K.setCondition(-1, 1);
+  K.avd_cockpit_cycle(K.cockpit().find((x) => x.id === 'brakes.parking').index);  // brakes off
+  K.avd_set_input(0, 0, 0, 1, 1, 0, 0, 0, 0);  // power levers to the stop
+  let climbed = false;
+  for (let i = 0; i < 45 * 4; ++i) {
+    const ks = K.state();
+    K.avd_set_input(ks[10] > 100 ? Math.max(-1, Math.min(1, 0.12 * (10 - ks[8]))) : 0, 0, 0, 1, 1, 0, 0, 0, 0);
+    K.avd_advance(0.25);
+    if (i === 20 * 4) {
+      tp = K.turboprop();
+      check(Math.abs(tp.engines[0].torque - 100) < 3 && Math.abs(tp.engines[0].np - 1700) < 20 && tp.engines[0].itt < 820,
+        `take-off power: torque ${tp.engines[0].torque.toFixed(0)} % (${tp.engines[0].torqueFtLb.toFixed(0)} ft lbf), Np ${tp.engines[0].np.toFixed(0)}, ITT ${tp.engines[0].itt.toFixed(0)} C, ${tp.engines[0].fuelFlowLbH.toFixed(0)} lb/h`);
+    }
+    climbed = climbed || (ks[28] === 0 && ks[14] > 300);
+  }
+  let ks = K.state();
+  check(climbed && ks[28] === 0 && ks[15] > 1000, `King Air: off the runway and climbing (AGL ${ks[14].toFixed(0)} ft, ${ks[15].toFixed(0)} fpm, ${ks[10].toFixed(0)} KIAS)`);
+  K.avd_cockpit_cycle(K.cockpit().find((x) => x.id === 'gear.lever').index);
+  K.setPropLever(0.2);  // 1,500 rpm
+  for (let i = 0; i < 40; ++i) { ks = K.state(); K.avd_set_input(Math.max(-1, Math.min(1, 0.12 * (8 - ks[8]))), 0, 0, 0.8, 1, 0, 0, 0, 0); K.avd_advance(0.25); }
+  tp = K.turboprop();
+  check(K.jet()[1] === 0 && Math.abs(tp.engines[0].np - 1500) < 15 && Math.abs(tp.engines[1].np - 1500) < 15 && Math.abs(tp.npSelected - 1500) < 1,
+    `gear up; propeller levers to ${tp.npSelected.toFixed(0)} rpm: Np ${tp.engines[0].np.toFixed(0)} / ${tp.engines[1].np.toFixed(0)}`);
+  K.setCondition(0, 0);  // engine 1 cut off
+  K.setFeather(0, 1);
+  for (let i = 0; i < 60; ++i) { ks = K.state(); K.avd_set_input(Math.max(-1, Math.min(1, 0.12 * (6 - ks[8]))), 0, 0, 0.8, 1, 0, 0, 0, 0); K.avd_advance(0.25); }
+  tp = K.turboprop();
+  check(!tp.engines[0].running && tp.engines[0].feathered && tp.engines[0].np < 100 && tp.engines[1].running,
+    `engine 1 shut down and feathered (blade ${tp.engines[0].blade.toFixed(0)} deg, Np ${tp.engines[0].np.toFixed(0)})`);
+  // Cold and dark, then Quick Start: starter, light-off, idle, one engine after the other.
+  K.avd_reset(0);
+  tp = K.turboprop();
+  check(!tp.engines[0].running && tp.engines[0].feathered && tp.engines[0].condition === 0, 'King Air cold and dark: feathered, cut off');
+  K.avd_quick_start();
+  for (let i = 0; i < 100 * 4; ++i) { K.avd_set_input(0, 0, 0, 0, 1, 0, 0, 0, 0); K.avd_advance(0.25); }
+  tp = K.turboprop();
+  check(tp.engines[0].running && tp.engines[1].running && !tp.engines[0].feathered && K.procedure().status === 2 && K.jet()[60] === 1,
+    `King Air Quick Start: both running (Ng ${tp.engines[0].ng.toFixed(0)} / ${tp.engines[1].ng.toFixed(0)} %), generators on line`);
+  // Beta and reverse on the ground: power levers idle, reverse lever up.
+  K.avd_reset(1);
+  K.setReverse(1);
+  for (let i = 0; i < 16; ++i) K.avd_advance(0.25);
+  tp = K.turboprop();
+  check(tp.engines[0].beta && tp.engines[0].blade < 0 && tp.engines[0].thrustKn < -1, `reverse: blade ${tp.engines[0].blade.toFixed(0)} deg, ${tp.engines[0].thrustKn.toFixed(1)} kN`);
+  K.setReverse(0);
+}
+
+// Weather: airframe ice, carburettor ice and carb heat, rain on the runway, a front.
+{
+  const C = await createAvdModule();
+  C.load(json);
+  C.avd_set_airport(0);
+  const fly = (seconds, thr) => { for (let t = 0; t < seconds; t += 0.25) { C.avd_set_input(0, 0, 0, thr, C.avd_trim_mixture(), 0, 0, 0, 0); C.avd_advance(0.25); } };
+  // The C172 in a supercooled stratus at -5 C (0.5 g/m^3): ice on the wing and tail, the stall speed up.
+  C.avd_set_assist(2);
+  C.avd_set_level_hold(1);
+  C.avd_reset_air(0, 0, 900, 120, 100, 0);
+  const alt = C.state()[53] * 0.3048;
+  C.avd_set_weather(0, 0, 0, -5 - (15 - 0.0065 * alt), 0.9);
+  C.avd_set_cloud(alt - 600, alt + 600, 0.5);
+  C.avd_reset_air(0, 0, 900, 120, 100, 0);
+  const thr = C.avd_trim_throttle();
+  const vs0 = C.icing().vsKcas;
+  fly(300, thr);
+  const ic = C.icing(), wx = C.weather();
+  check(wx.inCloud && Math.abs(wx.oat + 5) < 2 && wx.supercooledWater > 0.4, `icing layer: OAT ${wx.oat.toFixed(1)} C, ${wx.supercooledWater.toFixed(2)} g/m3 supercooled, visibility ${wx.visibility.toFixed(0)} m`);
+  check(ic.surfaces.length === 3 && ic.surfaces[0].mm > 0.5 && ic.surfaces[1].clmaxLoss > ic.surfaces[0].clmaxLoss * 0.9 && ic.windshieldOpacity > 0,
+    `5 min at -5 C: wing ${ic.surfaces[0].mm.toFixed(1)} mm (clmax -${(100 * ic.surfaces[0].clmaxLoss).toFixed(0)} %), tail ${ic.surfaces[1].mm.toFixed(1)} mm, windshield ${(100 * ic.windshieldOpacity).toFixed(0)} %, ${ic.rateMmPerMin.toFixed(2)} mm/min (class ${ic.intensity})`);
+  check(ic.vsKcas > ic.vsCleanKcas + 3 && ic.vsKcas > vs0 + 3 && Math.abs(C.jet()[32] - ic.vsKcas) < 0.5 && ic.stallAngleLossDeg > 1,
+    `iced stall speed ${ic.vsKcas.toFixed(1)} KCAS against ${ic.vsCleanKcas.toFixed(1)} clean (stall angle -${ic.stallAngleLossDeg.toFixed(1)} deg)`);
+  check(!ic.iceDetector && ic.switches === 0 && !C.cockpit().some((k) => k.id.startsWith('anti_ice.')), 'the C172 has no ice protection to switch on');
+  // Carburettor ice in clear humid air at +10 C, then carb heat.
+  C.avd_set_cloud(0, 0, 0);
+  C.avd_set_weather(0, 0, 0, 10 - (15 - 0.0065 * alt), 0.9);
+  C.avd_reset_air(0, 0, 900, 120, 100, 0);
+  const thr2 = C.avd_trim_throttle();
+  const map0 = C.state()[20];
+  fly(600, thr2);
+  const ci = C.icing(), map1 = C.state()[20];
+  check(ci.carburettor && ci.carbIceG > 0.5 && map1 < map0 - 0.7 && ci.carbTempC < 0,
+    `carburettor ice: ${ci.carbIceG.toFixed(2)} g after 10 min at +10 C, 90 % RH (throat ${ci.carbTempC.toFixed(0)} C), MAP ${map0.toFixed(1)} -> ${map1.toFixed(1)} inHg`);
+  const heat = C.cockpit().find((k) => k.id === 'engine1.carb_heat');
+  C.avd_cockpit_cycle(heat.index);
+  let rough = 0;
+  for (let t = 0; t < 120; t += 0.25) { fly(0.25, thr2); rough = Math.max(rough, C.icing().roughness); }
+  const ch = C.icing();
+  check(C.cockpit().find((k) => k.id === 'engine1.carb_heat').position === 1 && ch.carbIceG < 0.05 && rough > 0.1 && ch.carbHeat > 0.9,
+    `carb heat: ${ch.carbIceG.toFixed(3)} g left after 2 min, roughness peak ${rough.toFixed(2)}, MAP ${C.state()[20].toFixed(1)} inHg`);
+  // Rain on the field: the runway wets, the visibility falls.
+  C.avd_set_weather(0, 0, 0, 0, 0.9);
+  C.avd_reset(1);
+  C.setRain(10);
+  for (let t = 0; t < 600; t += 0.25) C.avd_advance(0.25);
+  const rw = C.weather();
+  check(rw.rain === 10 && rw.visibility < 6000 && C.state()[63] > 0.4 && C.state()[63] < 1.0 && Math.abs(rw.runwayWaterMm - C.state()[63]) < 1e-9,
+    `rain 10 mm/h: runway water ${C.state()[63].toFixed(2)} mm after 10 min, visibility ${rw.visibility.toFixed(0)} m`);
+  C.setRain(0);
+  // A cold front over the field: the QNH up, the OAT down.
+  C.avd_reset(1);
+  const w0 = C.weather();
+  C.setFront({ kind: 'cold', etaMin: 3 });
+  const w1 = C.weather();
+  for (let t = 0; t < 900; t += 0.25) C.avd_advance(0.25);
+  const w2 = C.weather();
+  check(w1.frontEtaMin > 2.5 && w1.frontEtaMin < 3.5 && w2.frontBehind > 0.9 && w2.fieldQnh > w0.fieldQnh + 2 && w2.fieldOat < w0.fieldOat - 4,
+    `cold front: field QNH ${w0.fieldQnh.toFixed(1)} -> ${w2.fieldQnh.toFixed(1)} hPa, OAT ${w0.fieldOat.toFixed(1)} -> ${w2.fieldOat.toFixed(1)} C (ETA ${w1.frontEtaMin.toFixed(1)} min)`);
+  C.setFront({ kind: 'none' });
+  check(Math.abs(C.weather().fieldQnh - w0.fieldQnh) < 1e-6 && C.weather().frontBehind === -1, 'front cleared');
+  // A jet's ice protection: the CJ4's wing anti-ice (bleed) and tail boots.
+  const cj = await readFile(new URL('./dist/cj4.json', import.meta.url), 'utf8');
+  check(C.load(cj).length === 0, 'CJ4 loaded');
+  C.avd_reset_air(0, 0, 3000, 120, 200, 0);
+  const ids = C.cockpit().filter((k) => k.id.startsWith('anti_ice.')).map((k) => k.id);
+  check(ids.includes('anti_ice.wing') && ids.includes('anti_ice.tail'), `CJ4 ice protection switches: ${ids.join(', ')}`);
+  C.avd_cockpit_cycle(C.cockpit().find((k) => k.id === 'anti_ice.wing').index);
+  for (let t = 0; t < 30; t += 0.25) { C.avd_set_input(0, 0, 0, C.avd_trim_throttle(), 1, 0, 0, 0, 0); C.avd_advance(0.25); }
+  const ji = C.icing();
+  check(ji.bleed && ji.protectionHeat > 0.6 && (ji.protectionMask & 1) === 1 && ji.iceDetector, `CJ4 wing anti-ice on: bleed drawn, leading edge heat ${ji.protectionHeat.toFixed(2)}`);
 }
 process.exit(failures ? 1 : 0);

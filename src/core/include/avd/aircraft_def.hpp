@@ -211,6 +211,43 @@ struct PropellerDef {
     SectionPolar section;             // blade airfoil
     Real inertia = 1.6;               // kg m^2 (propeller alone)
     int bemElements = 24;
+    // Variable pitch (constant-speed, feathering, reversing; turboprops): the
+    // blades turn in the hub, the same angle added to the twist at every
+    // station. Angles are the blade angle at 0.75 R; `pitch` sets the twist
+    // (and the geometric blade angle the offsets are measured from). The BEM
+    // tables are then solved over blade angle as well (Propeller).
+    bool variablePitch = false;
+    Real reverseBladeAngle = -0.19;   // rad, full reverse stop
+    Real fineBladeAngle = 0.24;       // rad, flight-idle low-pitch stop
+    Real featherBladeAngle = 1.50;    // rad, feathered
+    // Blade angle of the geometric pitch at 0.75 R.
+    Real geometricBladeAngle() const { return std::atan2(pitch, 2 * kPi * 0.75 * 0.5 * diameter); }
+};
+
+// A float carburettor (PistonEngineDef::carburettor; absent: fuel injected,
+// no carburettor ice). The charge cools in the venturi as the fuel
+// evaporates (fuelEvaporation x FAR x h_fg / cp, ~20 K) and at a partly
+// closed throttle plate (the jet's static temperature drop, felt by the
+// plate in part); moist air cooled below its saturation point there drops
+// water, a part of which freezes onto the throat and plate while their
+// temperature is below 0 C, closing the effective throttle area (the same
+// ice blocks a nearly closed plate's small gap three times as much). Carb
+// heat takes the intake air through the exhaust muff: hotter (heatRise at
+// rated power, less at low power), so less dense (an rpm drop at full
+// throttle, the mixture richer) and melting the ice; the meltwater goes
+// through the engine (rough running). FAA AC 20-113 and SAIB CE-09-35 (the
+// carburettor icing probability chart); temperatures from the evaporation
+// and expansion budget, the capture and melt efficiencies Estimated.
+struct CarburettorDef {
+    bool present = false;
+    Real heatRise = 50;               // K, carb heat's intake temperature rise at rated power
+    Real heatTimeConstant = 6;        // s, the muff and ducting warming / cooling
+    Real fuelEvaporation = 0.7;       // fraction of the fuel evaporated before the throttle plate
+    Real fuelLatentHeat = 3.5e5;      // J/kg (avgas)
+    Real throttleCooling = 0.2;       // fraction of the plate jet's static temperature drop at the plate
+    Real captureFraction = 0.008;     // of the water dropped that freezes on the throat and plate
+    Real iceToClose = 0.015;          // kg of ice that would close the wide-open throat
+    Real meltEfficiency = 0.05;       // of the warm air's heat above 0 C that melts ice
 };
 
 struct PistonEngineDef {
@@ -271,6 +308,7 @@ struct PistonEngineDef {
     Real oilReliefPressure = 5.5e5;           // Pa (~80 psi)
     Real oilViscosityTemperatureScale = 38.9; // K: pressure x e when oil is this much colder
     int fuelFeed = 0;                 // index of the fuel feed this engine draws from
+    CarburettorDef carburettor;       // absent: fuel injected
     PropellerDef propeller;
 };
 
@@ -348,6 +386,93 @@ struct TurbofanDef {
         Real cascadeForward = 1.4;    // m forward of the nozzle exit: where the cascades are
         Real cowlRadius = 0.7;        // m, nacelle radius at the cascades
     } reverser;
+};
+
+// Free-turbine turboprop (PT6A class; docs/architecture/propulsion.md,
+// TurbopropEngine). A gas generator (compressor and its turbine, speed Ng)
+// makes hot gas; a separate power turbine on the propeller shaft (speed Np)
+// takes the power out. The gas generator's power follows corrected
+// parameters at the compressor face (total pressure and temperature ratios
+// delta0, theta0, with the ram rise):
+//   P_gas = P_thermo delta0 sqrt(theta0) g(Nc),  Nc = Ng / sqrt(theta0),
+//   g(Nc) = ((Nc - N0) / (1 - N0))^k,
+//   ITT = theta0^x ITT_c(Nc), ITT_c rising from the idle value to the limit at Nc = 1,
+// so P_thermo is the power at sea level, static, ISA at 100 % corrected Ng,
+// where the ITT reaches its limit. The fuel control (Ng governor) schedules
+// Ng from the power lever between the condition lever's idle and the Ng limit,
+// capped by the torque and ITT limiters: the engine is flat rated to its
+// torque limit up to the altitude or temperature where the ITT takes over.
+// The power turbine's torque falls linearly with its speed (stall torque
+// `turbineStallTorqueRatio` times the design torque), and the shaft (power
+// turbine, gearbox and propeller) is a state of the integrator; the
+// propeller governor sets the blade angle to hold the Np the propeller
+// lever selects. Fuel flow is a Willans line through the published SFC at the
+// flat rating and the idle flow (corrected).
+struct TurbopropDef {
+    std::string name = "engine";
+    Vec3 position;                    // propeller hub, structural frame
+    Vec3 thrustAxis{1, 0, 0};         // unit, body
+    bool clockwiseFromBehind = true;
+    Real ratedPower = 783e3;          // W, flat-rated shaft power (take-off) at the rated propeller speed
+    Real ratedPropRpm = 1700;         // Np 100 %
+    Real minGovernedRpm = 1450;       // propeller lever at the aft end of the governing range
+    Real torqueLimit = 1.0;           // fraction of the rated torque (ratedPower / rated Np) the torque limiter holds
+    Real thermodynamicPower = 1.2e6;  // W at sea level, static, ISA, 100 % corrected Ng (the ITT limit)
+    Real ngMax = 1.04;                // Ng limit (fraction of 100 %)
+    Real ngLowIdle = 0.62;            // condition lever LOW IDLE
+    Real ngHighIdle = 0.72;           // condition lever HIGH IDLE
+    Real ngZeroPower = 0.5;           // N0: corrected Ng at which the gas power vanishes
+    Real gasPowerExponent = 3.0;      // k
+    Real ngRpm = 37468;               // Ng 100 % in rpm (display)
+    Real ittLimit = 1093;             // K, maximum (take-off) ITT
+    Real ittIdle = 880;               // K, corrected ITT at low idle
+    Real ittExponent = 1.5;           // shape of ITT_c between idle and the limit
+    Real ittThetaExponent = 0.6;      // x: ITT = theta0^x ITT_c (Calibrated: the ITT-limited power lapse)
+    Real turbineStallTorqueRatio = 2.0;  // power-turbine torque at Np = 0 / at the design point (same gas power)
+    Real accelerationTime = 5.0;      // s, 95 % of an Ng step up (low idle to maximum)
+    Real decelerationTime = 3.0;      // s, 95 % of an Ng step down
+    Real startTime = 30.0;            // s, starter on to stabilised low idle
+    Real lightOffNg = 0.13;           // Ng at which the condition lever's fuel lights the engine
+    Real starterNg = 0.22;            // Ng the starter alone turns the gas generator to
+    Real selfSustainingNg = 0.45;     // Ng from which the lit engine accelerates without the starter
+    Real starterCurrent = 300;        // A while cranking
+    Real sfcRated = 9.26e-8;          // kg/J at the flat rating, sea level ISA (0.548 lb/shp/h)
+    Real idleFuelFlow = 0.0126;       // kg/s, sea-level static low idle (100 lb/h)
+    Real oilPressureIdle = 4.1e5;     // Pa at low idle (60 psi)
+    Real oilPressureMax = 8.3e5;      // Pa at 100 % Ng (120 psi)
+    Real oilTemperatureRise = 60;     // K above ambient at the flat rating (lumped, first order)
+    Real inertia = 25;                // kg m^2: propeller, power turbine and gearbox, at the propeller shaft
+    Real frictionTorqueFraction = 0.01;  // gearbox and power-turbine drag at rated Np, fraction of the rated torque
+    // Propeller governor: blade-angle rate = gain (e + lead de/dt), e the Np
+    // error as a fraction of the selected speed, limited to the pitch rate;
+    // the feathering springs and counterweights move the blades to feather
+    // at featherRate (feather selected, or no governor oil: Np below
+    // governorOilNp x rated, the shutdown on the ground).
+    Real governorGain = 8.7;          // rad/s of blade angle per unit Np error (5 deg/s per 1 %)
+    Real governorLead = 0.15;         // s
+    Real pitchRate = 0.26;            // rad/s (15 deg/s)
+    Real featherRate = 0.14;          // rad/s (8 deg/s)
+    Real governorOilNp = 0.4;
+    // Ground beta and reverse (PilotInput::reverse with the power lever at
+    // idle, main wheels on the ground): the first `betaTravel` of the reverse
+    // travel takes the blades from the flight-idle stop to the reverse stop
+    // at idle Ng (beta); the rest raises Ng to reverseNg (reverse), the power
+    // turbine governor holding Np at or below reverseNpFraction of the selected speed.
+    Real betaTravel = 0.4;
+    Real reverseNg = 0.85;
+    Real reverseNpFraction = 0.95;
+    // Autofeather (cockpit "propeller.autofeather"): armed with both power
+    // levers above `autofeatherLever`; an engine whose torque falls below
+    // `autofeatherTorque` (fraction of rated) feathers.
+    bool autofeather = false;
+    Real autofeatherLever = 0.85;
+    Real autofeatherTorque = 0.12;
+    Real pFactorGain = 0.05;
+    Real slipstreamSwirlFactor = 0.3;
+    int fuelFeed = 0;
+    PropellerDef propeller;
+    Real ratedOmega() const { return ratedPropRpm * 2 * kPi / 60; }
+    Real ratedTorque() const { return ratedPower / ratedOmega(); }
 };
 
 // Retractable landing gear and speedbrakes (both optional).
@@ -642,6 +767,36 @@ struct StallWarningDef {
     // is 5 deg lower again. 0 = no pusher.
     Real pusherMargin = 0;            // rad
     Real pusherElevator = -0.5;       // elevator command (-1..1, nose down)
+    // A vane or reed trips at a fixed local flow angle: with ice on the wing
+    // (which stalls it several degrees earlier) its warning comes late or
+    // not at all. A computed system uses the clean wing's stall too, but
+    // switches to its icing schedule, this much lower, while any ice
+    // protection is switched on.
+    Real icingAlphaShift = 0.0873;    // rad (computed systems)
+};
+
+// Airframe ice protection (Estimated by type from the manufacturers'
+// descriptions). Thermal: engine bleed air heats the leading edges (it runs
+// wet: no ice forms, ice already there melts) at a cost in thrust; boots:
+// pneumatic de-icers inflated every cycle, shedding the ice over a residual
+// layer (ice builds again between cycles). One cockpit switch per name
+// ("anti_ice.<switch>").
+enum class IceProtectionType { Thermal, Boots };
+struct SurfaceIceProtectionDef {
+    int surface = 0;
+    IceProtectionType type = IceProtectionType::Thermal;
+    std::string switchName = "wing";
+};
+struct IceProtectionDef {
+    std::vector<SurfaceIceProtectionDef> surfaces;
+    Real bleedThrustLoss = 0.04;      // fraction of each lit turbofan's thrust while thermal anti-ice is on
+    Real heatFlux = 15000;            // W/m^2 into the ice once warm (melting)
+    Real heatTimeConstant = 20;       // s, leading-edge warm-up
+    Real minimumN2 = 0.6;             // core speed (fraction) for full bleed heat; none below 0.45
+    Real bootCycle = 60;              // s between inflations
+    Real bootResidual = 0.8e-3;       // m of ice left after a cycle
+    bool windshieldHeat = false;      // electrically heated windshield (always on)
+    bool iceDetector = false;         // an ICE annunciator (a vibrating-probe detector)
 };
 
 struct VacuumDef {
@@ -720,6 +875,7 @@ struct AircraftDefinition {
 
     std::vector<PistonEngineDef> engines;
     std::vector<TurbofanDef> turbofans;
+    std::vector<TurbopropDef> turboprops;
     FuelSystemDef fuel;
     ElectricalDef electrical;
     HydraulicsDef hydraulics;
@@ -728,6 +884,7 @@ struct AircraftDefinition {
     FlightControlsDef controls;
     PitotStaticDef pitotStatic;
     StallWarningDef stallWarning;
+    IceProtectionDef iceProtection;   // none by default (not approved for known icing)
     VacuumDef vacuum;
     StructuralLimitsDef limits;
     InstrumentPanelDef panel;

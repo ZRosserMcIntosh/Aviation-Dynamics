@@ -89,7 +89,7 @@ Real InstrumentPanel::altitudeFromPressure(Real p, Real setting) {
 // ----------------------------------------------------------------- panel ----
 
 InstrumentPanel::InstrumentPanel(const InstrumentPanelDef& def, const Table1D& staticError, Real regulatedSuction)
-    : def_(def), staticError_(staticError), regulatedSuction_(regulatedSuction) {
+    : def_(def), dataAttitude_(def.attitude), dataHeading_(def.heading), staticError_(staticError), regulatedSuction_(regulatedSuction) {
     s_.altimeterSetting = def.altimeter.settingDefault;
     s_.navActiveKhz = {110000, 110000};
     s_.navStandbyKhz = {108000, 108000};
@@ -246,6 +246,10 @@ void InstrumentPanel::updatePitotStatic(Real dt, const SensorInputs& in) {
 void InstrumentPanel::updateAttitude(Real dt, const SensorInputs& in) {
     const AttitudeIndicatorDef& d = def_.attitude;
     if (!d.installed) return;
+    if (d.reference == AttitudeReference::Ahrs) {
+        updateAhrs(dt, in);
+        return;
+    }
     const Quat& q = in.attitude;
     const Real target = aiFailed_ ? 0.0 : spinTarget(d.power, in.attitudeElectricPowered, in.suction);
     aiSpin_ = firstOrder(aiSpin_, target, dt, target > aiSpin_ ? d.spinUpTime : d.spinDownTime);
@@ -298,6 +302,47 @@ void InstrumentPanel::updateAttitude(Real dt, const SensorInputs& in) {
     s_.attitudeRoll = std::atan2(db2.y, db2.z);
     aiAxisBody_ = db2;
     aiAxisBodyValid_ = true;
+    // An electric gyro shows its OFF flag without power (a vacuum one has none).
+    s_.attitudeFlag = d.power == GyroPower::Electric && (!in.attitudeElectricPowered || aiFailed_);
+}
+
+// ------------------------------------------------------------------ AHRS ----
+
+// Attitude and heading reference system (or the IRS's attitude): strapdown
+// rate gyros integrated and continuously levelled against the accelerometers,
+// with the centripetal and longitudinal accelerations taken out using air
+// data and GPS (the aiding that a vacuum gyro's pendulous vanes lack), so it
+// has no erection or turn errors and no gimbal stops. What is left is the
+// filter's own lag, a few hundredths of a second (Garmin GRS 77 / Honeywell
+// AH-2000 class: 0.1-0.5 deg static accuracy, 50 Hz output). It needs its
+// alignment after power-up or a reset (here in any attitude, as the aided
+// units do in flight), shows the ATT flag while aligning, unpowered or
+// failed, and the display then holds its last attitude. Errors from sensor
+// bias are below what a pilot can see and are not modelled.
+void InstrumentPanel::updateAhrs(Real dt, const SensorInputs& in) {
+    const AttitudeIndicatorDef& d = def_.attitude;
+    const Quat& q = in.attitude;
+    const bool powered = in.attitudeElectricPowered && !aiFailed_;
+    if (!powered) ahrsAlign_ = 0;
+    else ahrsAlign_ = std::min(ahrsAlign_ + dt, d.alignTime);
+    const bool valid = powered && ahrsAlign_ >= d.alignTime;
+    t_.attitudeGyroSpin = powered ? (d.alignTime > 0 ? ahrsAlign_ / d.alignTime : 1.0) : 0.0;
+    s_.attitudeTumbled = false;
+    s_.attitudeFlag = !valid;
+    if (!valid) {
+        // The display holds; the filter levels itself during the alignment.
+        ahrsAttitude_ = q;
+        return;
+    }
+    // The output follows the truth through a first-order lag (normalised
+    // linear interpolation of the quaternion, the short way round).
+    Quat target = q;
+    if (ahrsAttitude_.w * q.w + ahrsAttitude_.x * q.x + ahrsAttitude_.y * q.y + ahrsAttitude_.z * q.z < 0) target = q * -1.0;
+    const Real k = d.ahrsTimeConstant > 0 ? std::min(dt / d.ahrsTimeConstant, 1.0) : 1.0;
+    ahrsAttitude_ = ahrsAttitude_ + (target + ahrsAttitude_ * -1.0) * k;
+    ahrsAttitude_.normalize();
+    s_.attitudePitch = ahrsAttitude_.pitch();
+    s_.attitudeRoll = ahrsAttitude_.roll();
 }
 
 // ------------------------------------------------------ directional gyro ----
@@ -343,6 +388,41 @@ void InstrumentPanel::syncHeadingIndicator(Real heading) {
 }
 
 void InstrumentPanel::adjustHeadingIndicator(Real delta) { syncHeadingIndicator(s_.headingIndicator + delta); }
+
+void InstrumentPanel::setAhrsReference(bool on, const Quat& attitude) {
+    if (!on) {
+        def_.attitude = dataAttitude_;
+        def_.heading = dataHeading_;
+        return;
+    }
+    // The attitude from the AHRS (on the main bus: no load name of its own).
+    if (dataAttitude_.reference != AttitudeReference::Ahrs) {
+        AttitudeIndicatorDef a;
+        a.installed = true;
+        a.reference = AttitudeReference::Ahrs;
+        a.power = GyroPower::Electric;
+        def_.attitude = a;
+    }
+    // The heading from its magnetometer-slaved gyros (no gimbal stops, the
+    // jets' figures: 0.2 deg/h of drift, slaved at 3 deg/s).
+    if (!(dataHeading_.slavingRate > 0)) {
+        HeadingIndicatorDef h;
+        h.installed = true;
+        h.power = GyroPower::Electric;
+        h.mechanicalDrift = units::degToRad(0.2) / 3600;
+        h.gimbalLimit = 0;
+        h.slavingRate = units::degToRad(3.0);
+        h.spinUpTime = 5;
+        h.spinDownTime = 30;
+        def_.heading = h;
+    }
+    ahrsAlign_ = def_.attitude.alignTime;
+    ahrsAttitude_ = attitude;
+    s_.attitudeTumbled = false;
+    hiFailed_ = aiFailed_ = false;
+    dgSpin_ = 1;
+    syncHeadingIndicator(t_.magneticHeading);
+}
 
 // ------------------------------------------------ turn coordinator & ball ----
 
@@ -427,6 +507,17 @@ void InstrumentPanel::updateCompass(Real dt, const SensorInputs& in) {
 
 // --------------------------------------------------- engine & systems ----
 
+namespace {
+// A temperature through its sender's lag; 0 (blank) without power. Powered up,
+// it starts from the sender's reading: lagging up from the blank 0 K, the
+// digital readouts showed -344 F for seconds (a needle would rest on its stop).
+Real temperatureGauge(Real shown, Real sensed, Real dt, Real tau) {
+    if (sensed <= 0) return 0.0;
+    if (shown <= 0) return sensed;
+    return firstOrder(shown, sensed, dt, tau);
+}
+}  // namespace
+
 void InstrumentPanel::updateEngineAndSystems(Real dt, const SensorInputs& in) {
     const EngineGaugesDef& e = def_.engine;
     // Mechanical (cable-driven) tachometer.
@@ -445,9 +536,9 @@ void InstrumentPanel::updateEngineAndSystems(Real dt, const SensorInputs& in) {
     }
     oilPressNeedle_.update(p ? in.oilPressure : 0.0, dt, e.needle);
     s_.oilPressure = std::max(oilPressNeedle_.x, 0.0);
-    s_.oilTemperature = firstOrder(s_.oilTemperature, p ? in.oilTemperature : 0.0, dt, tau);
-    s_.egt = firstOrder(s_.egt, p && e.exhaustGasTemperature ? in.egt : 0.0, dt, 3.0);
-    s_.cht = firstOrder(s_.cht, p && e.cylinderHeadTemperature ? in.cht : 0.0, dt, 3.0);
+    s_.oilTemperature = temperatureGauge(s_.oilTemperature, p ? in.oilTemperature : 0.0, dt, tau);
+    s_.egt = temperatureGauge(s_.egt, p && e.exhaustGasTemperature ? in.egt : 0.0, dt, 3.0);
+    s_.cht = temperatureGauge(s_.cht, p && e.cylinderHeadTemperature ? in.cht : 0.0, dt, 3.0);
     s_.fuelFlow = firstOrder(s_.fuelFlow, p && e.fuelFlow ? in.fuelFlow : 0.0, dt, 1.0);
     for (int i = 0; i < 4; ++i) {
         const Real usable = i < in.tankCount ? std::max(in.fuelQuantity[i] - in.fuelUnusable[i], 0.0) : 0.0;
@@ -481,9 +572,9 @@ void InstrumentPanel::updateEngineAndSystems(Real dt, const SensorInputs& in) {
         g.n1 = std::max(n1Needle_[i].x, 0.0);
         g.n2 = std::max(n2Needle_[i].x, 0.0);
         g.oilPressure = std::max(engineOilNeedle_[i].x, 0.0);
-        g.itt = firstOrder(g.itt, itt, dt, 3.0);
+        g.itt = temperatureGauge(g.itt, itt, dt, 3.0);
         g.fuelFlow = firstOrder(g.fuelFlow, ff, dt, 1.0);
-        g.oilTemperature = firstOrder(g.oilTemperature, oilT, dt, tau);
+        g.oilTemperature = temperatureGauge(g.oilTemperature, oilT, dt, tau);
     }
     // Self-powered: ammeter shunt, suction gauge, voltmeter (shows the bus).
     s_.ammeter = -in.batteryCurrent;
@@ -586,6 +677,8 @@ void InstrumentPanel::resetToTruth(const SensorInputs& in) {
     aiAtStop_ = false;
     aiAxisBodyValid_ = dgLastHeadingValid_ = false;
     s_.attitudeTumbled = false;
+    ahrsAlign_ = def_.attitude.alignTime;  // aligned, on the truth
+    ahrsAttitude_ = in.attitude;
     dgAxisAzimuth_ = 0;
     dgCardOffset_ = 0;
     compassVertical_ = {0, 0, 1};
@@ -596,6 +689,13 @@ void InstrumentPanel::resetToTruth(const SensorInputs& in) {
 }
 
 void InstrumentPanel::cageAttitude(const Quat& attitude) {
+    if (def_.attitude.reference == AttitudeReference::Ahrs) {
+        // The AHRS reset: it re-aligns from the attitude it is in.
+        ahrsAlign_ = 0;
+        ahrsAttitude_ = attitude;
+        s_.attitudeFlag = true;
+        return;
+    }
     // The caging knob locks the gimbals square to the case: the rotor axis is
     // forced onto the airframe's own vertical (so cage in level flight).
     aiAxis_ = attitude.rotate({0, 0, 1});
@@ -608,6 +708,8 @@ void InstrumentPanel::resetCold(const SensorInputs& in) {
     initialised_ = false;
     pitotIce_ = pitotHeat_ = 0;
     aiSpin_ = dgSpin_ = tcSpin_ = 0;
+    ahrsAlign_ = 0;  // an AHRS unaligned: the ATT flag until power and its alignment
+    ahrsAttitude_ = in.attitude;
     // A stopped attitude gyro rests against its stops: a tilted display.
     aiAxis_ = normalized(in.attitude.rotate(normalized(Vec3{-0.09, 0.26, 1})));
     aiAxisBodyValid_ = dgLastHeadingValid_ = false;

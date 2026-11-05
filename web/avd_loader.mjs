@@ -72,6 +72,35 @@ export default async function createAvdModule(wasmBytes) {
     new Uint8Array(memory.buffer, at, b.length).set(b);
     return ex.avd_terrain(b.length);
   };
+  // A finer grid nested in the region's (AVT1 bytes: data/world/terrain_sp_city.avt, 50 m over the city):
+  // the sample count, -1 if malformed; no bytes (or an empty array) removes the detail grids.
+  A.terrainDetail = (bytes) => {
+    const b = bytes ? (bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)) : new Uint8Array(0);
+    const at = ex.avd_text(b.length + 1);  // may grow the memory: take the buffer after
+    new Uint8Array(memory.buffer, at, b.length).set(b);
+    return ex.avd_terrain_detail(b.length);
+  };
+  // TAWS / GPWS: { cls (0 off, 1 B, 2 A), active: [alert ids], top, level (0 none, 1 advisory, 2 caution,
+  // 3 warning), voice, voiceCount, say (the phrase being spoken), alert (the top alert's annunciation),
+  // raFt (-1 no reading), closureFpm, terrainTime (s, -1 none), phase (0 en route, 1 terminal, 2 approach,
+  // 3 departure), rtcFt, altLossFt, takeoff, gsLoud, inhibit, dhFt }. Speak `say` when voiceCount changes.
+  A.taws = () => {
+    const v = new Float64Array(memory.buffer, ex.avd_taws(), 16);
+    const active = [];
+    for (let a = 1; a <= 14; ++a) if (((v[1] >>> 0) >>> (a - 1)) & 1) active.push(a);
+    const r = { cls: v[0], active, top: v[2], level: v[3], voice: v[4], voiceCount: v[5], raFt: v[6], closureFpm: v[7],
+      terrainTime: v[8], phase: v[9], rtcFt: v[10], altLossFt: v[11], takeoff: v[12] === 1, gsLoud: v[13] === 1,
+      inhibit: v[14] === 1, dhFt: v[15] };
+    r.say = A.text(ex.avd_taws_text(0, 0));
+    r.alert = A.text(ex.avd_taws_text(1, 0));
+    return r;
+  };
+  A.tawsVoiceText = (voice) => A.text(ex.avd_taws_text(2, voice));
+  A.tawsAlertText = (alert) => A.text(ex.avd_taws_text(3, alert));
+  // cls -1 the aircraft's own (A jets, B others), 0 off, 1 B, 2 A; decision height ft (radio; < 0 keep);
+  // inhibit: FLTA off; landingDetent: the flap detent counted as landing (-1 the last). Returns the class in force.
+  A.tawsConfig = ({ cls = -1, dhFt = -1, inhibit = false, landingDetent = -1 } = {}) =>
+    ex.avd_taws_config(cls, dhFt, inhibit ? 1 : 0, landingDetent);
   A.load = (json) => {
     const b = enc.encode(json);
     const at = ex.avd_text(b.length + 1);  // may grow the memory: take the buffer after
@@ -92,6 +121,25 @@ export default async function createAvdModule(wasmBytes) {
   A.setThrottle = (engine, v) => ex.avd_set_throttle(engine, v);
   // Reverse thrust levers 0..1 (deploy on the main wheels at idle; 0 stows).
   A.setReverse = (v) => ex.avd_set_reverse(v);
+  // Turboprops (web/README.md, "Turboprops"): propeller levers 0 (minimum
+  // governed rpm) .. 1 (rated), every engine; condition levers (engine, -1
+  // every engine; 0 cut-off, 1 low idle, 2 high idle); feather detents.
+  A.setPropLever = (v) => ex.avd_set_prop_lever(v);
+  A.setCondition = (engine, position) => ex.avd_set_condition(engine, position);
+  A.setFeather = (engine, on) => ex.avd_set_feather(engine, on ? 1 : 0);
+  // The engine indication: { count, propLever, npSelected, autofeather: { fitted, on, armed }, reverse, powered,
+  //   engines: [{ torque %, torqueFtLb, itt degC, ng %, np rpm, fuelFlowKgH, fuelFlowLbH, oilPsi, oilC, blade deg,
+  //   feathered, beta, running, lit, condition, starter, feather, thrustKn, shp, autofeathered }] }.
+  A.turboprop = () => {
+    const v = new Float64Array(memory.buffer, ex.avd_turboprop(), 48);
+    const keys = ['torque', 'torqueFtLb', 'itt', 'ng', 'np', 'fuelFlowKgH', 'fuelFlowLbH', 'oilPsi', 'oilC', 'blade', 'feathered', 'beta',
+      'running', 'lit', 'condition', 'starter', 'feather', 'thrustKn', 'shp', 'autofeathered'];
+    const flags = new Set(['feathered', 'beta', 'running', 'lit', 'starter', 'feather', 'autofeathered']);
+    const engines = Array.from({ length: Math.min(v[0], 2) }, (_, i) =>
+      Object.fromEntries(keys.map((k, j) => [k, flags.has(k) ? v[8 + 20 * i + j] === 1 : v[8 + 20 * i + j]])));
+    return { count: v[0], propLever: v[1], npSelected: v[2], autofeather: { fitted: v[3] === 1, on: v[4] === 1, armed: v[5] === 1 },
+      reverse: v[6], powered: v[7] === 1, engines };
+  };
   A.runway = () => Array.from(new Float64Array(memory.buffer, ex.avd_runway(), L.runway));
   A.windGrid = (hx, hy, hz, nx, ny, nz) => new Float64Array(memory.buffer, ex.avd_wind_grid(hx, hy, hz, nx, ny, nz), 3 * nx * ny * nz);
   // The wake's vortex segments: { n, gmax, ground, seg } with 9 numbers a
@@ -139,15 +187,30 @@ export default async function createAvdModule(wasmBytes) {
     for (let i = 0; i < 16; ++i) collapsed.push(((v[5] | 0) >> i & 1) === 1);
     return { peakG: v[0], spinalG: v[1], dri: v[2], lumbarN: v[3], hic: v[4], collapsed, structural: v[6] === 1 };
   };
-  // Autopilot: lateral 0 off, 1 ROL, 2 HDG (the heading bug), 3 NAV (GPS); vertical 0 off, 1 PIT, 2 ALT, 3 VS;
-  // autothrottle on the selected IAS. 1 engaged, 0 all off, -2 on the ground, -3 NAV without a route.
+  // Autopilot: lateral 0 off, 1 ROL, 2 HDG (the heading bug), 3 NAV (GPS), 4 APR (A.autopilotApproach);
+  // vertical 0 off, 1 PIT, 2 ALT, 3 VS; autothrottle on the selected IAS.
+  // 1 engaged, 0 all off, -2 on the ground, -3 NAV without a route, -4 APR without its guidance.
   A.autopilot = ({ lateral = 0, vertical = 0, autothrottle = false, altFt = 0, vsFpm = 0, iasKt = 0 } = {}) =>
     ex.avd_autopilot(lateral, vertical, autothrottle ? 1 : 0, altFt, vsFpm, iasKt);
-  // { on, lateral, vertical (4: ALT* capturing), autothrottle, altFt, vsFpm, iasKt, bugDeg, bankCmd, pitchCmd, vsCmd }
+  // APR's approach: source 'ils' (NAV 1, the front course on the OBS) or 'gps' (the route's LPV glidepath);
+  // daFt the decision altitude on the altimeter (0: 200 ft above the threshold). 1 ok, -1 no field for the default DA.
+  A.autopilotApproach = ({ source = 'ils', daFt = 0 } = {}) => ex.avd_autopilot_approach(source === 'gps' ? 1 : 0, daFt);
+  // { on, lateral, vertical (4: ALT* capturing, 5: GS/GP coupled), autothrottle, altFt, vsFpm, iasKt, bugDeg, bankCmd,
+  //   pitchCmd, vsCmd, apr (0 off, 1 armed, 2 LOC/LNAV captured + GS armed, 3 GS/GP captured, 4 MINIMUMS: disconnected at DA),
+  //   aprSource ('ils' | 'gps'), daFt, locDots, gsDots (+ fly right / up, 2 dots full scale) }
   A.autopilotStatus = () => {
-    const v = new Float64Array(memory.buffer, ex.avd_autopilot_status(), 11);
+    const v = new Float64Array(memory.buffer, ex.avd_autopilot_status(), 16);
     return { on: v[0] === 1, lateral: v[1], vertical: v[2], autothrottle: v[3] === 1, altFt: v[4], vsFpm: v[5], iasKt: v[6],
-      bugDeg: v[7], bankCmd: v[8], pitchCmd: v[9], vsCmd: v[10] };
+      bugDeg: v[7], bankCmd: v[8], pitchCmd: v[9], vsCmd: v[10], apr: v[11], aprSource: v[12] === 1 ? 'gps' : 'ils', daFt: v[13],
+      locDots: v[14], gsDots: v[15] };
+  };
+  // Attitude and heading reference: 'data' (the aircraft's own: the 172's vacuum gyros, the jets' AHRS) or 'ahrs'
+  // (a glass cockpit's AHRS and magnetometer, e.g. a G1000 172). Returns the reference in use: 'ahrs' | 'gyro'.
+  A.setAttitudeReference = (ref) => (ex.avd_set_attitude_reference(ref === 'ahrs' ? 1 : 0) === 1 ? 'ahrs' : 'gyro');
+  // { ahrs, attFlag (no valid attitude: red ATT), align (0..1; a gyro: its rotor speed), tumbled }
+  A.attitude = () => {
+    const v = new Float64Array(memory.buffer, ex.avd_attitude(), 4);
+    return { ahrs: v[0] === 1, attFlag: v[1] === 1, align: v[2], tumbled: v[3] === 1 };
   };
   // Autoland: 1 engaged, 0 off, -1 no approach to fly, -2 on the ground.
   A.autoland = (on) => ex.avd_autoland(on ? 1 : 0);
@@ -215,6 +278,31 @@ export default async function createAvdModule(wasmBytes) {
       out.push({ index: i, id, label, positions: pos.split(';'), position: +cur });
     }
     return out;
+  };
+  // Weather: rain (mm/h), a front reaching the field in etaMin minutes
+  // (kind 'cold' | 'warm' | 'none'; the changes behind it), and what the
+  // aircraft and the field have now.
+  A.setRain = (mmPerHour) => ex.avd_set_rain(mmPerHour);
+  const FRONTS = { none: [0, 0, 0, 0, 0], cold: [1, -6, 3, 15, 200], warm: [2, 4, -2, 10, 320] };
+  A.setFront = ({ kind = 'cold', etaMin = 10, dT, dQnhHpa, windKt, windFromDeg } = {}) => {
+    const [k, t, q, w, d] = FRONTS[kind] || FRONTS.none;
+    ex.avd_set_front(k, etaMin, dT ?? t, dQnhHpa ?? q, windKt ?? w, windFromDeg ?? d);
+  };
+  A.weather = () => {
+    const v = new Float64Array(memory.buffer, ex.avd_weather(), 24);
+    return { rain: v[0], visibility: v[1], oat: v[2], qnh: v[3], fieldQnh: v[4], fieldOat: v[5], frontBehind: v[6], frontDistanceKm: v[7],
+      runwayWaterMm: v[8], cloudWater: v[9], supercooledWater: v[10], inCloud: v[11] === 1, rainWater: v[12], freezingRain: v[13] === 1,
+      cloudBase: v[14], cloudTop: v[15], frontEtaMin: v[16] };
+  };
+  // Ice: per surface (mm, clmax loss, glaze share), propeller, carburettor,
+  // protection, windshield, intensity and the stall speeds it makes.
+  A.icing = () => {
+    const v = new Float64Array(memory.buffer, ex.avd_icing(), 48), n = v[0] | 0;
+    const surfaces = Array.from({ length: n }, (_, i) => ({ mm: v[1 + i], clmaxLoss: v[9 + i], glaze: v[17 + i] }));
+    return { surfaces, propellerMm: v[25], propellerThrustLoss: v[26], carbIceG: v[27], carbBlockage: v[28], carbTempC: v[29],
+      carbHeat: v[30], roughness: v[31], carburettor: v[32] === 1, protectionMask: v[33], protectionHeat: v[34], bootsInflating: v[35] === 1,
+      iceDetected: v[36] === 1, iceDetector: v[37] === 1, windshieldMm: v[38], windshieldOpacity: v[39], rateMmPerMin: v[40], intensity: v[41],
+      vsKcas: v[42], vsCleanKcas: v[43], bleed: v[44] === 1, switches: v[45], stallAngleLossDeg: v[46] };
   };
   A.procedure = () => { const st = ex.avd_procedure_status(); const n = new Uint8Array(memory.buffer, ex.avd_text(0)).indexOf(0); return { status: st, message: A.text(n) }; };
   return A;
