@@ -75,7 +75,15 @@ struct PilotInput {
     // ground they deploy the reversers; once deployed the lever sets the
     // reverse N1 from idle up to the reverser's reverse N1. Back to 0 stows
     // them. Left at 0 the automatic sequence (on the landing roll) runs.
+    // Turboprops: the power levers' travel below idle (beta and reverse,
+    // with the power levers at idle and the main wheels on the ground):
+    // 0 .. TurbopropDef::betaTravel takes the blades from the flight-idle stop
+    // to the reverse stop at idle Ng, the rest raises Ng to reverse power.
     Real reverse = 0;
+    // Turboprops: the propeller levers, 0 (minimum governed rpm) .. 1 (maximum,
+    // the rated Np); each engine's feather detent is its cockpit control
+    // "engine<N>.feather".
+    Real propLever = 1;
     bool starterHeld = false;  // ignition key held at START
 };
 
@@ -168,6 +176,7 @@ struct AircraftTelemetry {
     AirSample air;
     std::array<EngineTelemetry, kMaxEngines> engines{};
     std::array<TurbofanState, kMaxEngines> turbofans{};
+    std::array<TurbopropState, kMaxEngines> turboprops{};
     std::array<Real, kMaxEngines> throttles{};  // lever position each engine followed this step
     Real gearPosition = 1;                   // 0 up and locked .. 1 down and locked
     Real speedbrake = 0;                     // 0 retracted .. 1 fully deployed
@@ -269,8 +278,19 @@ public:
     // The FADEC rating in force (ThrustMode::Auto's schedule, or the forced one).
     ThrustRating activeThrustRating() const { return activeRating_; }
     Real takeoffRatingTime() const { return takeoffRatingTimer_; }
-    // Trim/spawn: turbofans lit and held at the commanded fan speed (no spool lag).
+    // Trim/spawn: turbofans lit and held at the commanded fan speed (no spool
+    // lag); turboprops lit at the commanded Ng with the blade angle that
+    // holds the selected Np at the current airspeed (the governor settled).
     void setTurbofansSteady(bool on) { turbofanSteady_ = on; }
+    int turbopropCount() const { return static_cast<int>(turboprops_.size()); }
+    const TurbopropEngine& turboprop(int i) const { return turboprops_[i]; }
+    const TurbopropState& turbopropState(int i) const { return tpState_[i]; }
+    // Engines that drive a propeller (pistons or turboprops; Aircraft::propeller(i)).
+    int propellerCount() const { return static_cast<int>(props_.size()); }
+    // Shaft speed (rad/s) the propeller lever selects for turboprop i.
+    Real selectedPropOmega(int i, const PilotInput& in) const;
+    // Autofeather armed (switch on, power levers up, both engines making torque).
+    bool autofeatherArmed() const { return autofeatherArmed_; }
     Real gearPosition() const { return gearPos_; }
     // Propeller slipstream of engine i at the last recorded evaluation (visualisation).
     const SlipstreamState& slipstream(int i) const { return slip_[i]; }
@@ -347,6 +367,7 @@ private:
         ControlDeflections controls;
         std::array<PistonEngineInputs, kMaxEngines> engineIn{};
         std::array<TurbofanInputs, kMaxEngines> turboIn{};
+        std::array<TurbopropInputs, kMaxEngines> tpIn{};
         Real brakeLeft = 0, brakeRight = 0;
         std::array<Real, kMaxGear> steer{};  // wheel steering command (rad)
         std::array<Real, kMaxGear> brakeModulation{};  // anti-skid: fraction of the pedal's torque let through
@@ -364,6 +385,10 @@ private:
         Real oleoFe = 0, oleoL = 1, oleoN = 1, oleoC2 = 0, oleoC1 = 0;
     };
     void prepareGear();
+    // Turboprop i with its gas generator steady: the blade angle (between the
+    // flight-idle stop and feather) that balances the shaft at the selected
+    // Np at axial speed vAx, or at the flight-idle stop the Np where it balances.
+    void settleTurboprop(int i, Real vAx, const AirSample& air);
     Real corneringStiffness(std::size_t leg, Real normalForce) const;
 
     void rebuildCockpit();
@@ -390,6 +415,7 @@ private:
     std::vector<PistonEngine> engines_;
     std::vector<Propeller> props_;
     std::vector<TurbofanEngine> turbofans_;
+    std::vector<TurbopropEngine> turboprops_;
     FuelSystem fuel_;
     ElectricalSystem electrical_;
     VacuumSystem vacuum_;
@@ -415,6 +441,10 @@ private:
     std::array<bool, kMaxEngines> turboFuel_{};     // fuel control switches at RUN
     std::array<TurbofanState, kMaxEngines> turboState_{};
     bool turbofanSteady_ = false;
+    mutable std::array<TurbopropState, kMaxEngines> tpState_{};  // the recorded evaluation writes torque and thrust
+    std::array<ConditionLever, kMaxEngines> condition_{};
+    std::array<bool, kMaxEngines> tpStarter_{}, tpFeather_{}, autofeathered_{};
+    bool autofeatherSwitch_ = false, autofeatherArmed_ = false;
     bool gearDown_ = true;
     Real gearPos_ = 1;
     int speedbrakeDetent_ = 0;

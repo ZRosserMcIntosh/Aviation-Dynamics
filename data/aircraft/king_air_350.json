@@ -1,0 +1,1350 @@
+{
+ "schema_version": 1,
+ "id": "king_air_350",
+ "display_name": "King Air 350",
+ "manufacturer": "Beechcraft",
+ "reference_aircraft": "Beechcraft King Air 350 (B300; 2 x Pratt & Whitney Canada PT6A-60A, Hartzell 4-blade propellers), twin-turboprop business aircraft",
+ "description": "Twin-turboprop, low-wing, T-tail business aircraft with winglets: the project's first turboprop. Free-turbine PT6A-60A engines (gas generator, ITT, torque, flat rating) drive constant-speed, feathering and reversing propellers through their governors. From public specifications and published performance; geometry from three-views. Structural frame: origin at the nose tip, x forward, y right, z down (metres); the fuselage centreline is z = 0.",
+ "sources": [
+  {
+   "id": "SPEC",
+   "citation": "Beechcraft King Air 350/350i published specifications (manufacturer brochures and Jane's All the World's Aircraft): dimensions (span 57 ft 11 in, length 46 ft 8 in, height 14 ft 4 in, wing area 310 ft^2), weights (MTOW 15,000 lb, max ramp 15,100 lb, MZFW 12,500 lb), usable fuel 539 US gal, performance (maximum cruise ~303-312 KTAS in the FL240-FL280 band at mid weight, sea-level rate of climb ~2,700 fpm, take-off over 50 ft ~3,300 ft, landing ~2,700 ft, ceiling 35,000 ft)."
+  },
+  {
+   "id": "TCDS",
+   "citation": "FAA Type Certificate Data Sheet A24CE (Beech 300 series, King Air 350 = B300): engines 2 x P&WC PT6A-60A, propellers Hartzell 4-blade 105 in, 1,700 rpm; Vmo 263 KIAS, Mmo 0.58; flap and gear speeds (VFE approach 202 / full 158 KIAS, VLE 184 KIAS); Vmca 94 KIAS."
+  },
+  {
+   "id": "ENG",
+   "citation": "Pratt & Whitney Canada PT6A-60A (Transport Canada / EASA TCDS E.008 class data; Jane's Aero-Engines): 1,050 shp flat-rated take-off and maximum continuous at 1,700 propeller rpm, SFC 0.548 lb/shp/h at take-off, maximum ITT 820 degC, gas generator 100 % = 37,468 rpm, Ng limit 104 %."
+  },
+  {
+   "id": "NACA",
+   "citation": "Abbott & von Doenhoff, Theory of Wing Sections (1959): NACA 23018 (root) to 23012 (tip) section data; the King Air wing family's sections."
+  },
+  {
+   "id": "ROSKAM",
+   "citation": "J. Roskam, Airplane Design Part V/VI: radii of gyration (twin turboprops) and component drag build-up."
+  },
+  {
+   "id": "SARAVANAMUTTOO",
+   "citation": "Saravanamuttoo, Rogers & Cohen, Gas Turbine Theory (5th ed.), ch. 9: free-turbine torque-speed characteristic, corrected (non-dimensional) parameters, off-design matching."
+  },
+  {
+   "id": "EST",
+   "citation": "Engineering estimate for this simulation (no published source); see the note."
+  }
+ ],
+ "provenance": [
+  {
+   "field": "reference",
+   "kind": "published",
+   "source": "SPEC",
+   "note": "Wing area 28.8 m^2 (310 ft^2), span 17.65 m (57 ft 11 in, over the winglets), length 14.22 m; MAC 1.72 m from the modelled planform."
+  },
+  {
+   "field": "mass.max_takeoff_kg, mass.max_ramp_kg, mass.max_zero_fuel_kg, mass.max_landing_kg",
+   "kind": "published",
+   "source": "SPEC",
+   "note": "MTOW 15,000 lb, max ramp 15,100 lb, MZFW 12,500 lb, MLW 15,000 lb."
+  },
+  {
+   "field": "mass.empty_kg",
+   "kind": "estimated",
+   "source": "SPEC",
+   "note": "Basic empty weight ~9,300 lb including unusable fuel and oil (typical delivered 350s are 9,100-9,500 lb); a basic operating weight is ~9,955 lb with a crew of two."
+  },
+  {
+   "field": "mass.empty_cg_m, mass.cg_forward_limit, mass.cg_aft_limit",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Empty CG and an envelope of about 17-35 % MAC; the published envelope (inches aft of the B300 datum) is not transcribed."
+  },
+  {
+   "field": "mass.empty_inertia_kgm2",
+   "kind": "estimated",
+   "source": "ROSKAM",
+   "note": "Twin-turboprop radii of gyration Rx 0.34, Ry 0.29, Rz 0.44 on the empty mass (the wing fuel and payload add theirs)."
+  },
+  {
+   "field": "surfaces[0]",
+   "kind": "estimated",
+   "source": "NACA",
+   "note": "Planform matching the published area and span: centre section 2.15/2.0 m chord to the nacelles (2.9 m), outer panel 2.0/0.92 m with 2 deg of quarter-chord sweep, 6 deg dihedral, 0.6 m winglets canted 72 deg; incidence 2.5 deg root to -1 deg tip (3.5 deg of washout as the King Air family's ~3.8 deg root / ~0 deg tip, set 1 deg lower for the attitudes with flap). NACA 230-series section: clmax 1.62 at flight Reynolds numbers (~8e6), cm0 -0.01. Slipstream exposure 0.8 on the strips behind the propellers."
+  },
+  {
+   "field": "surfaces[0].panels[*].controls.flap",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Single-slotted flaps inboard and outboard of the nacelles to ~55 % semi-span, 30 % chord, approach 14 deg and down 35 deg (published as 'approach' and 'full', angles estimated), chord extension 10 %, dclmax/dcl 0.9: landing CLmax ~2.1, the class of the published landing-configuration stall (VSO ~81 KIAS at MTOW, the B200's 76 KIAS at 12,500 lb on a similar wing)."
+  },
+  {
+   "field": "surfaces[1], surfaces[2]",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "T-tail from photographs and three-views: tailplane 5.6 m span, 1.2/0.62 m chords (5.2 m^2), 14 deg sweep, 2.6 m above the fuselage centreline (clear of the slipstream), incidence -1.5 deg; swept fin 2.05 m tall, 2.7/1.25 m chords. Tail volume ~0.8."
+  },
+  {
+   "field": "fuselages, drag_items",
+   "kind": "calibrated",
+   "source": "ROSKAM",
+   "note": "Flat-plate areas from a wetted-area build-up (fuselage 0.21, nacelles and exhaust stacks 0.13, excrescences, antennas, cooling inlets and interference 0.09 m^2 of CdA); with the strips' profile drag CD0 ~0.025. The excrescence item is the one adjusted against the published maximum cruise speed."
+  },
+  {
+   "field": "turboprops",
+   "kind": "published",
+   "source": "ENG",
+   "note": "PT6A-60A: 1,050 shp flat-rated (take-off and maximum continuous) at 1,700 rpm, i.e. 100 % torque = 4,398 N m (3,244 ft lbf) at the propeller shaft; SFC 0.548 lb/shp/h; ITT limit 820 degC; Ng 100 % = 37,468 rpm, limit 104 %. Two engines, both turning clockwise seen from behind (no counter-rotation: the left engine is critical)."
+  },
+  {
+   "field": "turboprops[*].thermodynamic_power_shp, itt_theta_exponent, gas_power_exponent, ng_zero_power",
+   "kind": "calibrated",
+   "source": "SARAVANAMUTTOO",
+   "note": "Gas power on corrected parameters (delta0 sqrt(theta0) x g(Ng/sqrt(theta0)), g cubic from 50 % Ng) with the ITT limit reached at 100 % corrected Ng at sea level ISA: a thermodynamic rating of 1,575 shp (1.5 x the flat rating) and ITT = theta0^0.15 x the corrected ITT put the end of the flat rating (torque limit to ITT limit) near 15,000 ft ISA in the climb and ~780 shp at FL240 at 300 KTAS, the power class of the published maximum cruise. Take-off at sea level ISA: Ng ~94 %, ITT ~770 degC, torque-limited; still torque-limited at ISA+20."
+  },
+  {
+   "field": "turboprops[*].ng_low_idle, ng_high_idle, itt_idle_c, idle_fuel_flow_lb_per_h, acceleration_time_s, start_time_s, light_off_ng",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "PT6 class: low idle 62 % Ng, high idle 72 %, idle ITT ~600 degC, idle fuel ~100 lb/h; light-off at 13 % Ng with the starter (the starter alone turns ~22 %), self-sustaining from ~45 %, ~30 s to stabilised idle; Ng spools 95 % of a step in 5 s up, 3 s down. Starter-generators 300 A, on line from 50 % Ng."
+  },
+  {
+   "field": "turboprops[*].turbine_stall_torque_ratio, inertia_kgm2, friction_torque_fraction",
+   "kind": "estimated",
+   "source": "SARAVANAMUTTOO",
+   "note": "Free power turbine: torque falls linearly with Np from 2x the design torque at rest (the usual free-turbine characteristic). Power turbine and reduction gearbox referred to the propeller shaft 6 kg m^2, plus the propeller's 24 kg m^2 (four aluminium blades ~13 kg each); gearbox drag 1 % of the rated torque at rated Np."
+  },
+  {
+   "field": "turboprops[*].governor, reverse, autofeather",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Hydraulic constant-speed governor: blade-angle rate 5 deg/s per 1 % Np error with a 0.15 s lead, 15 deg/s pitch rate, feathering by spring and counterweights at 8 deg/s; governor oil from 40 % Np (the propeller feathers as the engine runs down on the ground, but a windmilling propeller keeps its oil in flight). Beta over the first 40 % of the reverse travel (flight-idle stop to -10 deg at idle Ng), reverse Ng to 85 % with Np held to 95 %. Autofeather armed with the power levers above 85 % travel and both torques above 24 %, feathering an engine whose torque falls below 12 % (the King Air 350's system arms near 90 % N1 and trips near 400 ft lbf, ~12 %)."
+  },
+  {
+   "field": "turboprops[*].propeller",
+   "kind": "estimated",
+   "source": "TCDS",
+   "note": "Hartzell four-blade, 105 in (2.67 m), 1,700 rpm (published). Blade planform (max chord 0.21 m at mid-span, activity factor ~110), thickness and section estimated. Blade angles at 0.75 R: reverse -10 deg, flight-idle low-pitch stop 14 deg, feather 86 deg (Estimated); governed range 1,450-1,700 rpm. Static take-off thrust from the BEM ~13 kN per engine at 100 % torque."
+  },
+  {
+   "field": "fuel",
+   "kind": "published",
+   "source": "SPEC",
+   "note": "539 US gal (2,040 l) usable in two wing systems (nacelle and wing tanks per side, lumped); Jet A 0.80 kg/l; unusable ~3 US gal per side (Estimated)."
+  },
+  {
+   "field": "gear",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Tricycle: twin-wheel mains (22 x 6.75-10, 105 psi) retracting into the nacelles, track 5.23 m (published), single steerable nose wheel 4.9 m ahead (wheelbase estimated). Oleo struts sized for ~0.1 m static deflection and 0.4 critical damping at MTOW; brakes 4 kN m per main (~0.4 g at MTOW), no anti-skid. Nose-wheel steering by the pedals +-14 deg. Electro-hydraulic gear, 6 s transit."
+  },
+  {
+   "field": "controls",
+   "kind": "estimated",
+   "source": "TCDS",
+   "note": "Flap detents up / approach / down; electric flaps ~12 s full travel; elevator trim tab range 12 deg; rudder boost not modelled. Yaw damper (fitted): washed-out yaw rate to the rudder, 25 % authority."
+  },
+  {
+   "field": "limits",
+   "kind": "published",
+   "source": "TCDS",
+   "note": "Vmo 263 KIAS, Mmo 0.58; VFE 202 KIAS (approach) / 158 KIAS (down); VLE 184 KIAS; VA ~182 KIAS; load factors +3.17 / -1.27 g (flaps up), +2.0 g flaps down (normal-category figures; Estimated for the commuter certification basis)."
+  },
+  {
+   "field": "stall_warning",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Lift-transducer stall warning modelled as the computed least strip margin with a 2 deg margin; no stick pusher."
+  },
+  {
+   "field": "contacts",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Hard points from the three-view; propeller tips ~0.21 m above the ground at the static attitude (the King Air's ~9 in)."
+  }
+ ],
+ "mass": {
+  "empty_kg": 4218.4,
+  "empty_cg_m": [
+   -6.17,
+   0.0,
+   0.1
+  ],
+  "empty_inertia_kgm2": {
+   "ixx": 38000,
+   "iyy": 18000,
+   "izz": 52000,
+   "ixz": 0
+  },
+  "empty_includes_unusable_fuel": true,
+  "max_ramp_kg": 6849.2,
+  "max_takeoff_kg": 6803.9,
+  "max_landing_kg": 6803.9,
+  "max_zero_fuel_kg": 5669.9,
+  "stations": [
+   {
+    "name": "flight deck crew",
+    "position_m": [
+     -2.9,
+     0.0,
+     0.1
+    ],
+    "max_kg": 230,
+    "initial_kg": 170
+   },
+   {
+    "name": "cabin",
+    "position_m": [
+     -6.6,
+     0.0,
+     0.15
+    ],
+    "max_kg": 1000,
+    "initial_kg": 300
+   },
+   {
+    "name": "aft cabin and baggage",
+    "position_m": [
+     -9.6,
+     0.0,
+     0.2
+    ],
+    "max_kg": 250,
+    "initial_kg": 50
+   }
+  ],
+  "cg_forward_limit": {
+   "mass_kg": [
+    4500,
+    6900
+   ],
+   "x_m": [
+    -5.93,
+    -5.97
+   ]
+  },
+  "cg_aft_limit": {
+   "mass_kg": [
+    4500,
+    6900
+   ],
+   "x_m": [
+    -6.25,
+    -6.25
+   ]
+  }
+ },
+ "reference": {
+  "area_m2": 28.8,
+  "span_m": 17.65,
+  "chord_m": 1.72
+ },
+ "surfaces": [
+  {
+   "name": "wing",
+   "section": {
+    "lift_slope_per_rad": 6.1,
+    "zero_lift_alpha_deg": -1.2,
+    "cl_max": 1.42,
+    "cl_min": -1.0,
+    "cd_min": 0.0075,
+    "cd_quadratic": 0.008,
+    "cl_at_cd_min": 0.2,
+    "cm0": -0.01,
+    "stall_width_deg": 3.0,
+    "post_stall_cl_drop": 0.25,
+    "flat_plate_cd": 1.9
+   },
+   "span_efficiency": 0.86,
+   "lifting_line": true,
+   "thickness_ratio": 0.15,
+   "korn_factor": 0.87,
+   "slipstream": {
+    "engine": -1,
+    "exposure": 0.8
+   },
+   "panels": [
+    {
+     "root_quarter_chord_m": [
+      -6.05,
+      0.0,
+      0.75
+     ],
+     "span_m": 2.9,
+     "root_chord_m": 2.15,
+     "tip_chord_m": 2.0,
+     "sweep_deg": 0.0,
+     "dihedral_deg": 6.0,
+     "root_incidence_deg": 2.5,
+     "tip_incidence_deg": 2.0,
+     "strips": 5,
+     "controls": [
+      {
+       "name": "flap",
+       "channel": "flap",
+       "span_start": 0.27,
+       "span_end": 1.0,
+       "chord_fraction": 0.3,
+       "max_positive_deg": 35,
+       "max_negative_deg": 0,
+       "effectiveness": {
+        "deflection_deg": [
+         0,
+         14,
+         25,
+         35
+        ],
+        "eta": [
+         1.0,
+         0.9,
+         0.76,
+         0.64
+        ]
+       },
+       "clmax_increment_ratio": 0.8,
+       "profile_drag_per_rad2": 0.45,
+       "chord_extension": 0.08
+      }
+     ]
+    },
+    {
+     "root_quarter_chord_m": [
+      -6.05,
+      2.9,
+      0.4452
+     ],
+     "span_m": 5.7,
+     "root_chord_m": 2.0,
+     "tip_chord_m": 0.92,
+     "sweep_deg": 2.0,
+     "dihedral_deg": 6.0,
+     "root_incidence_deg": 2.0,
+     "tip_incidence_deg": -1.0,
+     "strips": 8,
+     "controls": [
+      {
+       "name": "flap",
+       "channel": "flap",
+       "span_start": 0.0,
+       "span_end": 0.42,
+       "chord_fraction": 0.3,
+       "max_positive_deg": 35,
+       "max_negative_deg": 0,
+       "effectiveness": {
+        "deflection_deg": [
+         0,
+         14,
+         25,
+         35
+        ],
+        "eta": [
+         1.0,
+         0.9,
+         0.76,
+         0.64
+        ]
+       },
+       "clmax_increment_ratio": 0.8,
+       "profile_drag_per_rad2": 0.45,
+       "chord_extension": 0.08
+      },
+      {
+       "name": "aileron",
+       "channel": "aileron",
+       "span_start": 0.48,
+       "span_end": 0.96,
+       "chord_fraction": 0.26,
+       "max_positive_deg": 15,
+       "max_negative_deg": 20,
+       "antisymmetric": true,
+       "clmax_increment_ratio": 0.5,
+       "profile_drag_per_rad2": 0.25
+      }
+     ]
+    },
+    {
+     "root_quarter_chord_m": [
+      -6.399,
+      8.6,
+      -0.1539
+     ],
+     "span_m": 0.6,
+     "root_chord_m": 0.92,
+     "tip_chord_m": 0.42,
+     "sweep_deg": 35.0,
+     "dihedral_deg": 72.0,
+     "root_incidence_deg": -2.0,
+     "tip_incidence_deg": -2.0,
+     "strips": 2
+    }
+   ]
+  },
+  {
+   "name": "horizontal tail",
+   "section": {
+    "lift_slope_per_rad": 6.2,
+    "zero_lift_alpha_deg": 0.0,
+    "cl_max": 1.2,
+    "cl_min": -1.2,
+    "cd_min": 0.007,
+    "cd_quadratic": 0.007,
+    "cl_at_cd_min": 0.0,
+    "cm0": 0.0,
+    "stall_width_deg": 3.0,
+    "post_stall_cl_drop": 0.2,
+    "flat_plate_cd": 1.9
+   },
+   "span_efficiency": 0.85,
+   "downwash": {
+    "source": 0,
+    "wake_blanking": true,
+    "wake_spread": 0.16,
+    "wake_q_ratio": 0.2
+   },
+   "thickness_ratio": 0.12,
+   "korn_factor": 0.87,
+   "panels": [
+    {
+     "root_quarter_chord_m": [
+      -13.55,
+      0.0,
+      -2.62
+     ],
+     "span_m": 2.8,
+     "root_chord_m": 1.2,
+     "tip_chord_m": 0.62,
+     "sweep_deg": 14.0,
+     "dihedral_deg": 0.0,
+     "root_incidence_deg": -1.0,
+     "tip_incidence_deg": -1.0,
+     "strips": 5,
+     "controls": [
+      {
+       "name": "elevator",
+       "channel": "elevator",
+       "span_start": 0.0,
+       "span_end": 1.0,
+       "chord_fraction": 0.36,
+       "max_positive_deg": 14,
+       "max_negative_deg": 20,
+       "clmax_increment_ratio": 0.5,
+       "profile_drag_per_rad2": 0.3
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "vertical tail",
+   "section": {
+    "lift_slope_per_rad": 6.2,
+    "zero_lift_alpha_deg": 0.0,
+    "cl_max": 1.2,
+    "cl_min": -1.2,
+    "cd_min": 0.007,
+    "cd_quadratic": 0.007,
+    "cl_at_cd_min": 0.0,
+    "cm0": 0.0,
+    "stall_width_deg": 3.0,
+    "post_stall_cl_drop": 0.2,
+    "flat_plate_cd": 1.9
+   },
+   "span_efficiency": 0.85,
+   "ground_effect": false,
+   "thickness_ratio": 0.12,
+   "korn_factor": 0.87,
+   "panels": [
+    {
+     "root_quarter_chord_m": [
+      -12.15,
+      0.0,
+      -0.55
+     ],
+     "span_m": 2.25,
+     "root_chord_m": 2.9,
+     "tip_chord_m": 1.4,
+     "sweep_deg": 36.0,
+     "mirrored": false,
+     "vertical": true,
+     "strips": 5,
+     "controls": [
+      {
+       "name": "rudder",
+       "channel": "rudder",
+       "span_start": 0.0,
+       "span_end": 0.95,
+       "chord_fraction": 0.4,
+       "max_positive_deg": 25,
+       "max_negative_deg": 25,
+       "clmax_increment_ratio": 0.5,
+       "profile_drag_per_rad2": 0.3
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "fuselages": [
+  {
+   "name": "fuselage",
+   "reference_point_m": [
+    -6.4,
+    0.0,
+    0.0
+   ],
+   "volume_m3": 21.0,
+   "munk_factor": 0.85,
+   "crossflow_area_m2": 22.0,
+   "crossflow_cd": 0.6
+  },
+  {
+   "name": "nacelles",
+   "reference_point_m": [
+    -5.0,
+    0.0,
+    0.3
+   ],
+   "volume_m3": 2.6,
+   "munk_factor": 0.7,
+   "crossflow_area_m2": 3.6,
+   "crossflow_cd": 0.8
+  }
+ ],
+ "drag_items": [
+  {
+   "name": "fuselage",
+   "position_m": [
+    -6.4,
+    0.0,
+    0.0
+   ],
+   "drag_area_m2": 0.21,
+   "critical_mach": 0.72
+  },
+  {
+   "name": "nacelles and exhaust stacks",
+   "position_m": [
+    -4.8,
+    0.0,
+    0.25
+   ],
+   "drag_area_m2": 0.13,
+   "critical_mach": 0.7
+  },
+  {
+   "name": "excrescences, antennas, cooling inlets, interference",
+   "position_m": [
+    -6.0,
+    0.0,
+    0.3
+   ],
+   "drag_area_m2": 0.09
+  }
+ ],
+ "turboprops": [
+  {
+   "name": "left engine",
+   "position_m": [
+    -3.35,
+    -2.615,
+    0.15
+   ],
+   "thrust_axis": [
+    1,
+    0,
+    0
+   ],
+   "clockwise_from_behind": true,
+   "rated_power_shp": 1050,
+   "rated_prop_rpm": 1700,
+   "min_governed_rpm": 1450,
+   "torque_limit": 1.0,
+   "thermodynamic_power_shp": 1575,
+   "ng_max": 1.04,
+   "ng_low_idle": 0.62,
+   "ng_high_idle": 0.72,
+   "ng_zero_power": 0.4,
+   "gas_power_exponent": 3.0,
+   "ng_rpm": 37468,
+   "itt_limit_c": 820,
+   "itt_idle_c": 600,
+   "itt_exponent": 1.5,
+   "itt_theta_exponent": 0.15,
+   "turbine_stall_torque_ratio": 2.0,
+   "acceleration_time_s": 5.0,
+   "deceleration_time_s": 3.0,
+   "start_time_s": 30.0,
+   "light_off_ng": 0.13,
+   "starter_ng": 0.22,
+   "self_sustaining_ng": 0.45,
+   "starter_current_a": 300,
+   "sfc_lb_per_shp_h": 0.548,
+   "idle_fuel_flow_lb_per_h": 100,
+   "oil_pressure_idle_psi": 60,
+   "oil_pressure_max_psi": 120,
+   "oil_temperature_rise_k": 55,
+   "inertia_kgm2": 6.0,
+   "friction_torque_fraction": 0.01,
+   "governor": {
+    "gain_deg_per_s_per_pct": 5.0,
+    "lead_s": 0.15,
+    "pitch_rate_deg_per_s": 15,
+    "feather_rate_deg_per_s": 8,
+    "oil_np_fraction": 0.4
+   },
+   "reverse": {
+    "beta_travel": 0.4,
+    "reverse_ng": 0.85,
+    "np_fraction": 0.95
+   },
+   "autofeather": {
+    "arm_power_lever": 0.85,
+    "torque_fraction": 0.12
+   },
+   "p_factor_gain": 0.05,
+   "slipstream_swirl_factor": 0.3,
+   "fuel_feed": 0,
+   "propeller": {
+    "type": "constant_speed",
+    "diameter_m": 2.67,
+    "blades": 4,
+    "pitch_m": 4.0,
+    "hub_radius_fraction": 0.18,
+    "chord": {
+     "r_over_r": [
+      0.18,
+      0.3,
+      0.5,
+      0.7,
+      0.85,
+      0.95,
+      1.0
+     ],
+     "chord_m": [
+      0.21,
+      0.26,
+      0.285,
+      0.265,
+      0.225,
+      0.165,
+      0.095
+     ]
+    },
+    "thickness": {
+     "r_over_r": [
+      0.18,
+      0.3,
+      0.5,
+      0.7,
+      0.85,
+      0.95,
+      1.0
+     ],
+     "t_over_c": [
+      0.32,
+      0.17,
+      0.1,
+      0.07,
+      0.06,
+      0.055,
+      0.05
+     ]
+    },
+    "korn_factor": 0.87,
+    "section": {
+     "lift_slope_per_rad": 6.1,
+     "zero_lift_alpha_deg": -2.0,
+     "cl_max": 1.65,
+     "cl_min": -0.9,
+     "cd_min": 0.008,
+     "cd_quadratic": 0.009,
+     "cl_at_cd_min": 0.35,
+     "cm0": -0.05,
+     "stall_width_deg": 8.0,
+     "post_stall_cl_drop": 0.1,
+     "flat_plate_cd": 1.9
+    },
+    "inertia_kgm2": 24.0,
+    "bem_elements": 16,
+    "reverse_blade_angle_deg": -10.0,
+    "fine_blade_angle_deg": 14.0,
+    "feather_blade_angle_deg": 86.0
+   }
+  },
+  {
+   "name": "right engine",
+   "position_m": [
+    -3.35,
+    2.615,
+    0.15
+   ],
+   "thrust_axis": [
+    1,
+    0,
+    0
+   ],
+   "clockwise_from_behind": true,
+   "rated_power_shp": 1050,
+   "rated_prop_rpm": 1700,
+   "min_governed_rpm": 1450,
+   "torque_limit": 1.0,
+   "thermodynamic_power_shp": 1575,
+   "ng_max": 1.04,
+   "ng_low_idle": 0.62,
+   "ng_high_idle": 0.72,
+   "ng_zero_power": 0.4,
+   "gas_power_exponent": 3.0,
+   "ng_rpm": 37468,
+   "itt_limit_c": 820,
+   "itt_idle_c": 600,
+   "itt_exponent": 1.5,
+   "itt_theta_exponent": 0.15,
+   "turbine_stall_torque_ratio": 2.0,
+   "acceleration_time_s": 5.0,
+   "deceleration_time_s": 3.0,
+   "start_time_s": 30.0,
+   "light_off_ng": 0.13,
+   "starter_ng": 0.22,
+   "self_sustaining_ng": 0.45,
+   "starter_current_a": 300,
+   "sfc_lb_per_shp_h": 0.548,
+   "idle_fuel_flow_lb_per_h": 100,
+   "oil_pressure_idle_psi": 60,
+   "oil_pressure_max_psi": 120,
+   "oil_temperature_rise_k": 55,
+   "inertia_kgm2": 6.0,
+   "friction_torque_fraction": 0.01,
+   "governor": {
+    "gain_deg_per_s_per_pct": 5.0,
+    "lead_s": 0.15,
+    "pitch_rate_deg_per_s": 15,
+    "feather_rate_deg_per_s": 8,
+    "oil_np_fraction": 0.4
+   },
+   "reverse": {
+    "beta_travel": 0.4,
+    "reverse_ng": 0.85,
+    "np_fraction": 0.95
+   },
+   "autofeather": {
+    "arm_power_lever": 0.85,
+    "torque_fraction": 0.12
+   },
+   "p_factor_gain": 0.05,
+   "slipstream_swirl_factor": 0.3,
+   "fuel_feed": 0,
+   "propeller": {
+    "type": "constant_speed",
+    "diameter_m": 2.67,
+    "blades": 4,
+    "pitch_m": 4.0,
+    "hub_radius_fraction": 0.18,
+    "chord": {
+     "r_over_r": [
+      0.18,
+      0.3,
+      0.5,
+      0.7,
+      0.85,
+      0.95,
+      1.0
+     ],
+     "chord_m": [
+      0.21,
+      0.26,
+      0.285,
+      0.265,
+      0.225,
+      0.165,
+      0.095
+     ]
+    },
+    "thickness": {
+     "r_over_r": [
+      0.18,
+      0.3,
+      0.5,
+      0.7,
+      0.85,
+      0.95,
+      1.0
+     ],
+     "t_over_c": [
+      0.32,
+      0.17,
+      0.1,
+      0.07,
+      0.06,
+      0.055,
+      0.05
+     ]
+    },
+    "korn_factor": 0.87,
+    "section": {
+     "lift_slope_per_rad": 6.1,
+     "zero_lift_alpha_deg": -2.0,
+     "cl_max": 1.65,
+     "cl_min": -0.9,
+     "cd_min": 0.008,
+     "cd_quadratic": 0.009,
+     "cl_at_cd_min": 0.35,
+     "cm0": -0.05,
+     "stall_width_deg": 8.0,
+     "post_stall_cl_drop": 0.1,
+     "flat_plate_cd": 1.9
+    },
+    "inertia_kgm2": 24.0,
+    "bem_elements": 16,
+    "reverse_blade_angle_deg": -10.0,
+    "fine_blade_angle_deg": 14.0,
+    "feather_blade_angle_deg": 86.0
+   }
+  }
+ ],
+ "fuel": {
+  "density_kg_per_l": 0.8,
+  "line_volume_l": 4.0,
+  "has_shutoff_valve": false,
+  "tanks": [
+   {
+    "name": "left wing system",
+    "position_m": [
+     -6.0,
+     -3.6,
+     0.45
+    ],
+    "capacity_l": 1031.0,
+    "unusable_l": 11.0,
+    "initial_l": 600.0
+   },
+   {
+    "name": "right wing system",
+    "position_m": [
+     -6.0,
+     3.6,
+     0.45
+    ],
+    "capacity_l": 1031.0,
+    "unusable_l": 11.0,
+    "initial_l": 600.0
+   }
+  ],
+  "selector": [
+   {
+    "name": "BOTH",
+    "tanks": [
+     0,
+     1
+    ]
+   }
+  ],
+  "initial_selector": 0
+ },
+ "electrical": {
+  "battery_voltage_v": 24.0,
+  "battery_capacity_ah": 42.0,
+  "battery_resistance_ohm": 0.02,
+  "alternator_voltage_v": 28.0,
+  "alternator_max_current_a": 600,
+  "bus_minimum_v": 18,
+  "auto_load_shed": false,
+  "generators": [
+   {
+    "name": "GEN 1",
+    "engine": 0,
+    "max_current_a": 300,
+    "cut_in_n2": 0.5
+   },
+   {
+    "name": "GEN 2",
+    "engine": 1,
+    "max_current_a": 300,
+    "cut_in_n2": 0.5
+   }
+  ],
+  "loads": [
+   {
+    "name": "avionics_ess",
+    "label": "Avionics 1 (PFD 1, COM 1/NAV 1, transponder)",
+    "current_a": 10.0,
+    "minimum_voltage_v": 20,
+    "avionics_bus": true
+   },
+   {
+    "name": "avionics",
+    "label": "Avionics 2 (MFD, PFD 2, COM 2/NAV 2, cabin)",
+    "current_a": 15.0,
+    "minimum_voltage_v": 20,
+    "avionics_bus": true
+   },
+   {
+    "name": "ahrs",
+    "label": "Attitude and Heading Reference",
+    "current_a": 3.0,
+    "minimum_voltage_v": 18
+   },
+   {
+    "name": "turn_coordinator",
+    "label": "Standby Instruments",
+    "current_a": 1.0,
+    "minimum_voltage_v": 18
+   },
+   {
+    "name": "engine_gauges",
+    "label": "Engine Indication",
+    "current_a": 2.0,
+    "minimum_voltage_v": 18
+   },
+   {
+    "name": "fuel_pump",
+    "label": "Standby Fuel Pumps",
+    "current_a": 8.0,
+    "minimum_voltage_v": 18
+   },
+   {
+    "name": "beacon",
+    "label": "Beacon",
+    "current_a": 2.0,
+    "minimum_voltage_v": 18,
+    "initially_on": false
+   },
+   {
+    "name": "nav_lights",
+    "label": "Navigation Lights",
+    "current_a": 3.0,
+    "minimum_voltage_v": 18,
+    "initially_on": false
+   },
+   {
+    "name": "strobes",
+    "label": "Strobes",
+    "current_a": 4.0,
+    "minimum_voltage_v": 18,
+    "initially_on": false
+   },
+   {
+    "name": "taxi_light",
+    "label": "Taxi Lights",
+    "current_a": 6.0,
+    "minimum_voltage_v": 18,
+    "initially_on": false
+   },
+   {
+    "name": "landing_light",
+    "label": "Landing Lights",
+    "current_a": 10.0,
+    "minimum_voltage_v": 18,
+    "initially_on": false
+   },
+   {
+    "name": "pitot_heat",
+    "label": "Probe Heat",
+    "current_a": 12.0,
+    "minimum_voltage_v": 18,
+    "initially_on": false
+   },
+   {
+    "name": "panel_lights",
+    "label": "Panel Lights",
+    "current_a": 2.0,
+    "minimum_voltage_v": 18,
+    "initially_on": false
+   }
+  ]
+ },
+ "gear": [
+  {
+   "name": "nose",
+   "attach_m": [
+    -1.85,
+    0.0,
+    0.45
+   ],
+   "length_m": 1.293,
+   "stiffness_n_per_m": 60000,
+   "preload_n": 3000,
+   "damping_compression_ns_per_m": 5800.0,
+   "damping_rebound_ns_per_m": 9400.0,
+   "max_compression_m": 0.22,
+   "oleo": {},
+   "wheel_radius_m": 0.24,
+   "tyre_pressure_psi": 60,
+   "rolling_resistance": 0.02,
+   "brake_group": "none",
+   "max_steer_deg": 14,
+   "static_load_n": 8580.0,
+   "wheel_inertia_kgm2": 0.6,
+   "cornering_stiffness_n_per_rad": 25000,
+   "relaxation_length_m": 0.3,
+   "longitudinal_stiffness_n_per_m": 150000
+  },
+  {
+   "name": "left main",
+   "attach_m": [
+    -6.75,
+    -2.615,
+    0.55
+   ],
+   "length_m": 1.188,
+   "stiffness_n_per_m": 160000,
+   "preload_n": 15000,
+   "damping_compression_ns_per_m": 17400.0,
+   "damping_rebound_ns_per_m": 28300.0,
+   "max_compression_m": 0.25,
+   "oleo": {},
+   "wheel_radius_m": 0.28,
+   "tyre_pressure_psi": 105,
+   "rolling_resistance": 0.02,
+   "brake_coefficient": 0.45,
+   "brake_torque_nm": 5000,
+   "brake_group": "left",
+   "static_load_n": 29070.0,
+   "wheel_inertia_kgm2": 2.4,
+   "cornering_stiffness_n_per_rad": 70000,
+   "relaxation_length_m": 0.4,
+   "longitudinal_stiffness_n_per_m": 400000
+  },
+  {
+   "name": "right main",
+   "attach_m": [
+    -6.75,
+    2.615,
+    0.55
+   ],
+   "length_m": 1.188,
+   "stiffness_n_per_m": 160000,
+   "preload_n": 15000,
+   "damping_compression_ns_per_m": 17400.0,
+   "damping_rebound_ns_per_m": 28300.0,
+   "max_compression_m": 0.25,
+   "oleo": {},
+   "wheel_radius_m": 0.28,
+   "tyre_pressure_psi": 105,
+   "rolling_resistance": 0.02,
+   "brake_coefficient": 0.45,
+   "brake_torque_nm": 5000,
+   "brake_group": "right",
+   "static_load_n": 29070.0,
+   "wheel_inertia_kgm2": 2.4,
+   "cornering_stiffness_n_per_rad": 70000,
+   "relaxation_length_m": 0.4,
+   "longitudinal_stiffness_n_per_m": 400000
+  }
+ ],
+ "contacts": [
+  {
+   "name": "nose",
+   "position_m": [
+    -0.3,
+    0.0,
+    0.45
+   ],
+   "friction": 0.5
+  },
+  {
+   "name": "belly",
+   "position_m": [
+    -6.0,
+    0.0,
+    0.95
+   ],
+   "friction": 0.5
+  },
+  {
+   "name": "tail skid",
+   "position_m": [
+    -12.6,
+    0.0,
+    0.35
+   ],
+   "friction": 0.5
+  },
+  {
+   "name": "left propeller tip",
+   "position_m": [
+    -3.35,
+    -2.615,
+    1.485
+   ],
+   "friction": 0.6
+  },
+  {
+   "name": "right propeller tip",
+   "position_m": [
+    -3.35,
+    2.615,
+    1.485
+   ],
+   "friction": 0.6
+  },
+  {
+   "name": "left nacelle",
+   "position_m": [
+    -4.6,
+    -2.615,
+    0.75
+   ],
+   "friction": 0.5
+  },
+  {
+   "name": "right nacelle",
+   "position_m": [
+    -4.6,
+    2.615,
+    0.75
+   ],
+   "friction": 0.5
+  },
+  {
+   "name": "left wingtip",
+   "position_m": [
+    -6.249,
+    -8.6,
+    -0.154
+   ],
+   "friction": 0.5
+  },
+  {
+   "name": "right wingtip",
+   "position_m": [
+    -6.249,
+    8.6,
+    -0.154
+   ],
+   "friction": 0.5
+  },
+  {
+   "name": "fin top",
+   "position_m": [
+    -14.0,
+    0.0,
+    -2.75
+   ],
+   "friction": 0.5
+  },
+  {
+   "name": "cabin roof",
+   "position_m": [
+    -6.0,
+    0.0,
+    -0.95
+   ],
+   "friction": 0.5
+  }
+ ],
+ "controls": {
+  "flap_detents_deg": [
+   0,
+   14,
+   35
+  ],
+  "flap_rate_deg_per_s": 3.0,
+  "flaps_electric": true,
+  "flap_motor_current_a": 15,
+  "elevator_trim_range_deg": 12,
+  "elevator_trim_rate": 0.2,
+  "rigging_aileron": 0.0,
+  "rigging_rudder": 0.0,
+  "yaw_damper": {
+   "gain_s": 1.5,
+   "reference_kias": 150,
+   "washout_s": 3.0,
+   "authority": 0.25
+  },
+  "landing_gear": {
+   "retractable": true,
+   "transit_time_s": 6.0,
+   "drag_area_m2": 0.45,
+   "vle_kias": 184
+  }
+ },
+ "pitot_static": {
+  "pitot_position_m": [
+   -1.4,
+   -0.75,
+   0.2
+  ],
+  "static_position_m": [
+   -3.8,
+   -0.85,
+   0.1
+  ],
+  "static_error": {
+   "alpha_deg": [
+    -10,
+    0,
+    10,
+    20
+   ],
+   "dp_over_q": [
+    0.0,
+    0.0,
+    0.01,
+    0.03
+   ]
+  },
+  "vsi_time_constant_s": 1.0
+ },
+ "stall_warning": {
+  "present": true,
+  "surface": 0,
+  "strip": 6,
+  "computed": true,
+  "alpha_margin_deg": 2.0,
+  "pusher_margin_deg": 0
+ },
+ "vacuum": {
+  "present": false
+ },
+ "limits": {
+  "vne_kias": 263,
+  "vno_kias": 263,
+  "va_kias": 182,
+  "vfe_kias": 158,
+  "vfe_vs_flap": {
+   "flap_deg": [
+    14,
+    35
+   ],
+   "kias": [
+    202,
+    158
+   ]
+  },
+  "load_positive_g": 3.17,
+  "load_negative_g": -1.27,
+  "load_flaps_g": 2.0,
+  "mmo": 0.58
+ },
+ "panel": {
+  "profile": "turboprop_glass",
+  "airspeed_indicator": {
+   "white_arc_kias": [
+    81,
+    158
+   ],
+   "green_arc_kias": [
+    99,
+    263
+   ],
+   "yellow_arc_kias": [
+    263,
+    263
+   ],
+   "red_line_kias": 263,
+   "dial_min_kias": 40,
+   "dial_max_kias": 300,
+   "pitot_insensitive_angle_deg": 17,
+   "needle": {
+    "natural_frequency_rad_s": 6,
+    "damping_ratio": 1.0
+   }
+  },
+  "altimeter": {
+   "setting_min_inhg": 28.1,
+   "setting_max_inhg": 31.0
+  },
+  "vertical_speed_indicator": {
+   "capillary_time_constant_s": 1.0,
+   "dial_range_fpm": 6000
+  },
+  "attitude_indicator": {
+   "power": "electric",
+   "electrical_load": "ahrs",
+   "erection_rate_deg_per_min": 10,
+   "pitch_limit_deg": 90,
+   "roll_limit_deg": 0,
+   "spin_up_time_constant_s": 5,
+   "spin_down_time_constant_s": 30,
+   "minimum_useful_spin": 0.5
+  },
+  "heading_indicator": {
+   "power": "electric",
+   "electrical_load": "ahrs",
+   "mechanical_drift_deg_per_hour": 0.2,
+   "gimbal_limit_deg": 0,
+   "slaving_rate_deg_per_s": 3,
+   "spin_up_time_constant_s": 5,
+   "spin_down_time_constant_s": 30
+  },
+  "turn_coordinator": {
+   "electrical_load": "turn_coordinator",
+   "cant_deg": 30,
+   "standard_rate_deflection_deg": 20,
+   "calibration_bank_deg": 16,
+   "max_deflection_deg": 40
+  },
+  "inclinometer": {
+   "tube_limit_deg": 16
+  },
+  "magnetic_compass": {
+   "tilt_limit_deg": 18,
+   "hard_iron_body": [
+    0.02,
+    -0.035,
+    0.0
+   ]
+  },
+  "pitot_probe": {
+   "frontal_area_m2": 0.00011,
+   "collection_efficiency": 0.8,
+   "ice_to_block_inlet_kg": 0.0003,
+   "ice_to_block_drain_kg": 0.0006,
+   "heater_power_w": 140,
+   "heater_efficiency": 0.5,
+   "heater_time_constant_s": 20,
+   "recovery_factor": 0.85
+  },
+  "engine_gauges": {
+   "tachometer_green_rpm": [
+    1450,
+    1700
+   ],
+   "tachometer_red_line_rpm": 1700,
+   "tachometer_max_rpm": 2000,
+   "oil_pressure_green_psi": [
+    100,
+    135
+   ],
+   "oil_pressure_red_low_psi": 60,
+   "oil_pressure_red_high_psi": 200,
+   "oil_temperature_green_f": [
+    32,
+    210
+   ],
+   "oil_temperature_red_line_f": 230,
+   "suction_green_inhg": [
+    4.5,
+    5.5
+   ],
+   "egt": true,
+   "fuel_flow": true,
+   "cht": false,
+   "ammeter": true,
+   "voltmeter": false,
+   "electrical_load": "engine_gauges"
+  },
+  "annunciators": {
+   "oil_pressure_below_psi": 60,
+   "vacuum_below_inhg": 3.0,
+   "volts_below": 24.5,
+   "low_fuel_below_gal": 30
+  },
+  "outside_air_temperature": {
+   "recovery_factor": 0.8,
+   "time_constant_s": 10
+  },
+  "avionics": {
+   "nav_com_radios": 1,
+   "glideslope": true,
+   "transponder": true,
+   "altitude_encoder": true,
+   "gps": true,
+   "adf": false,
+   "dme": false,
+   "autopilot": true,
+   "electrical_load": "avionics_ess",
+   "com_spacing_khz": 25
+  }
+ }
+}
