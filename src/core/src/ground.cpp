@@ -153,8 +153,47 @@ Real ElevationGrid::inside(Real north, Real east) const {
     return std::min({x, w - x, y, h - y});
 }
 
+void RegionGround::setTerrain(std::shared_ptr<const ElevationGrid> grid) {
+    grids_.clear();
+    if (grid && !grid->empty()) grids_.push_back({std::move(grid), 5000});
+}
+
+void RegionGround::addTerrain(std::shared_ptr<const ElevationGrid> grid, Real blend) {
+    if (!grid || grid->empty()) return;
+    auto same = [&](const Grid& g) {
+        return g.grid->nx() == grid->nx() && g.grid->ny() == grid->ny() && g.grid->spacing() == grid->spacing() &&
+               g.grid->north0() == grid->north0() && g.grid->east0() == grid->east0();
+    };
+    grids_.erase(std::remove_if(grids_.begin(), grids_.end(), same), grids_.end());
+    grids_.push_back({std::move(grid), std::max(blend, 1.0)});
+    // Coarsest first: each finer grid is laid over what is under it.
+    std::stable_sort(grids_.begin(), grids_.end(), [](const Grid& a, const Grid& b) { return a.grid->spacing() > b.grid->spacing(); });
+}
+
+Real RegionGround::gridHeight(Real n, Real e, Real& cover) const {
+    cover = 0;
+    Real h = 0;
+    bool any = false;
+    for (const Grid& g : grids_) {
+        const Real edge = g.grid->inside(n, e);
+        if (edge <= 0) continue;
+        const Real hg = g.grid->heightAt(n, e);
+        const Real w = smoothstep(0.0, g.blend, edge);
+        if (!any) {
+            // The coarsest grid here: what the fields' blend gives way to.
+            h = hg;
+            cover = w;
+            any = true;
+        } else {
+            h += (hg - h) * w;
+            cover = std::max(cover, w);
+        }
+    }
+    return h;
+}
+
 Real RegionGround::terrainDown(Real n, Real e) const {
-    if (fields_.empty() && !terrain_) return 0;
+    if (fields_.empty() && grids_.empty()) return 0;
     // Within a field's flat area: its elevation.
     const Field* nearest = nullptr;
     Real nearestGap = 1e18;
@@ -163,13 +202,14 @@ Real RegionGround::terrainDown(Real n, Real e) const {
         if (gap <= 0) return f.down;
         if (gap < nearestGap) nearestGap = gap, nearest = &f;
     }
-    const Real edge = terrain_ ? terrain_->inside(n, e) : -1;
-    if (edge <= 0) return blendDown(n, e);
+    Real cover = 0;
+    const Real h = gridHeight(n, e, cover);
+    if (cover <= 0) return blendDown(n, e);
     // The terrain, brought to the nearest field's elevation over 2 km beyond
-    // its flat area, and to the fields' blend over the grid's last 5 km.
-    Real down = -terrain_->heightAt(n, e);
+    // its flat area, and to the fields' blend toward the grids' edge.
+    Real down = -h;
     if (nearest) down += (nearest->down - down) * (1 - smoothstep(0.0, 2000.0, nearestGap));
-    if (edge < 5000) down += (blendDown(n, e) - down) * (1 - smoothstep(0.0, 5000.0, edge));
+    if (cover < 1) down += (blendDown(n, e) - down) * (1 - cover);
     return down;
 }
 
@@ -216,7 +256,7 @@ void RegionGround::surfaceAt(Real n, Real e, Real& down, Vec3& normal, SurfacePr
 
 GroundHit RegionGround::raycast(const Vec3& o, const Vec3& dir, Real maxDistance) const {
     GroundHit h;
-    if (terrain_ && std::hypot(dir.x, dir.y) > 1e-6) {
+    if (!grids_.empty() && std::hypot(dir.x, dir.y) > 1e-6) {
         // Real terrain: march along the ray, each step at most half the
         // height above the ground (and at least 5 m), then bisect the
         // crossing. Ridges steeper than 2:1 can be stepped through at the

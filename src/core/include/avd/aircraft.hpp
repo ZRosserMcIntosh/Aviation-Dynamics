@@ -37,6 +37,7 @@
 #include "avd/occupant.hpp"
 #include "avd/propulsion.hpp"
 #include "avd/systems.hpp"
+#include "avd/taws.hpp"
 
 namespace avd {
 
@@ -250,6 +251,11 @@ public:
     // Past the ultimate load factor (1.5 x the limit) for 50 ms: the structure
     // has failed (reported; the airframe flies on as it was).
     bool structurallyFailed() const { return structuralFailure_; }
+    // Terrain awareness and ground proximity warning (avd/taws.hpp), run each
+    // step on the ground the aircraft flies over: Class A in the jets, Class
+    // B in the others; configure it here (class, runways, decision height).
+    const TawsMonitor& taws() const { return taws_; }
+    TawsMonitor& taws() { return taws_; }
     Real altitudeMsl() const { return frame_.origin().height - s_.body.position.z; }
     // Datum (structural origin) in the local NED frame.
     Vec3 datumPosition() const;
@@ -326,10 +332,12 @@ public:
     void prepareContext(const PilotInput& in, const GroundQuery& ground, const AtmosphereField& atm);
     // A new state (a spawn, a reset): the crash dummy's readings start over.
     // A new state starts undamaged: the occupant's readings, collapsed legs
-    // and a structural failure belong to the flight that caused them.
+    // and a structural failure belong to the flight that caused them; the
+    // TAWS starts over too.
     void setState(const DynamicState& s) {
         s_ = s;
         resetDamage();
+        taws_.reset();
     }
     // Trim/linearisation use quasi-steady downwash (no transport lag);
     // settleDownwash() then initialises the lag states for a following run.
@@ -380,6 +388,7 @@ private:
     SensorInputs sensorInputs() const;
     bool loadPowered(const std::string& name, bool fallback) const;
     void updateTelemetry();
+    void updateTaws(Real dt, const GroundQuery& ground);
     // Pressure available to an actuator fed by `systems` (1 when the list is
     // empty or no hydraulics are fitted), and the rate factor it moves at.
     Real hydraulicSupply(const std::vector<int>& systems) const;
@@ -474,6 +483,7 @@ private:
     Real lastSinkRate_ = 0;
     OccupantMonitor occupant_;
     void resetDamage();
+    TawsMonitor taws_;
     std::array<bool, kMaxGear> gearFailed_{};
     bool structuralFailure_ = false;
     Real overUltimate_ = 0;  // s past the ultimate load factor

@@ -192,20 +192,37 @@ const std::vector<Airport>& saoPauloRegionAirports() {
 
 Vec3 landingThreshold(const RunwayDef& r) { return runwayPoint(r, r.displaced); }
 
-std::shared_ptr<const ElevationGrid> saoPauloTerrain() {
+namespace {
+std::shared_ptr<const ElevationGrid> readGrid(const char* name) {
 #ifndef AVD_DATA_DIR
-    return nullptr;  // the browser build: the host hands the file over (avd_terrain)
+    (void)name;
+    return nullptr;  // the browser build: the host hands the files over (avd_terrain, avd_terrain_detail)
 #else
-    static const std::shared_ptr<const ElevationGrid> grid = []() -> std::shared_ptr<const ElevationGrid> {
-        std::ifstream f(std::string(AVD_DATA_DIR) + "/world/terrain_sp.avt", std::ios::binary);
-        if (!f) return nullptr;
-        const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        auto g = std::make_shared<ElevationGrid>();
-        if (!g->parse(bytes.data(), bytes.size())) return nullptr;
-        return g;
-    }();
-    return grid;
+    std::ifstream f(std::string(AVD_DATA_DIR) + "/world/" + name, std::ios::binary);
+    if (!f) return nullptr;
+    const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    auto g = std::make_shared<ElevationGrid>();
+    if (!g->parse(bytes.data(), bytes.size())) return nullptr;
+    return g;
 #endif
+}
+}  // namespace
+
+std::shared_ptr<const ElevationGrid> saoPauloTerrain() {
+    static const std::shared_ptr<const ElevationGrid> grid = readGrid("terrain_sp.avt");
+    return grid;
+}
+
+std::shared_ptr<const ElevationGrid> saoPauloCityTerrain() {
+    static const std::shared_ptr<const ElevationGrid> grid = readGrid("terrain_sp_city.avt");
+    return grid;
+}
+
+std::unique_ptr<RegionGround> makeSaoPauloGround() {
+    auto g = makeRegionGround(saoPauloRegionAirports());
+    g->setTerrain(saoPauloTerrain());
+    g->addTerrain(saoPauloCityTerrain());
+    return g;
 }
 
 std::unique_ptr<RegionGround> makeRegionGround(const std::vector<Airport>& airports) {

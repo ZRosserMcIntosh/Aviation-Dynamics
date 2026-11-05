@@ -104,6 +104,15 @@ Aircraft::Aircraft(const AircraftDefinition& def, const LocalFrame& frame)
     antiSkid_.fill(1.0);
     rebuildCockpit();
     setColdAndDark();
+    // TAWS: Class A in the jets, Class B in the others. The radio altimeter's
+    // zero: the wing reference's height above the lowest wheel (the
+    // telemetry's height above the ground is the wing reference's).
+    taws_.setClass(turbofanCount() > 0 ? TawsClass::A : TawsClass::B);
+    if (aeroModel_->surfaceCount() > 0 && !def_.gear.empty()) {
+        Real wheel = -1e9;
+        for (std::size_t i = 0; i < def_.gear.size(); ++i) wheel = std::max(wheel, def_.gear[i].attach.z + gearRt_[i].length);
+        taws_.setRadioAltimeterZero(wheel - aeroModel_->surfaceCentroid(0).z);
+    }
 }
 
 // Per-leg tyre and wheel constants from the definition.
@@ -388,6 +397,7 @@ void Aircraft::resetDamage() {
 
 void Aircraft::setFlightState(const RigidBodyState& s) {
     resetDamage();
+    taws_.reset();
     s_ = DynamicState{};
     s_.body = s;
     s_.body.attitude.normalize();
@@ -516,6 +526,7 @@ void Aircraft::placeOnGround(Real north, Real east, Real heading, const GroundQu
     time_ = savedTime;
     events_.clear();
     occupant_.reset();  // the settling is not the occupant's
+    taws_.reset();
     wasOnGround_ = true;
     groundStateTimer_ = 0;
     syncCockpitPositions();
@@ -1269,6 +1280,30 @@ void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, co
     }
     s_ = s1;
     postStep(dt, c, s0);
+    if (!faulted_ && taws_.tawsClass() != TawsClass::Off) updateTaws(dt, ground);
+}
+
+void Aircraft::updateTaws(Real dt, const GroundQuery& ground) {
+    TawsInputs in;
+    in.dt = dt;
+    in.powered = electrical_.powered();
+    in.onGround = tel_.onGround;
+    in.position = s_.body.position;
+    in.velocity = s_.body.velocity;
+    in.heightAgl = tel_.heightAgl;
+    in.calibratedAirspeed = instruments_.truth().calibratedAirspeed;
+    in.roll = tel_.roll;
+    in.gearDown = !def_.controls.gear.retractable || gearPos_ > 0.99;
+    const std::vector<Real>& detents = def_.controls.flapDetents;
+    if (!detents.empty()) {
+        const int n = static_cast<int>(detents.size());
+        const int d = taws_.landingFlapDetent() >= 0 ? std::min(taws_.landingFlapDetent(), n - 1) : n - 1;
+        in.landingFlaps = d > 0 && flapAngle_ >= detents[static_cast<std::size_t>(d)] - 0.01;
+    }
+    const NavIndication& nav = instruments_.readings().nav1;
+    in.glideslopeValid = nav.glideslopeValid;
+    in.glideslope = nav.glideslope;
+    taws_.update(in, ground);
 }
 
 void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
