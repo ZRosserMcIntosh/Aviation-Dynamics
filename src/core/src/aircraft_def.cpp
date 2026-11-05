@@ -257,6 +257,17 @@ std::vector<std::string> AircraftDefinition::validate() const {
         c.nonNegative(p + ".starterTorque", e.starterTorque);
         c.nonNegative(p + ".starterCurrent", e.starterCurrent);
         c.range(p + ".singleMagnetoPowerFactor", e.singleMagnetoPowerFactor, 0.5, 1);
+        if (e.carburettor.present) {
+            const CarburettorDef& cb = e.carburettor;
+            c.range(p + ".carburettor.heatRise", cb.heatRise, 0, 150);
+            c.positive(p + ".carburettor.heatTimeConstant", cb.heatTimeConstant);
+            c.range(p + ".carburettor.fuelEvaporation", cb.fuelEvaporation, 0, 1);
+            c.positive(p + ".carburettor.fuelLatentHeat", cb.fuelLatentHeat);
+            c.range(p + ".carburettor.throttleCooling", cb.throttleCooling, 0, 1);
+            c.range(p + ".carburettor.captureFraction", cb.captureFraction, 0, 1);
+            c.positive(p + ".carburettor.iceToClose", cb.iceToClose);
+            c.range(p + ".carburettor.meltEfficiency", cb.meltEfficiency, 0, 1);
+        }
         c.range(p + ".mixtureRichPhi", e.mixtureRichPhi, 0.8, 2.5);
         c.positive(p + ".fuelHeatingValue", e.fuelHeatingValue);
         c.range(p + ".stoichiometricFar", e.stoichiometricFar, 0.03, 0.12);
@@ -423,6 +434,19 @@ std::vector<std::string> AircraftDefinition::validate() const {
     c.range("stallWarning.alphaMargin", stallWarning.alphaMargin, 0, 0.3);
     c.range("stallWarning.pusherMargin", stallWarning.pusherMargin, 0, stallWarning.alphaMargin);
     c.range("stallWarning.pusherElevator", stallWarning.pusherElevator, -1, 0);
+    c.range("stallWarning.icingAlphaShift", stallWarning.icingAlphaShift, 0, 0.3);
+    for (std::size_t k = 0; k < iceProtection.surfaces.size(); ++k) {
+        const SurfaceIceProtectionDef& ip = iceProtection.surfaces[k];
+        const std::string f = "iceProtection.surfaces[" + std::to_string(k) + "]";
+        if (ip.surface < 0 || ip.surface >= static_cast<int>(surfaces.size())) c.add(f + ".surface", "no such surface");
+        if (ip.switchName.empty()) c.add(f + ".switchName", "must not be empty");
+    }
+    c.range("iceProtection.bleedThrustLoss", iceProtection.bleedThrustLoss, 0, 0.3);
+    c.nonNegative("iceProtection.heatFlux", iceProtection.heatFlux);
+    c.positive("iceProtection.heatTimeConstant", iceProtection.heatTimeConstant);
+    c.range("iceProtection.minimumN2", iceProtection.minimumN2, 0.45, 1.0);
+    c.positive("iceProtection.bootCycle", iceProtection.bootCycle);
+    c.nonNegative("iceProtection.bootResidual", iceProtection.bootResidual);
     c.positive("vacuum.regulatedSuction", vacuum.regulatedSuction);
     c.positive("vacuum.rpmForRegulated", vacuum.rpmForRegulated);
     c.positive("vacuum.gyroSpinUpTime", vacuum.gyroSpinUpTime);

@@ -89,6 +89,12 @@
    "note": "VMO 340 KIAS, MMO 0.82; flaps [0, 1, 5, 15, 25, 30, 40] with VFE [250, 250, 200, 190, 175, 162] (some flap placards estimated)."
   },
   {
+   "field": "ice_protection",
+   "kind": "estimated",
+   "source": "EST",
+   "note": "Bleed-air anti-ice on the inboard leading-edge slats (here the whole wing); the tail is unprotected (the 737's); heated windshield, an ice detector. Thermal anti-ice takes 4 % of each lit engine's thrust in bleed (Estimated); full heat from 60 % N2."
+  },
+  {
    "field": "turbofans[*].lapse_mach_coefficient",
    "kind": "calibrated",
    "source": "MATTINGLY",
@@ -1047,6 +1053,18 @@
   "alpha_margin_deg": 1.2,
   "pusher_margin_deg": 0.2,
   "pusher_elevator": -0.7
+ },
+ "ice_protection": {
+  "surfaces": [
+   {
+    "surface": 0,
+    "type": "thermal",
+    "switch": "wing"
+   }
+  ],
+  "bleed_thrust_loss": 0.04,
+  "windshield_heat": true,
+  "ice_detector": true
  },
  "vacuum": {
   "present": false

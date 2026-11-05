@@ -247,8 +247,12 @@ given speed. Behind it the surface wind is the new one, through the depth of
 the new airmass (`depth`). The change happens across `width` (tanh). The
 head of a thunderstorm outflow lifts the air just ahead of the front
 (`noseUpdraft`; estimated shape, not continuity-exact). The stronger
-post-frontal wind raises u* and so the mechanical turbulence. Temperature
-and pressure do not change across the front yet.
+post-frontal wind raises u* and so the mechanical turbulence. A front can
+also bring a new airmass: a temperature and QNH change behind it and a
+pressure trough on its line, so the OAT and the altimeter setting change as
+the aircraft crosses it (`temperatureChange`, `pressureChange`,
+`pressureTrough`, `airmassWidth`; see [weather.md](weather.md), which also
+covers icing and rain).
 
 **Obstacle wakes** (`obstacles`). Buildings, hangars and tree lines; see
 `Obstacle::fromFootprint` for the `avd-world-tile/1` building footprints.
@@ -278,7 +282,9 @@ The weather card sets:
 - an extra turbulence RMS;
 - thermals (w*);
 - a wind hazard: a microburst 2 km before runway 12, or a gust front from
-  the south-west.
+  the south-west;
+- rain and a cold or warm front over the field (`avd_set_rain`,
+  `avd_set_front`; [weather.md](weather.md)).
 
 `web/smoke_test.mjs` flies a hands-off approach into the microburst. The
 calibrated airspeed falls to about 50 kt and the sink reaches about

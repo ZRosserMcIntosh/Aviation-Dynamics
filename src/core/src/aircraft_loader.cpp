@@ -565,6 +565,21 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
             pr.num("inertia_kgm2", e.propeller.inertia, 1, true);
             pr.integer("bem_elements", e.propeller.bemElements);
         }
+        // A float carburettor (absent: fuel injected): carburettor ice and
+        // the carb heat lever.
+        if (o.has("carburettor")) {
+            Obj cb = o.child("carburettor");
+            CarburettorDef& c = e.carburettor;
+            c.present = true;
+            cb.num("heat_rise_k", c.heatRise);
+            cb.num("heat_time_constant_s", c.heatTimeConstant);
+            cb.num("fuel_evaporation", c.fuelEvaporation);
+            cb.num("fuel_latent_heat_kj_per_kg", c.fuelLatentHeat, 1000);
+            cb.num("throttle_cooling", c.throttleCooling);
+            cb.num("capture_fraction", c.captureFraction);
+            cb.num("ice_to_close_g", c.iceToClose, 1e-3);
+            cb.num("melt_efficiency", c.meltEfficiency);
+        }
         d.engines.push_back(e);
     });
     r.each("turbofans", [&](Obj& o, std::size_t) {
@@ -816,8 +831,33 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         s.num("alpha_margin_deg", d.stallWarning.alphaMargin, kDeg);
         s.num("pusher_margin_deg", d.stallWarning.pusherMargin, kDeg);
         s.num("pusher_elevator", d.stallWarning.pusherElevator);
+        s.num("icing_alpha_shift_deg", d.stallWarning.icingAlphaShift, kDeg);
     } else {
         d.stallWarning.present = false;
+    }
+    if (r.has("ice_protection")) {
+        // Airframe ice protection: which surfaces, by what, on which switch.
+        Obj ip = r.child("ice_protection");
+        IceProtectionDef& p = d.iceProtection;
+        ip.each("surfaces", [&](Obj& o, std::size_t) {
+            SurfaceIceProtectionDef sp;
+            std::string type = "thermal";
+            o.integer("surface", sp.surface, true);
+            o.str("type", type);
+            if (type == "thermal") sp.type = IceProtectionType::Thermal;
+            else if (type == "boots") sp.type = IceProtectionType::Boots;
+            else o.err(o.path() + ".type", "must be \"thermal\" or \"boots\"");
+            o.str("switch", sp.switchName);
+            p.surfaces.push_back(sp);
+        });
+        ip.num("bleed_thrust_loss", p.bleedThrustLoss);
+        ip.num("heat_flux_kw_per_m2", p.heatFlux, 1000);
+        ip.num("heat_time_constant_s", p.heatTimeConstant);
+        ip.num("minimum_n2", p.minimumN2);
+        ip.num("boot_cycle_s", p.bootCycle);
+        ip.num("boot_residual_mm", p.bootResidual, 1e-3);
+        ip.boolean("windshield_heat", p.windshieldHeat);
+        ip.boolean("ice_detector", p.iceDetector);
     }
     if (r.has("vacuum")) {
         Obj v = r.child("vacuum");

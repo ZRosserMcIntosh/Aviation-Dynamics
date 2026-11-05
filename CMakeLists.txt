@@ -38,6 +38,7 @@ add_library(avd_core
   src/core/src/geodesy.cpp
   src/core/src/atmosphere.cpp
   src/core/src/wind.cpp
+  src/core/src/icing.cpp
   src/core/src/mass.cpp
   src/core/src/aero.cpp
   src/core/src/propulsion.cpp

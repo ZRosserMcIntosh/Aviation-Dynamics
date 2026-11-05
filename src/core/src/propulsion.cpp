@@ -379,7 +379,7 @@ Real PistonEngine::volumetricEfficiency(Real manifoldPressure, Real ambientPress
     return def_.volumetricEfficiency * residual * speed;
 }
 
-Real PistonEngine::manifoldPressure(Real throttle, Real omega, Real ambientPressure, Real ambientTemperature) const {
+Real PistonEngine::manifoldPressure(Real throttle, Real omega, Real ambientPressure, Real ambientTemperature, Real areaFactor) const {
     // Per unit ambient pressure, with x = MAP / ambient:
     //   pump:    m_dot / p = eta_v(x) x D omega / (4 pi R T_c)  (rises linearly in x from the residual floor x = 1/r_c;
     //                                                          T_c the heated charge temperature)
@@ -390,7 +390,7 @@ Real PistonEngine::manifoldPressure(Real throttle, Real omega, Real ambientPress
     // eta_v(x) x = eta_v(1) (r_c x - 1) / (r_c - 1), the speed factor folded into eta_v(1).
     const Real etaUnthrottled = volumetricEfficiency(ambientPressure, ambientPressure, omega);
     const Real pumpScale = etaUnthrottled / (rc - 1) * def_.displacement * std::max(omega, 0.0) / (4 * kPi * R * chargeTemperature(T));
-    const Real orificeScale = throttleArea(throttle) / std::sqrt(R * T);
+    const Real orificeScale = throttleArea(throttle) * areaFactor / std::sqrt(R * T);
     Real lo = 1 / rc, hi = 1;
     for (int it = 0; it < 44; ++it) {
         const Real x = 0.5 * (lo + hi);
@@ -405,19 +405,22 @@ PistonEngineState PistonEngine::evaluate(const PistonEngineInputs& in, Real omeg
     omega = std::max(omega, 0.0);
     s.omega = omega;
     const Real throttle = clamp(in.throttle, 0.0, 1.0);
-    s.manifoldPressure = manifoldPressure(throttle, omega, in.ambientPressure, in.ambientTemperature);
+    // The intake air: ambient, or heated through the carb heat muff.
+    const Real tIntake = in.ambientTemperature + in.inductionTemperatureRise;
+    s.manifoldPressure = manifoldPressure(throttle, omega, in.ambientPressure, tIntake, in.throttleAreaFactor);
 
-    const Real rhoIntake = s.manifoldPressure / (isa::kGasConstantDryAir * chargeTemperature(in.ambientTemperature));
+    const Real rhoIntake = s.manifoldPressure / (isa::kGasConstantDryAir * chargeTemperature(tIntake));
     const Real airPerRad = volumetricEfficiency(s.manifoldPressure, in.ambientPressure, omega) * rhoIntake * def_.displacement /
                            (4 * kPi);  // kg/rad
     const Real mAir = airPerRad * omega;
+    s.airMassFlow = mAir;
 
     // Metered mixture: lever below 5% is idle cut-off.
     const Real lever = clamp(in.mixture, 0.0, 1.0);
     const bool cutoff = lever < 0.05;
     const Real phi = cutoff ? 0.0
                             : def_.mixtureRichPhi * lever *
-                                  std::sqrt(isa::kSeaLevelDensity / std::max(in.ambientDensity, 1e-3));
+                                  std::sqrt(isa::kSeaLevelDensity / std::max(in.ambientDensity * (in.ambientTemperature / tIntake), 1e-3));
     s.equivalenceRatio = in.fuelAtEngine ? phi : 0.0;
     const bool fuelFlowing = in.fuelAtEngine && !cutoff;
     s.fuelFlow = fuelFlowing ? mAir * phi * def_.stoichiometricFar : 0.0;
@@ -433,7 +436,7 @@ PistonEngineState PistonEngine::evaluate(const PistonEngineInputs& in, Real omeg
                              ? 1.0
                              : def_.singleMagnetoPowerFactor;
         // Torque = eta * (air per radian) * FAR_stoich * LHV * relPower.
-        indicatedTorque = etaIndicated_ * airPerRad * def_.stoichiometricFar * def_.fuelHeatingValue * relPower * mag;
+        indicatedTorque = etaIndicated_ * airPerRad * def_.stoichiometricFar * def_.fuelHeatingValue * relPower * mag * in.powerFactor;
     }
     // Friction and the pumping loop (exhaust at ambient, intake at MAP: the
     // throttled engine is an air pump working against the plate) oppose

@@ -67,6 +67,13 @@ struct PistonEngineInputs {
     Real ambientPressure = isa::kSeaLevelPressure;
     Real ambientTemperature = isa::kSeaLevelTemperature;
     Real ambientDensity = isa::kSeaLevelDensity;
+    // Induction icing and carb heat (avd/icing.hpp; defaults: none): the
+    // fraction of the throttle's flow area the ice leaves, the intake air's
+    // temperature rise through the carb heat muff (less dense, the mixture
+    // richer), and the power left with meltwater going through the cylinders.
+    Real throttleAreaFactor = 1;
+    Real inductionTemperatureRise = 0;  // K
+    Real powerFactor = 1;
 };
 
 struct PistonEngineState {
@@ -74,6 +81,7 @@ struct PistonEngineState {
     bool firing = false;
     bool running = false;        // firing and above idle-ish speed
     Real manifoldPressure = 0;   // Pa
+    Real airMassFlow = 0;        // kg/s inducted
     Real equivalenceRatio = 0;
     Real fuelFlow = 0;           // kg/s
     Real brakePower = 0;         // W
@@ -103,7 +111,8 @@ public:
     // engine's pumping. Closed, the idle orifice is choked at any speed above
     // a crawl, so the air flow is fixed and MAP falls as 1/rpm (less the
     // residual-gas floor at ambient / compression ratio).
-    Real manifoldPressure(Real throttle, Real omega, Real ambientPressure, Real ambientTemperature) const;
+    // `areaFactor` scales the throttle's flow area (carburettor ice).
+    Real manifoldPressure(Real throttle, Real omega, Real ambientPressure, Real ambientTemperature, Real areaFactor = 1) const;
     // Effective throttle flow area Cd A (m^2) at a lever position.
     Real throttleArea(Real throttle) const;
     // Volumetric efficiency referred to manifold density: the exhaust

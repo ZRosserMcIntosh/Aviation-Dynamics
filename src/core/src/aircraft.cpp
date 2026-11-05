@@ -12,6 +12,7 @@
 // classical RK4 at a fixed step (see docs/decisions/0003-integrator.md).
 #include "avd/aircraft.hpp"
 
+#include <cctype>
 #include <sstream>
 #include <stdexcept>
 
@@ -46,6 +47,16 @@ int engineIndexFromId(const std::string& id) {
     std::size_t i = 6;
     for (; i < id.size() && id[i] >= '0' && id[i] <= '9'; ++i) n = n * 10 + (id[i] - '0');
     if (i == 6 || id.compare(i, std::string::npos, ".ignition") != 0) return -1;
+    return n - 1;
+}
+
+// "engine<N>.carb_heat" -> N-1 (carburettor heat lever), or -1.
+int carbHeatIndexFromId(const std::string& id) {
+    if (id.rfind("engine", 0) != 0) return -1;
+    int n = 0;
+    std::size_t i = 6;
+    for (; i < id.size() && id[i] >= '0' && id[i] <= '9'; ++i) n = n * 10 + (id[i] - '0');
+    if (i == 6 || id.compare(i, std::string::npos, ".carb_heat") != 0) return -1;
     return n - 1;
 }
 
@@ -91,6 +102,7 @@ Aircraft::Aircraft(const AircraftDefinition& def, const LocalFrame& frame)
     if (!errors.empty()) AVD_FAIL(std::invalid_argument, joinErrors(errors));
     aeroModel_ = std::make_unique<AeroModel>(def_);
     aeroModel_->prepare(aeroOut_);
+    icing_.configure(def_, *aeroModel_);
     for (const PistonEngineDef& e : def_.engines) {
         engines_.emplace_back(e);
         props_.emplace_back(e.propeller);
@@ -297,7 +309,29 @@ void Aircraft::rebuildCockpit() {
     for (const ElectricalLoadDef& l : def_.electrical.loads)
         cockpit_.push_back({"electrical.load." + l.name, l.label.empty() ? "Circuit Breaker: " + l.name : l.label,
                             {"OFF", "ON"}, l.initiallyOn ? 1 : 0});
+    // Ice: carburettor heat, and the airframe's protection switches.
+    for (std::size_t i = 0; i < def_.engines.size(); ++i)
+        if (def_.engines[i].carburettor.present)
+            cockpit_.push_back({"engine" + std::to_string(i + 1) + ".carb_heat",
+                                def_.engines.size() > 1 ? "Engine " + std::to_string(i + 1) + " Carburettor Heat" : "Carburettor Heat",
+                                {"COLD", "HOT"}, 0});
+    for (int k = 0; k < icing_.switchCount(); ++k) {
+        std::string n = icing_.switchName(k);
+        if (!n.empty()) n[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(n[0])));
+        cockpit_.push_back({"anti_ice." + icing_.switchName(k), n + (icing_.switchIsThermal(k) ? " Anti-Ice (bleed air)" : " De-Ice Boots"),
+                            {"OFF", "ON"}, 0});
+    }
 }
+
+namespace {
+// "anti_ice.<name>" -> the IcingModel switch index, or -1.
+int antiIceIndex(const IcingModel& m, const std::string& id) {
+    if (id.rfind("anti_ice.", 0) != 0) return -1;
+    for (int k = 0; k < m.switchCount(); ++k)
+        if (id.compare(9, std::string::npos, m.switchName(k)) == 0) return k;
+    return -1;
+}
+}  // namespace
 
 void Aircraft::syncCockpitPositions() {
     for (CockpitControl& c : cockpit_) c.position = cockpitControl(c.id);
@@ -327,6 +361,9 @@ int Aircraft::cockpitControl(const std::string& id) const {
             if (id == "hydraulics." + def_.hydraulics.systems[k].name + ".pump") return hydPumpOn_[k] ? 1 : 0;
     if (id == "speedbrake.lever") return def_.controls.speedbrake.present ? speedbrakeDetent_ : -1;
     if (const int t = turbofanIndexFromId(id); t >= 0) return t < turbofanCount() ? (turboFuel_[t] ? 1 : 0) : -1;
+    if (const int h = carbHeatIndexFromId(id); h >= 0)
+        return h < engineCount() && def_.engines[static_cast<std::size_t>(h)].carburettor.present ? (carbHeat_[static_cast<std::size_t>(h)] ? 1 : 0) : -1;
+    if (const int k = antiIceIndex(icing_, id); k >= 0) return antiIce_[static_cast<std::size_t>(k)] ? 1 : 0;
     if (const int e = engineIndexFromId(id); e >= 0 || id.rfind("engine", 0) == 0) {
         if (e < 0 || e >= engineCount()) return -1;
         const Magnetos m = magnetos_[e];
@@ -363,6 +400,8 @@ bool Aircraft::setCockpitControl(const std::string& id, int position) {
     }
     else if (id == "speedbrake.lever") speedbrakeDetent_ = position;
     else if (turbofanIndexFromId(id) >= 0) turboFuel_[turbofanIndexFromId(id)] = position == 1;
+    else if (carbHeatIndexFromId(id) >= 0) carbHeat_[static_cast<std::size_t>(carbHeatIndexFromId(id))] = position == 1;
+    else if (antiIceIndex(icing_, id) >= 0) antiIce_[static_cast<std::size_t>(antiIceIndex(icing_, id))] = position == 1;
     else if (engineIndexFromId(id) >= 0) magnetos_[engineIndexFromId(id)] = static_cast<Magnetos>(position);
     else if (id.rfind("electrical.load.", 0) == 0) electrical_.setLoadSwitch(electrical_.loadIndex(id.substr(16)), position == 1);
     cockpit_[idx].position = position;
@@ -428,6 +467,9 @@ void Aircraft::setColdAndDark() {
     brakeAccumulator_ = def_.hydraulics.present && !def_.hydraulics.brakes.empty() ? def_.hydraulics.brakeAccumulatorApplications : -1;
     gearSupply_ = flapSupply_ = speedbrakeSupply_ = steeringSupply_ = brakeSupply_ = 1;
     lever_ = {};
+    carbHeat_ = {};
+    antiIce_ = {};
+    icing_.reset();
     instruments_.resetCold(sensorInputs());
     syncCockpitPositions();
 }
@@ -649,6 +691,9 @@ void Aircraft::buildContext(const PilotInput& in, const GroundQuery& ground, con
         e.ambientTemperature = c.air.state.temperature;
         e.ambientDensity = c.air.state.density;
         e.starterPowered = false;
+        e.throttleAreaFactor = icing_.carburettorAreaFactor(i);
+        e.inductionTemperatureRise = icing_.inductionTemperatureRise(i);
+        e.powerFactor = icing_.enginePowerFactor(i);
     }
     const Real airspeed = length(s_.body.velocity - c.air.wind);
     // The FADEC rating: forced by the pilot's thrust mode, else the automatic
@@ -705,7 +750,12 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
         const Vec3 vDisc = vBody + cross(w, r) - (windBody + gradBody * r);
         const Vec3 axis = normalized(ed.thrustAxis);
         const Real vAx = dot(vDisc, axis);
-        const PropellerForces pf = props_[i].evaluate(vAx, s.shaftOmega[i], rho, c.air.state.speedOfSound);
+        PropellerForces pf = props_[i].evaluate(vAx, s.shaftOmega[i], rho, c.air.state.speedOfSound);
+        if (icing_.propellerThrustFactor(i) != 1) {
+            // Ice on the blades: less thrust for more torque.
+            pf.thrust *= icing_.propellerThrustFactor(i);
+            pf.torque *= icing_.propellerTorqueFactor(i);
+        }
         const Vec3 thrust = axis * pf.thrust;
         force += thrust;
         moment += cross(r, thrust);
@@ -744,6 +794,7 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
     }
 
     // ---- Turbofans: net thrust on the thrust line (spool speeds from the step) ----
+    const bool bleedOn = turbofanCount() > 0 && antiIceBleed();
     for (int i = 0; i < turbofanCount(); ++i) {
         const TurbofanDef& ed = def_.turbofans[i];
         TurbofanInputs ti = c.turboIn[i];
@@ -755,7 +806,9 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
         // A deployed reverser turns the fan flow forward: the forward thrust
         // goes, and a fraction of it pushes the other way.
         const Real rev = ed.reverser.present ? reverserPos_[static_cast<std::size_t>(i)] : 0.0;
-        const Vec3 thrust = normalized(ed.thrustAxis) * (ts.thrust * (1 - rev * (1 + ed.reverser.effectiveness)));
+        // Thermal anti-ice bleed taken from a lit engine costs thrust.
+        const Real bleed = bleedOn && ts.running && ts.thrust > 0 ? 1 - def_.iceProtection.bleedThrustLoss : 1.0;
+        const Vec3 thrust = normalized(ed.thrustAxis) * (ts.thrust * bleed * (1 - rev * (1 + ed.reverser.effectiveness)));
         force += thrust;
         moment += cross(r, thrust);
     }
@@ -798,6 +851,7 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
     ai.slipstreams = slip_.data();
     ai.slipstreamCount = engineCount();
     ai.downwashLagged = quasiSteadyDownwash_ ? nullptr : downwashLag_.data();
+    ai.ice = icing_.iced() ? icing_.surfaces() : nullptr;
     aeroModel_->evaluate(ai, aeroOut_);
     force += aeroOut_.force;
     moment += aeroOut_.moment;
@@ -1261,6 +1315,37 @@ void Aircraft::step(Real dt, const PilotInput& in, const GroundQuery& ground, co
     postStep(dt, c, s0);
 }
 
+bool Aircraft::antiIceBleed() const {
+    for (int k = 0; k < icing_.switchCount(); ++k)
+        if (antiIce_[static_cast<std::size_t>(k)] && icing_.switchIsThermal(k)) return true;
+    return false;
+}
+
+void Aircraft::updateIcing(Real dt, const Context& c) {
+    IcingModel::Inputs in;
+    in.air = c.air;
+    in.trueAirspeed = aeroOut_.airspeed;
+    for (int k = 0; k < icing_.switchCount(); ++k) in.switches[static_cast<std::size_t>(k)] = antiIce_[static_cast<std::size_t>(k)];
+    // Bleed heat from the lit cores: none below 45 % N2, full from minimumN2.
+    for (int i = 0; i < turbofanCount(); ++i)
+        if (turboState_[i].running)
+            in.bleed = std::max(in.bleed, smoothstep(0.45, def_.iceProtection.minimumN2, turboState_[i].n2));
+    const Real p = std::max(c.air.state.pressure, 1.0);
+    for (int i = 0; i < engineCount() && i < kIcingMaxEngines; ++i) {
+        IcingModel::EngineInputs& e = in.engines[static_cast<std::size_t>(i)];
+        const PistonEngineState& es = engineState_[i];
+        e.omega = s_.shaftOmega[i];
+        e.axialSpeed = aeroOut_.airspeed;
+        e.throttle = lever_[i];
+        e.manifoldRatio = es.manifoldPressure > 0 ? es.manifoldPressure / p : 1.0;
+        e.airMassFlow = es.airMassFlow;
+        e.fuelFlow = es.fuelFlow;
+        e.powerFraction = std::max(es.brakePower, 0.0) / def_.engines[static_cast<std::size_t>(i)].ratedPower;
+        e.carbHeat = carbHeat_[static_cast<std::size_t>(i)];
+    }
+    icing_.update(dt, in);
+}
+
 void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
     // Numerical fault guard: never propagate NaN/Inf into the world.
     if (!isFinite(s_.body.position) || !isFinite(s_.body.velocity) || !isFinite(s_.body.omega) ||
@@ -1354,6 +1439,7 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
     // Vacuum, engine temperatures.
     vacuum_.step(dt, engineCount() > 0 ? s_.shaftOmega[0] * 60 / kTwoPi : 0);
     for (int i = 0; i < engineCount(); ++i) engines_[i].updateThermal(engineState_[i], dt, aeroOut_.airspeed);
+    updateIcing(dt, c);
 
     time_ += dt;
     // Specific force for instruments/telemetry.
@@ -1366,21 +1452,28 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
         const int first = aeroModel_->firstStrip(def_.stallWarning.surface);
         const int end = aeroModel_->endStrip(def_.stallWarning.surface);
         int idx = def_.stallWarning.strip >= 0 ? first + def_.stallWarning.strip : (first + end) / 2;
+        // The vane and the AOA computer know the clean wing's stall, not the
+        // iced one's (StripTelemetry::iceStallShift); a computed system goes
+        // to its icing schedule while ice protection is switched on.
+        bool protectionOn = false;
+        for (int k = 0; k < icing_.switchCount(); ++k) protectionOn = protectionOn || antiIce_[static_cast<std::size_t>(k)];
+        const Real icingShift = def_.stallWarning.computed && protectionOn ? def_.stallWarning.icingAlphaShift : 0.0;
+        auto cleanStall = [&](const StripTelemetry& s) { return s.stallAlpha + s.iceStallShift - icingShift; };
         if (def_.stallWarning.computed) {
             Real least = 1e9;
             for (int i = first; i < end; ++i) {
                 const StripTelemetry& s = aeroOut_.strips[i];
-                if (s.q > 30 && aeroModel_->stripIsPrimary(i) && s.stallAlpha - s.alpha < least) {
-                    least = s.stallAlpha - s.alpha;
+                if (s.q > 30 && aeroModel_->stripIsPrimary(i) && cleanStall(s) - s.alpha < least) {
+                    least = cleanStall(s) - s.alpha;
                     idx = i;
                 }
             }
         }
         if (idx < end) {
             const StripTelemetry& st = aeroOut_.strips[idx];
-            vane = st.q > 30 && st.alpha > st.stallAlpha - def_.stallWarning.alphaMargin;
+            vane = st.q > 30 && st.alpha > cleanStall(st) - def_.stallWarning.alphaMargin;
             if (def_.stallWarning.pusherMargin > 0) {
-                const Real onAt = st.stallAlpha - def_.stallWarning.pusherMargin;
+                const Real onAt = cleanStall(st) - def_.stallWarning.pusherMargin;
                 if (st.q > 30 && !tel_.onGround && st.alpha > onAt) pusher_ = true;
                 else if (pusher_ && (st.alpha < onAt - 0.0873 || tel_.onGround)) pusher_ = false;  // 5 deg hysteresis
             }
@@ -1560,7 +1653,8 @@ SensorInputs Aircraft::sensorInputs() const {
     in.avionicsPowered = loadPowered(p.avionics.avionicsLoad, electrical_.avionicsBusVoltage() >= electrical_.busMinimum());
     in.annunciatorsPowered = bus;
     in.pitotHeatOn = loadPowered(p.pitotHeatLoad, false);
-    in.liquidWaterContent = ctx_.air.liquidWaterContent * 1e-3;  // g/m^3 -> kg/m^3
+    // Cloud water and rain (freezing rain below 0 C), g/m^3 -> kg/m^3.
+    in.liquidWaterContent = (ctx_.air.liquidWaterContent + rainLiquidWaterContent(ctx_.air.precipitationRate)) * 1e-3;
     in.panelLightsOn = loadPowered(p.panelLightsLoad, false);
     if (engineCount() > 0) {
         const PistonEngineState& e = engineState_[0];

@@ -68,6 +68,7 @@ SPECS = {
                      hydraulics='the Phenom 300 has a single engine-pump system with an electric auxiliary pump; two systems is the template layout'),
         colors=dict(primary='#0f3a5c', accent='#c9a227'),
         windows=dict(count=6, first=-4.6, pitch=0.82, half_w=0.2, half_h=0.15),
+        ice=dict(surfaces=[(0, 'boots', 'wing'), (1, 'boots', 'wing')], note='Pneumatic de-ice boots on the wing and horizontal-tail leading edges on one switch (the Phenom 300\'s), heated windshield, an ice detector; the bleed-heated engine inlets are not modelled.'),
         sources=[
             ('AVWEEK', 'Aviation Week, Aircraft Overview: Phenom 300E (PW535E1 3,478 lbf, MTOW 18,551 lb, take-off 3,209 ft at MTOW SL ISA).'),
             ('CDD', 'Conklin & de Decker, Embraer Phenom 300E (usable fuel 5,353 lb).'),
@@ -88,6 +89,7 @@ SPECS = {
                      hydraulics='the CJ4 has one engine-pump system; two systems is the template layout'),
         colors=dict(primary='#1d2a33', accent='#b6202a'),
         windows=dict(count=6, first=-4.7, pitch=0.85, half_w=0.18, half_h=0.15),
+        ice=dict(surfaces=[(0, 'thermal', 'wing'), (1, 'boots', 'tail')], note='Bleed-air heated wing leading edges and pneumatic de-ice boots on the horizontal tail (the CJ4\'s), heated windshield, an ice detector.'),
         sources=[
             ('TXT', 'Textron Aviation, Citation CJ4 product pages (wing area 330 sq ft).'),
             ('JETCRAFT', 'JetCraft, Cessna Citation CJ4 overview (FJ44-4A 3,621 lbf, MTOW 17,110 lb, MLW 15,660 lb, BOW 10,280 lb).'),
@@ -107,6 +109,7 @@ SPECS = {
                      hydraulics='the Learjet 45 has one engine-pump system with an electric auxiliary pump; two systems is the template layout'),
         colors=dict(primary='#2b2f36', accent='#c8102e'),
         windows=dict(count=7, first=-4.9, pitch=0.84, half_w=0.2, half_h=0.16),
+        ice=dict(surfaces=[(0, 'thermal', 'wing'), (1, 'thermal', 'wing')], note='Bleed-air heated wing leading edges and the electrically heated horizontal stabiliser on one switch (both modelled as thermal), heated windshield, an ice detector.'),
         sources=[
             ('AEROPEDIA', 'Aeropedia, Learjet 45 (wing area 28.95 m2, 3,500 lbst TFE731-20).'),
             ('FLYRADIUS', 'FlyRadius, Bombardier Learjet 45 specifications (MTOW 20,500 lb, MLW 19,200 lb, fuel 6,062 lb).'),
@@ -124,6 +127,7 @@ SPECS = {
                      hydraulics='the CRJ700 has three systems (1 and 2 engine-driven with AC pumps, 3 on AC pumps only); two engine-driven systems is a simplification'),
         colors=dict(primary='#1e3f73', accent='#d7262e'),
         windows=dict(count=19, first=-5.6, pitch=0.82, half_w=0.15, half_h=0.2),
+        ice=dict(surfaces=[(0, 'thermal', 'wing')], note='Bleed-air wing leading-edge anti-ice; the tail is unprotected (the CRJ\'s); heated windshield, an ice detector.'),
         sources=[
             ('FLYRADIUS', 'FlyRadius, Bombardier CRJ700 specifications (MTOW 75,000 lb ER, MLW 67,000 lb, fuel 19,450 lb).'),
             ('GLOBALAIR', 'GlobalAir, CRJ-700 specifications (operating weight 44,245 lb).'),
@@ -143,6 +147,7 @@ SPECS = {
                      hydraulics='the 737 has an engine pump and an electric pump on each of A and B, as here; the standby system is not modelled'),
         colors=dict(primary='#123a6b', accent='#e0a526'),
         windows=dict(count=26, first=-6.2, pitch=0.51, half_w=0.12, half_h=0.17),
+        ice=dict(surfaces=[(0, 'thermal', 'wing')], note='Bleed-air anti-ice on the inboard leading-edge slats (here the whole wing); the tail is unprotected (the 737\'s); heated windshield, an ice detector.'),
         sources=[
             ('QANTAS', 'Qantas, Boeing 737-800 fact sheet (MTOW 79,015 kg, wing area 124.6 m2, fuel ~26,025 L, CFM56-7B26 116.99 kN).'),
             ('BOEING', 'Boeing 737 airplane characteristics for airport planning (dimensions, MLW 146,300 lb, OEW ~91,300 lb) as commonly reproduced.'),
@@ -445,6 +450,11 @@ def build(key, spec, top):
     d['pitot_static']['static_position_m'] = r3([-4.5 * sR, -1.25 * sR, 0.1 * sR])
     d['panel']['annunciators']['low_fuel_below_gal'] = round(300 * fuel_l / 27328)
 
+    # ---- Ice protection (the template's block; this type's surfaces) ----
+    ice = s.get('ice', dict(surfaces=[(0, 'thermal', 'wing')], note='Bleed-air wing anti-ice (the template\'s).'))
+    d['ice_protection'] = dict(d['ice_protection'])
+    d['ice_protection']['surfaces'] = [{'surface': i, 'type': t, 'switch': w} for i, t, w in ice['surfaces']]
+
     # ---- Identity, provenance ----
     d['id'] = key
     d['display_name'] = s['display']
@@ -481,6 +491,8 @@ def build(key, spec, top):
          'note': f"Speedbrake with automatic ground spoilers; {reverser_note}."},
         {'field': 'limits, controls.flap_detents_deg', 'kind': 'published', 'source': s['sources'][-1][0],
          'note': f"VMO {s['vmo']} KIAS, MMO {s['mmo']}; flaps {flaps} with VFE {s['vfe']} (some flap placards estimated)."},
+        {'field': 'ice_protection', 'kind': 'estimated', 'source': 'EST',
+         'note': ice['note'] + ' Thermal anti-ice takes 4 % of each lit engine\'s thrust in bleed (Estimated); full heat from 60 % N2.'},
     ]
     if s.get('calibration'):
         d['provenance'].extend(s['calibration'])

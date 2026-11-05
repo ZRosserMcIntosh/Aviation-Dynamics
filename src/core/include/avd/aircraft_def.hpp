@@ -213,6 +213,32 @@ struct PropellerDef {
     int bemElements = 24;
 };
 
+// A float carburettor (PistonEngineDef::carburettor; absent: fuel injected,
+// no carburettor ice). The charge cools in the venturi as the fuel
+// evaporates (fuelEvaporation x FAR x h_fg / cp, ~20 K) and at a partly
+// closed throttle plate (the jet's static temperature drop, felt by the
+// plate in part); moist air cooled below its saturation point there drops
+// water, a part of which freezes onto the throat and plate while their
+// temperature is below 0 C, closing the effective throttle area (the same
+// ice blocks a nearly closed plate's small gap three times as much). Carb
+// heat takes the intake air through the exhaust muff: hotter (heatRise at
+// rated power, less at low power), so less dense (an rpm drop at full
+// throttle, the mixture richer) and melting the ice; the meltwater goes
+// through the engine (rough running). FAA AC 20-113 and SAIB CE-09-35 (the
+// carburettor icing probability chart); temperatures from the evaporation
+// and expansion budget, the capture and melt efficiencies Estimated.
+struct CarburettorDef {
+    bool present = false;
+    Real heatRise = 50;               // K, carb heat's intake temperature rise at rated power
+    Real heatTimeConstant = 6;        // s, the muff and ducting warming / cooling
+    Real fuelEvaporation = 0.7;       // fraction of the fuel evaporated before the throttle plate
+    Real fuelLatentHeat = 3.5e5;      // J/kg (avgas)
+    Real throttleCooling = 0.2;       // fraction of the plate jet's static temperature drop at the plate
+    Real captureFraction = 0.008;     // of the water dropped that freezes on the throat and plate
+    Real iceToClose = 0.015;          // kg of ice that would close the wide-open throat
+    Real meltEfficiency = 0.05;       // of the warm air's heat above 0 C that melts ice
+};
+
 struct PistonEngineDef {
     std::string name = "engine";
     Vec3 position;                    // propeller hub, structural frame
@@ -271,6 +297,7 @@ struct PistonEngineDef {
     Real oilReliefPressure = 5.5e5;           // Pa (~80 psi)
     Real oilViscosityTemperatureScale = 38.9; // K: pressure x e when oil is this much colder
     int fuelFeed = 0;                 // index of the fuel feed this engine draws from
+    CarburettorDef carburettor;       // absent: fuel injected
     PropellerDef propeller;
 };
 
@@ -642,6 +669,36 @@ struct StallWarningDef {
     // is 5 deg lower again. 0 = no pusher.
     Real pusherMargin = 0;            // rad
     Real pusherElevator = -0.5;       // elevator command (-1..1, nose down)
+    // A vane or reed trips at a fixed local flow angle: with ice on the wing
+    // (which stalls it several degrees earlier) its warning comes late or
+    // not at all. A computed system uses the clean wing's stall too, but
+    // switches to its icing schedule, this much lower, while any ice
+    // protection is switched on.
+    Real icingAlphaShift = 0.0873;    // rad (computed systems)
+};
+
+// Airframe ice protection (Estimated by type from the manufacturers'
+// descriptions). Thermal: engine bleed air heats the leading edges (it runs
+// wet: no ice forms, ice already there melts) at a cost in thrust; boots:
+// pneumatic de-icers inflated every cycle, shedding the ice over a residual
+// layer (ice builds again between cycles). One cockpit switch per name
+// ("anti_ice.<switch>").
+enum class IceProtectionType { Thermal, Boots };
+struct SurfaceIceProtectionDef {
+    int surface = 0;
+    IceProtectionType type = IceProtectionType::Thermal;
+    std::string switchName = "wing";
+};
+struct IceProtectionDef {
+    std::vector<SurfaceIceProtectionDef> surfaces;
+    Real bleedThrustLoss = 0.04;      // fraction of each lit turbofan's thrust while thermal anti-ice is on
+    Real heatFlux = 15000;            // W/m^2 into the ice once warm (melting)
+    Real heatTimeConstant = 20;       // s, leading-edge warm-up
+    Real minimumN2 = 0.6;             // core speed (fraction) for full bleed heat; none below 0.45
+    Real bootCycle = 60;              // s between inflations
+    Real bootResidual = 0.8e-3;       // m of ice left after a cycle
+    bool windshieldHeat = false;      // electrically heated windshield (always on)
+    bool iceDetector = false;         // an ICE annunciator (a vibrating-probe detector)
 };
 
 struct VacuumDef {
@@ -728,6 +785,7 @@ struct AircraftDefinition {
     FlightControlsDef controls;
     PitotStaticDef pitotStatic;
     StallWarningDef stallWarning;
+    IceProtectionDef iceProtection;   // none by default (not approved for known icing)
     VacuumDef vacuum;
     StructuralLimitsDef limits;
     InstrumentPanelDef panel;

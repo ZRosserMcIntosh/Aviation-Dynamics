@@ -51,6 +51,33 @@ Real wetTyreFriction(const SurfaceProperties& s, Real speed, Real tyrePressure);
 // Dynamic hydroplaning speed (m/s) for a tyre pressure (Pa).
 Real hydroplaningSpeed(Real tyrePressure);
 
+// Rain on a paved runway: the steady water film (m above the texture) for a
+// rain rate (mm/h), the drainage path (m: half the width of a crowned
+// runway), its cross slope and the macrotexture depth (m). Gallaway et al.
+// (1979), FHWA-RD-79-31, in its US units (inches, feet, in/h):
+//   WFT = 3.38e-3 TXD^0.11 L^0.43 I^0.59 (1/S)^0.42 - TXD.
+// A 45 m runway (L 22.5 m, S 1.5 %, TXD 0.5 mm): about 0.7 mm in 10 mm/h
+// (wet), 2.6 mm in 50 mm/h and over 3 mm (standing water, hydroplaning)
+// above about 70 mm/h. Ungrooved; grooving drains far faster.
+Real rainWaterFilmDepth(Real rainRate, Real drainageLength = 22.5, Real crossSlope = 0.015, Real textureDepth = 0.0005);
+
+// The water on a runway as rain comes and goes: the film builds toward the
+// Gallaway depth over a few minutes (180 s), and after the rain eases it
+// drains (600 s) and the damp remainder evaporates (~0.2 mm/h, Estimated).
+// The depth feeds SurfaceProperties::waterDepth (FlatGround::setWaterDepth,
+// RegionGround::setWaterDepth).
+class RunwayWetting {
+public:
+    explicit RunwayWetting(Real drainageLength = 22.5, Real crossSlope = 0.015, Real textureDepth = 0.0005)
+        : length_(drainageLength), slope_(crossSlope), texture_(textureDepth) {}
+    void update(Real dt, Real rainRate);
+    void setDepth(Real m) { depth_ = std::max(m, 0.0); }
+    Real depth() const { return depth_; }  // m
+private:
+    Real length_, slope_, texture_;
+    Real depth_ = 0;
+};
+
 struct GroundHit {
     bool hit = false;
     Real distance = 0;

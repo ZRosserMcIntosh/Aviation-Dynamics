@@ -7,8 +7,12 @@
 //  - Moist-air density: rho = (p - e)/(Rd T) + e/(Rv T) (ideal-gas mixture).
 //  - Sutherland's law with USSA-1976 constants (beta = 1.458e-6, S = 110.4 K).
 //  - Wind and turbulence: see wind.cpp.
+//  - Rain: Marshall & Palmer (1948), J. Meteorol. 5, the drop-size
+//    distribution; visibility: Koschmieder, cloud extinction after Kunkel
+//    (1984), J. Clim. Appl. Meteorol. 23.
 #include "avd/atmosphere.hpp"
 
+#include <algorithm>
 #include <cstdint>
 
 namespace avd {
@@ -69,6 +73,17 @@ Real geometricFromGeopotential(Real h) { return kEarthRadius * h / (kEarthRadius
 Real saturationVapourPressure(Real temperature) {
     const Real tc = temperature - 273.15;
     return 611.21 * std::exp((18.678 - tc / 234.5) * (tc / (257.14 + tc)));
+}
+
+Real rainLiquidWaterContent(Real rainRate) { return rainRate > 0 ? 0.089 * std::pow(rainRate, 0.84) : 0.0; }
+
+Real rainMedianVolumeDiameter(Real rainRate) { return rainRate > 0 ? 0.895e-3 * std::pow(rainRate, 0.21) : 0.0; }
+
+Real meteorologicalVisibility(const AirSample& s, Real clear) {
+    Real beta = 3.912 / std::max(clear, 1.0);                                        // 1/m
+    if (s.liquidWaterContent > 0) beta += 144.7e-3 * std::pow(s.liquidWaterContent, 0.88);  // Kunkel, km^-1 -> m^-1
+    if (s.precipitationRate > 0) beta += 0.25e-3 * std::pow(s.precipitationRate, 0.63);
+    return 3.912 / beta;
 }
 
 StandardAtmosphere::StandardAtmosphere(const AtmosphereConditions& c)
@@ -185,6 +200,7 @@ Real representativeFrictionVelocity(const SimpleWeatherParams& p, const Boundary
 SimpleWeather::SimpleWeather(const Params& p)
     : p_(p),
       spatial_(!p.roughnessPatches.empty() || !p.stations.empty() || !p.windShifts.empty() || !p.obstacles.empty()),
+      airmassFronts_(std::any_of(p.windShifts.begin(), p.windShifts.end(), [](const WindShift& f) { return f.changesAirmass(); })),
       atm_(p.conditions),
       boundaryLayer_(boundaryLayerParams(p)),
       turbulence_(turbulenceParams(p), boundaryLayer_.surfaceFlowHeading(),
@@ -230,6 +246,18 @@ SurfaceWind SimpleWeather::surfaceWindAt(Real north, Real east, Real time) const
     return sw;
 }
 
+AtmosphereConditions SimpleWeather::conditionsAt(const Vec3& pos, Real time) const {
+    AtmosphereConditions c = p_.conditions;
+    if (!airmassFronts_) return c;
+    for (const WindShift& f : p_.windShifts) {
+        if (!f.changesAirmass()) continue;
+        const Real a = f.airmass(pos, time);
+        c.temperatureDeviation += a * f.temperatureChange;
+        c.seaLevelPressure += a * f.pressureChange - f.trough(pos, time);
+    }
+    return c;
+}
+
 SimpleWeather::LocalWind SimpleWeather::localWind(const Vec3& pos, Real agl, Real msl, Real time) const {
     LocalWind lw;
     const SurfaceWind sw = surfaceWindAt(pos.x, pos.y, time);
@@ -256,9 +284,16 @@ SimpleWeather::LocalWind SimpleWeather::localWind(const Vec3& pos, Real agl, Rea
 
 AirSample SimpleWeather::sample(const Vec3& positionNed, Real altitudeMsl, Real time, Real extent) const {
     AirSample s;
-    s.state = atm_.at(altitudeMsl);
-    if (p_.cloudTop > p_.cloudBase && altitudeMsl >= p_.cloudBase && altitudeMsl <= p_.cloudTop)
+    // A front's new airmass: the column over its surface position, with the
+    // temperature deviation and MSL pressure behind it (hydrostatic).
+    s.state = airmassFronts_ ? StandardAtmosphere(conditionsAt(positionNed, time)).at(altitudeMsl) : atm_.at(altitudeMsl);
+    const bool cloudLayer = p_.cloudTop > p_.cloudBase;
+    if (cloudLayer && altitudeMsl >= p_.cloudBase && altitudeMsl <= p_.cloudTop) {
         s.liquidWaterContent = p_.cloudLiquidWater;
+        s.dropletDiameter = p_.cloudDropletDiameter;
+    }
+    // Rain falls from the top of the cloud layer to the ground.
+    if (p_.rainRate > 0 && (!cloudLayer || altitudeMsl <= p_.cloudTop)) s.precipitationRate = p_.rainRate;
     const Real agl = altitudeMsl - p_.groundElevation;
     // Frozen turbulence is advected with the reference-height mean wind.
     const Vec3 adv = boundaryLayer_.wind(p_.referenceHeight, p_.groundElevation + p_.referenceHeight);

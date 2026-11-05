@@ -38,8 +38,9 @@ moment, and they have a yaw damper.
 | Area | What is implemented | Evidence |
 |---|---|---|
 | 6-DoF | Rigid body in a local NED tangent frame on WGS-84, quaternion attitude, RK4 at a fixed 240 Hz step, floating-origin rebase | `tests/test_foundations.cpp` |
-| Atmosphere | ISA-1976 with temperature and QNH deviation, moist density, one cloud layer with supercooled liquid water (pitot icing) | `tests/test_foundations.cpp` |
-| Wind and weather | Log-law boundary layer over the surface roughness (city against airfield) with Ekman veer. MIL-HDBK-1797 turbulence, including the mechanical turbulence the wind makes. Gusts, microbursts, thermals, ridge lift and mountain waves, wind shifts and gust fronts, building and hangar wakes ([wind.md](docs/architecture/wind.md)) | `tests/test_wind.cpp` |
+| Atmosphere | ISA-1976 with temperature and QNH deviation, moist density, one cloud layer with supercooled liquid water, rain (Marshall–Palmer drops; freezing rain below 0 °C) and visibility | `tests/test_foundations.cpp`, `tests/test_icing.cpp` |
+| Icing | Ice on each lifting surface from the cloud's supercooled water and freezing rain (Langmuir–Blodgett collection efficiency, rime and glaze by the surface temperature; melting and sublimation out of cloud), on each strip's polar by its height over the chord (clmax −20 to −55 %, the stall angle 4–6° lower, more drag: the C172's Vs up 25 %), the tail first; propeller and windshield ice; bleed-air anti-ice (a 4 % thrust cost) and de-ice boots on the jets as cockpit switches; carburettor ice in the FAA chart's band (MAP and rpm fall) and carb heat ([weather.md](docs/architecture/weather.md)) | `tests/test_icing.cpp` |
+| Wind and weather | Log-law boundary layer over the surface roughness (city against airfield) with Ekman veer. MIL-HDBK-1797 turbulence, including the mechanical turbulence the wind makes. Gusts, microbursts, thermals, ridge lift and mountain waves, wind shifts and gust fronts, building and hangar wakes ([wind.md](docs/architecture/wind.md)). Fronts that bring a new airmass (the OAT and QNH change as you cross them); rain that wets the runways (a Gallaway water film) ([weather.md](docs/architecture/weather.md)) | `tests/test_wind.cpp`, `tests/test_icing.cpp` |
 | Aerodynamics | Nonlinear lifting line on the wings (Phillips & Snyder), solved on full ±180° section polars, with ground effect, sweep theory and Fowler flaps. Winglets, spoilers on their real spans, gear and speedbrake drag where they are. Strip theory on the tail, prop slipstream and swirl, fuselage Munk moment, Korn/Lock drag rise | `tests/test_lifting_line.cpp`, `tests/test_components.cpp`, `tests/test_jet.cpp` |
 | Wake turbulence | Each surface sheds its circulation into the air; it rolls up into vortex pairs that descend, drift with the wind, bounce off the ground and decay (P2P). Other aircraft fly through it | `tests/test_wake.cpp` |
 | Propulsion | Blade-element propeller with swirl and tip compressibility; piston engine (manifold pressure, mixture, magnetos, starter, temperatures, oil pressure). Two-spool turbofans with spool lag, Mattingly thrust lapse, TSFC against Mach, windmilling and relight | `tests/test_components.cpp`, `tests/test_jet.cpp` |
@@ -54,7 +55,7 @@ moment, and they have a yaw damper.
 | Assists | Easy, Sport and Simulation, plus an auto-trim that holds straight and level. They act only through the pilot's controls; the physics is the same in all three ([ADR 0004](docs/decisions/0004-assistance-is-not-physics.md)) | `tests/test_systems_scenarios.cpp`, `tests/test_jet.cpp` |
 | Browser | WebAssembly build (wasi-sdk, no exceptions or RTTI) with a C ABI. Streams the airflow, wake and body data the 3D site draws (streamlines, smoke, wind tunnel). Node smoke test, a self-contained 2D cockpit page, flight replay | `web/`, `web/smoke_test.mjs` |
 
-Everything in this table is tested: <!-- validation:begin tests -->252<!-- validation:end --> test cases, on Linux (gcc, clang,
+Everything in this table is tested: <!-- validation:begin tests -->261<!-- validation:end --> test cases, on Linux (gcc, clang,
 sanitizers), macOS, Windows and WASM in CI. How far each area is validated,
 and its main gap, is in the [fidelity matrix](docs/fidelity-matrix.md); the
 comparisons with published data, with their sources and every row that is
@@ -66,7 +67,7 @@ and are regenerated from the test output so they cannot drift.
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/tests/avd_tests             # <!-- validation:begin tests -->252<!-- validation:end --> test cases
+./build/tests/avd_tests             # <!-- validation:begin tests -->261<!-- validation:end --> test cases
 ./build/tests/avd_tests "blind"     # a filter: the blind landings
 ./build/avdemo validate [--json f]  # the comparison tables against published data (172S POH, G650ER)
 ./build/tools/avdtrace --record     # record the golden traces (tests/golden/README.md)

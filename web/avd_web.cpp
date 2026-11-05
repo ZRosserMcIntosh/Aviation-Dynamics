@@ -95,6 +95,10 @@ struct Sim {
         double convectiveVelocity = 0, convectiveDepth = 1500;
         int hazard = 0;
         double hazardTime = 0;
+        double rainRate = 0;  // mm/h (avd_set_rain)
+        // A moving front over the field (avd_set_front): 0 none, 1 cold, 2 warm.
+        int front = 0;
+        double frontEta = 0, frontDT = 0, frontDQnh = 0, frontWindKt = 0, frontWindFrom = 0, frontTime = 0;
     } wx;
     std::unique_ptr<Aircraft> ac;
     Real trimThrottle = 0, trimMixture = 1;  // controls of the last trimmed spawn
@@ -105,12 +109,17 @@ struct Sim {
     Real accumulator = 0;
     Vec3 windAvg;              // the wind at the aircraft, low-passed (3 s) as avionics show it
     bool windAvgValid = false;
-    Real runwayWater = 0;      // m of water on the airfield
+    Real runwayWater = 0;      // m of water on the airfield (avd_set_runway_water)
+    RunwayWetting wetting;     // the rain's water on the runways (Gallaway film)
+    Real waterApplied = 0;     // m on the ground now: the larger of the two
+    // The airfield's water: what the page set, or the rain's film if deeper.
+    Real runwayWaterDepth() const { return std::max(runwayWater, wetting.depth()); }
     std::string events;
     int jetStart = 0;  // jet Quick Start: 0 idle, 1 starting engine 1, 2 engine 2, 3 done
     // Trimmed CLmax cache for the low-speed awareness band and V-speeds.
     std::unique_ptr<AeroModel> clmaxModel;
     Real clmaxKey = -1, clmax = 0, clmaxTakeoff = 0, clmaxLanding = 0;
+    Real clmaxCleanKey = -1, clmaxClean = 0;  // the clean airframe's at the current flap (avd_icing)
     // Planned load (kg per station, m^3 per tank), applied to every new spawn.
     std::vector<Real> loadStations, loadTanks;
     // The aircraft's wake: shed into the air, and felt when flown into (its
@@ -198,7 +207,7 @@ void groundChanged() {
 void buildAirport() {
     g->airport = regionAirport(g_airportId == 0 ? 1 : 0);
     g->ground = scenarios::makeRegionGround(g_airports);
-    g->ground->setWaterDepth(g->runwayWater);
+    g->ground->setWaterDepth(g->runwayWaterDepth());
     groundChanged();
     rebuildWeather();  // the wind surroundings and hazards are placed around it
 }
@@ -417,6 +426,31 @@ void rebuildWeather() {
         f.noseUpdraft = 2;
         wp.windShifts.push_back(f);
     }
+    wp.rainRate = w.rainRate;
+    if (w.front != 0) {
+        // A synoptic front reaching the middle of the runway in use frontEta
+        // minutes after it was set: a cold front from the south-west at 12 m/s
+        // (the usual track of São Paulo's cold fronts) with its pressure
+        // trough, a warm front from the north-west at 6 m/s.
+        WindShift f;
+        const bool cold = w.front == 1;
+        const Vec3 c = scenarios::runwayPoint(rw, 0.5 * rw.length);
+        f.heading = degToRad(cold ? 45 : 135);
+        f.speed = cold ? 12 : 6;
+        const Real d = f.speed * 60 * std::max(w.frontEta, 0.0);
+        f.north = c.x - d * std::cos(f.heading);
+        f.east = c.y - d * std::sin(f.heading);
+        f.startTime = w.frontTime;
+        f.width = cold ? 2000 : 5000;
+        f.newSpeed = ktToMs(w.frontWindKt);
+        f.newFromDirection = degToRad(w.frontWindFrom);
+        f.depth = 1500;
+        f.temperatureChange = w.frontDT;
+        f.pressureChange = 100 * w.frontDQnh;
+        f.pressureTrough = cold ? 150 : 0;
+        f.airmassWidth = cold ? 10000 : 30000;
+        wp.windShifts.push_back(f);
+    }
     g->weatherParams = wp;
     g->weather = std::make_unique<SimpleWeather>(wp);
     if (g->air) g->air->setBase(*g->weather);
@@ -496,6 +530,81 @@ AVD_EXPORT void avd_set_wind_hazard(int kind) {
     rebuildWeather();
 }
 
+// Rain (mm/h: 0 none, 2.5 moderate, 10 heavy, 50 a downpour) from the top of
+// the cloud layer (avd_set_cloud) to the ground, everywhere without one. In
+// air below 0 C it is freezing rain (glaze icing). The runways wet with it
+// (a Gallaway water film: ~0.7 mm in 10 mm/h, standing water above ~70 mm/h,
+// building over a few minutes, draining and drying after; state()[63]).
+AVD_EXPORT void avd_set_rain(double mmPerHour) {
+    if (!g) return;
+    g->wx.rainRate = std::clamp(std::isfinite(mmPerHour) ? mmPerHour : 0.0, 0.0, 300.0);
+    rebuildWeather();
+}
+
+// A moving front that reaches the middle of the runway in use etaMinutes
+// from now: kind 0 none, 1 cold (from the south-west at 12 m/s, with a
+// 1.5 hPa pressure trough on its line), 2 warm (from the north-west at
+// 6 m/s). Behind it the temperature is temperatureChange (K) different, the
+// QNH qnhChangeHpa, and the surface wind windKt from windFromDeg (true).
+// Typical: cold -6 K, +3 hPa, 15 kt from 200; warm +4 K, -2 hPa, 10 kt from 320.
+AVD_EXPORT void avd_set_front(int kind, double etaMinutes, double temperatureChange, double qnhChangeHpa, double windKt,
+                              double windFromDeg) {
+    if (!g) return;
+    auto fin = [](double v) { return std::isfinite(v) ? v : 0.0; };
+    g->wx.front = std::clamp(kind, 0, 2);
+    g->wx.frontEta = std::clamp(fin(etaMinutes), 0.0, 600.0);
+    g->wx.frontDT = std::clamp(fin(temperatureChange), -20.0, 20.0);
+    g->wx.frontDQnh = std::clamp(fin(qnhChangeHpa), -20.0, 20.0);
+    g->wx.frontWindKt = std::clamp(fin(windKt), 0.0, 60.0);
+    g->wx.frontWindFrom = fin(windFromDeg);
+    g->wx.frontTime = g->ac ? g->ac->time() : 0.0;
+    rebuildWeather();
+}
+
+double g_weather[24];
+// The weather at the aircraft and the field (web/README.md, avd_weather).
+AVD_EXPORT double* avd_weather() {
+    std::fill(std::begin(g_weather), std::end(g_weather), 0.0);
+    if (!g || !g->ac || !g->weather) return g_weather;
+    const Aircraft& ac = *g->ac;
+    const Real time = ac.time();
+    const Vec3 pos = ac.state().body.position;
+    const AirSample a = g->weather->sample(pos, ac.altitudeMsl(), time);
+    const RunwayDef& rw = g->airport.runways[0];
+    const Vec3 field = scenarios::runwayPoint(rw, 0.5 * rw.length);
+    const AirSample f = g->weather->sample(field, g->airport.elevation + 2, time);
+    double* o = g_weather;
+    o[0] = a.precipitationRate;
+    o[1] = meteorologicalVisibility(a);
+    o[2] = kToCelsius(a.state.temperature);
+    o[3] = g->weather->qnhAt(pos, time) / 100;
+    o[4] = g->weather->qnhAt(field, time) / 100;
+    o[5] = kToCelsius(f.state.temperature);
+    o[6] = -1;
+    o[7] = 0;
+    o[16] = -1;
+    const SimpleWeatherParams& wp = g->weather->params();
+    if (g->wx.front != 0 && !wp.windShifts.empty()) {
+        const WindShift& fr = wp.windShifts.back();
+        const Vec3 n{std::cos(fr.heading), std::sin(fr.heading), 0};
+        const Real moved = fr.speed * std::max(time - fr.startTime, 0.0);
+        auto ahead = [&](const Vec3& x) { return dot(Vec3{x.x - fr.north, x.y - fr.east, 0}, n) - moved; };  // m still to come
+        o[6] = fr.airmass(pos, time);
+        o[7] = ahead(pos) / 1000;
+        o[16] = ahead(field) / fr.speed / 60;
+    }
+    o[8] = g->runwayWaterDepth() * 1000;
+    o[9] = a.liquidWaterContent;
+    const Real rain = rainLiquidWaterContent(a.precipitationRate);
+    o[10] = a.state.temperature < 273.15 ? a.liquidWaterContent + rain : 0.0;
+    o[11] = a.liquidWaterContent > 0;
+    o[12] = rain;
+    o[13] = a.precipitationRate > 0 && a.state.temperature < 273.15;
+    o[14] = wp.cloudTop > wp.cloudBase ? wp.cloudBase : 0.0;
+    o[15] = wp.cloudTop > wp.cloudBase ? wp.cloudTop : 0.0;
+    return o;
+}
+
 // On the runway in use (avd_set_airport): 0 cold and dark, 1 engine running, 2 on
 // the 3 deg final (3 km; jets 6 km), 3 cruising over the city.
 namespace {
@@ -503,9 +612,10 @@ namespace {
 // A fresh aircraft for a reset.
 void newAircraft() {
     g->ac = std::make_unique<Aircraft>(g->def, g->frame);
-    // The new aircraft's clock starts at zero: re-anchor a hazard to it.
-    if (g->wx.hazard != 0) {
+    // The new aircraft's clock starts at zero: re-anchor a hazard or a front to it.
+    if (g->wx.hazard != 0 || g->wx.front != 0) {
         g->wx.hazardTime = 0;
+        g->wx.frontTime = 0;
         rebuildWeather();
     }
     g->ac->setNavEnvironment(&navEnvironment());
@@ -615,7 +725,8 @@ void finishReset(bool seedInstruments) {
     in.throttle = g->trimThrottle;
     in.mixture = g->trimMixture;
     g->ac->step(kDt, in, *g->world, *g->weather);
-    g->ac->instruments().setAltimeterSetting(g->weather->atmosphere().conditions().seaLevelPressure);
+    // The local QNH (a front's airmass changes it from place to place).
+    g->ac->instruments().setAltimeterSetting(g->weather->qnhAt(g->ac->state().body.position, g->ac->time()));
     if (seedInstruments) g->ac->resetInstrumentsToTruth();
     // Radios: NAV 1 on the destination's ILS (else the runway in use's), the
     // test VOR in standby; OBS on its course; heading bug on the runway in use
@@ -654,6 +765,30 @@ void ensureClmaxModel() {
     const Vec3 cg0 = g->ac->massProperties().cg;
     g->clmaxTakeoff = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det[takeoffDetent(det)], 0.2);
     g->clmaxLanding = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det.back(), 0.2);
+}
+// The airframe's ice, quantised (0.25 mm steps of wing and tail ice): the
+// trimmed CLmax caches are recomputed when it moves on. 0 without ice.
+Real iceKey() {
+    const IcingModel& m = g->ac->icing();
+    if (!m.iced()) return 0;
+    Real k = 0;
+    for (int s = 0; s < std::min(m.status().surfaceCount, 3); ++s)
+        k = k * 400 + std::min(std::round(m.surfaces()[s].thickness * 4000), 399.0);
+    return 1 + k;
+}
+// The trimmed CLmax at the current flap, Mach and ice (the jet array's
+// cache, refreshed when any of them moves on).
+Real trimmedMaxLiftCoefficientCached() {
+    ensureClmaxModel();
+    const Aircraft& ac = *g->ac;
+    const AircraftTelemetry& t = ac.telemetry();
+    const Real key = std::round(radToDeg(t.flapAngle) * 2) * 1000 + std::round(std::max(t.mach, 0.2) * 20) + 1e6 * iceKey();
+    if (key != g->clmaxKey) {
+        g->clmaxKey = key;
+        g->clmax = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, ac.massProperties().cg, t.flapAngle,
+                                             std::max(t.mach, 0.2), ac.icing().iced() ? ac.icing().surfaces() : nullptr);
+    }
+    return g->clmax;
 }
 Real jetApproachKias() {
     ensureClmaxModel();
@@ -1026,12 +1161,8 @@ AVD_EXPORT double* avd_jet() {
     // this weight (current flap and Mach; take-off and landing flap at low Mach).
     const std::vector<Real>& det = g->def.controls.flapDetents;
     ensureClmaxModel();
-    const Real key = std::round(radToDeg(t.flapAngle) * 2) * 1000 + std::round(std::max(t.mach, 0.2) * 20);
-    if (key != g->clmaxKey) {
-        g->clmaxKey = key;
-        g->clmax = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, ac.massProperties().cg, t.flapAngle,
-                                             std::max(t.mach, 0.2));
-    }
+    // With ice on the airframe, the iced airframe's (avd/icing.hpp).
+    trimmedMaxLiftCoefficientCached();
     auto vs = [&](Real cl) { return cl > 0.1 ? msToKt(std::sqrt(2 * t.mass * 9.80665 / (1.225 * g->def.referenceArea * cl))) : 0.0; };
     g_jet[32] = vs(g->clmax);
     g_jet[33] = vs(g->clmaxTakeoff);
@@ -1137,6 +1268,12 @@ AVD_EXPORT int avd_advance(double seconds) {
     if (n > 0) {
         const AircraftTelemetry& t = g->ac->telemetry();
         g->gps.update(g->ac->state().body.position, t.altitudeMsl, t.groundSpeed);
+        // Rain wets the runways (and they drain and dry after it).
+        if (g->wx.rainRate > 0 || g->wetting.depth() > 0) g->wetting.update(n * kDt, g->wx.rainRate);
+        if (g->runwayWaterDepth() != g->waterApplied) {
+            g->waterApplied = g->runwayWaterDepth();
+            g->ground->setWaterDepth(g->waterApplied);
+        }
     }
     updateJetStart();
     collectEvents();
@@ -1221,7 +1358,7 @@ AVD_EXPORT int avd_set_destination_record(int length, int runway) {
         rebuildNav();
         if (g) {
             g->ground = scenarios::makeRegionGround(g_airports);
-            g->ground->setWaterDepth(g->runwayWater);
+            g->ground->setWaterDepth(g->runwayWaterDepth());
             groundChanged();
         }
     }
@@ -1407,7 +1544,7 @@ AVD_EXPORT double* avd_state() {
     const Real track = std::hypot(v.x, v.y) > 1.0 ? std::atan2(v.y, v.x) : t.heading;
     s[61] = std::fmod(radToDeg(track) + 360.0, 360.0);
     s[62] = radToDeg(wrapPi(track - t.heading));  // drift, + right
-    s[63] = g->runwayWater * 1000;
+    s[63] = g->runwayWaterDepth() * 1000;
     return s;
 }
 
@@ -1436,7 +1573,8 @@ AVD_EXPORT int avd_buildings_count() { return g && g->world ? static_cast<int>(g
 AVD_EXPORT void avd_set_runway_water(double mm) {
     if (!g) return;
     g->runwayWater = std::clamp(std::isfinite(mm) ? mm : 0.0, 0.0, 50.0) * 1e-3;
-    g->ground->setWaterDepth(g->runwayWater);
+    g->waterApplied = g->runwayWaterDepth();
+    g->ground->setWaterDepth(g->waterApplied);
 }
 
 double g_windGrid[3 * 16 * 12 * 8];
@@ -2135,3 +2273,67 @@ static_assert(sizeof(g_traffic) / sizeof(double) == abi::traffic, "avd_traffic_s
 static_assert(sizeof(g_points) / sizeof(double) == 3 * abi::airPointsMax, "avd_points layout: bump kAbiVersion");
 static_assert(sizeof(g_windBox) / sizeof(double) == abi::windBoxMax, "avd_wind_box layout: bump kAbiVersion");
 static_assert(sizeof(g_bodies) / sizeof(double) == abi::bodies, "avd_bodies layout: bump kAbiVersion");
+
+double g_icing[48];
+// Ice on the aircraft (web/README.md, avd_icing).
+AVD_EXPORT double* avd_icing() {
+    std::fill(std::begin(g_icing), std::end(g_icing), 0.0);
+    if (!g || !g->ac) return g_icing;
+    const Aircraft& ac = *g->ac;
+    const IcingModel& m = ac.icing();
+    const IcingStatus& st = m.status();
+    double* o = g_icing;
+    o[0] = st.surfaceCount;
+    for (int k = 0; k < st.surfaceCount && k < 8; ++k) {
+        const std::size_t i = static_cast<std::size_t>(k);
+        o[1 + k] = st.surfaces[i].thickness * 1000;
+        o[9 + k] = st.clMaxLoss[i];
+        o[17 + k] = st.surfaces[i].glaze;
+    }
+    o[25] = st.propellerIce[0] * 1000;
+    o[26] = st.propellerThrustLoss[0];
+    const bool carb = !g->def.engines.empty() && g->def.engines[0].carburettor.present;
+    o[27] = st.carburettorIce[0] * 1000;
+    o[28] = st.carburettorBlockage[0];
+    o[29] = carb ? kToCelsius(st.carburettorTemperature[0]) : 0.0;
+    o[30] = st.carburettorHeat[0];
+    o[31] = st.roughness[0];
+    o[32] = carb;
+    int mask = 0;
+    for (int k = 0; k < m.switchCount(); ++k)
+        if (ac.cockpitControl("anti_ice." + m.switchName(k)) == 1) mask |= 1 << k;
+    o[33] = mask;
+    Real heat = 0;
+    for (int k = 0; k < st.surfaceCount && k < 8; ++k) heat = std::max(heat, st.protectionHeat[static_cast<std::size_t>(k)]);
+    o[34] = heat;
+    o[35] = st.bootsInflating;
+    o[36] = st.iceDetected;
+    o[37] = g->def.iceProtection.iceDetector;
+    o[38] = st.windshieldIce * 1000;
+    o[39] = std::clamp(st.windshieldIce / 1e-3, 0.0, 1.0);
+    o[40] = st.accretionRate * 6e4;
+    o[41] = st.intensity;
+    // 1-g stall speeds (KCAS) at this weight and flap: iced (the jet array's
+    // Vs, which follows the ice) and clean.
+    ensureClmaxModel();
+    const AircraftTelemetry& t = ac.telemetry();
+    const Real cleanKey = std::round(radToDeg(t.flapAngle) * 2) * 1000 + std::round(std::max(t.mach, 0.2) * 20);
+    if (cleanKey != g->clmaxCleanKey) {
+        g->clmaxCleanKey = cleanKey;
+        g->clmaxClean = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, ac.massProperties().cg, t.flapAngle, std::max(t.mach, 0.2));
+    }
+    const Real iced = m.iced() ? trimmedMaxLiftCoefficientCached() : g->clmaxClean;
+    auto vs = [&](Real cl) { return cl > 0.1 ? msToKt(std::sqrt(2 * t.mass * 9.80665 / (1.225 * g->def.referenceArea * cl))) : 0.0; };
+    o[42] = vs(iced);
+    o[43] = vs(g->clmaxClean);
+    o[44] = ac.antiIceBleed();
+    o[45] = m.switchCount();
+    // How far the ice has brought the wing's stall angle down (deg), at the
+    // stall-warning strip (a vane still trips at the clean wing's angle).
+    if (ac.aeroModel().surfaceCount() > 0) {
+        const int first = ac.aeroModel().firstStrip(0), end = ac.aeroModel().endStrip(0);
+        const int sw = g->def.stallWarning.strip >= 0 ? first + g->def.stallWarning.strip : (first + end) / 2;
+        if (sw < end) o[46] = radToDeg(ac.aero().strips[static_cast<std::size_t>(sw)].iceStallShift);
+    }
+    return o;
+}

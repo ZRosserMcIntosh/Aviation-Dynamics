@@ -741,10 +741,12 @@ TEST_CASE("icing: a supercooled cloud ices the pitot unless the heat is on") {
         CHECK(!f.truth().pitotIced);
         run(false, 240, f);
         // Inlet closed, drain open: the ASI bleeds toward zero while the
-        // airplane is still flying at 100 KIAS.
+        // airplane is still flying at 80 KIAS (from 100: the airframe's own
+        // ice, avd/icing.hpp, has cost it 20 kt on the same power).
         CHECK(f.truth().pitotIced);
         CHECK(f.cs().indicatedAirspeed < ktToMs(40));
-        CHECK(f.truth().calibratedAirspeed > ktToMs(90));
+        std::cerr << "  pitot iced: ASI " << msToKt(f.cs().indicatedAirspeed) << " kt, CAS " << msToKt(f.truth().calibratedAirspeed) << " kt\n";
+        CHECK(f.truth().calibratedAirspeed > ktToMs(72));
         // Pitot heat clears it: the heater warms up, melts the ice, and the
         // airspeed comes back.
         run(true, 90, f);

@@ -566,6 +566,26 @@ Real WindShift::updraft(const Vec3& x, Real agl, Real t) const {
     return noseUpdraft * std::exp(-sq((xi + 0.5 * width) / width)) * std::sin(kPi * agl / depth);
 }
 
+Real WindShift::airmass(const Vec3& x, Real t) const {
+    // Before the front starts moving its airmass is already behind the line
+    // (a front is placed, not created): the same tanh at t = startTime.
+    const Real w = airmassWidth > 0 ? airmassWidth : width;
+    if (w <= 0) return 0;
+    const Vec3 n{std::cos(heading), std::sin(heading), 0};
+    const Real xi = speed * (std::max(t, startTime) - startTime) - dot(Vec3{x.x - north, x.y - east, 0}, n);
+    return 0.5 * (1 + std::tanh(2 * xi / w));
+}
+
+Real WindShift::trough(const Vec3& x, Real t) const {
+    if (pressureTrough <= 0) return 0;
+    const Real w = airmassWidth > 0 ? airmassWidth : width;
+    if (w <= 0) return 0;
+    const Vec3 n{std::cos(heading), std::sin(heading), 0};
+    const Real xi = speed * (std::max(t, startTime) - startTime) - dot(Vec3{x.x - north, x.y - east, 0}, n);
+    const Real c = std::cosh(2 * xi / w);
+    return pressureTrough / (c * c);  // sech^2: the derivative of the tanh step
+}
+
 Obstacle Obstacle::fromFootprint(const std::vector<std::pair<Real, Real>>& fp, Real base, Real top) {
     Obstacle o;
     o.baseElevation = base;
