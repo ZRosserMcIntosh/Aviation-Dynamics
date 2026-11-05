@@ -139,15 +139,30 @@ export default async function createAvdModule(wasmBytes) {
     for (let i = 0; i < 16; ++i) collapsed.push(((v[5] | 0) >> i & 1) === 1);
     return { peakG: v[0], spinalG: v[1], dri: v[2], lumbarN: v[3], hic: v[4], collapsed, structural: v[6] === 1 };
   };
-  // Autopilot: lateral 0 off, 1 ROL, 2 HDG (the heading bug), 3 NAV (GPS); vertical 0 off, 1 PIT, 2 ALT, 3 VS;
-  // autothrottle on the selected IAS. 1 engaged, 0 all off, -2 on the ground, -3 NAV without a route.
+  // Autopilot: lateral 0 off, 1 ROL, 2 HDG (the heading bug), 3 NAV (GPS), 4 APR (A.autopilotApproach);
+  // vertical 0 off, 1 PIT, 2 ALT, 3 VS; autothrottle on the selected IAS.
+  // 1 engaged, 0 all off, -2 on the ground, -3 NAV without a route, -4 APR without its guidance.
   A.autopilot = ({ lateral = 0, vertical = 0, autothrottle = false, altFt = 0, vsFpm = 0, iasKt = 0 } = {}) =>
     ex.avd_autopilot(lateral, vertical, autothrottle ? 1 : 0, altFt, vsFpm, iasKt);
-  // { on, lateral, vertical (4: ALT* capturing), autothrottle, altFt, vsFpm, iasKt, bugDeg, bankCmd, pitchCmd, vsCmd }
+  // APR's approach: source 'ils' (NAV 1, the front course on the OBS) or 'gps' (the route's LPV glidepath);
+  // daFt the decision altitude on the altimeter (0: 200 ft above the threshold). 1 ok, -1 no field for the default DA.
+  A.autopilotApproach = ({ source = 'ils', daFt = 0 } = {}) => ex.avd_autopilot_approach(source === 'gps' ? 1 : 0, daFt);
+  // { on, lateral, vertical (4: ALT* capturing, 5: GS/GP coupled), autothrottle, altFt, vsFpm, iasKt, bugDeg, bankCmd,
+  //   pitchCmd, vsCmd, apr (0 off, 1 armed, 2 LOC/LNAV captured + GS armed, 3 GS/GP captured, 4 MINIMUMS: disconnected at DA),
+  //   aprSource ('ils' | 'gps'), daFt, locDots, gsDots (+ fly right / up, 2 dots full scale) }
   A.autopilotStatus = () => {
-    const v = new Float64Array(memory.buffer, ex.avd_autopilot_status(), 11);
+    const v = new Float64Array(memory.buffer, ex.avd_autopilot_status(), 16);
     return { on: v[0] === 1, lateral: v[1], vertical: v[2], autothrottle: v[3] === 1, altFt: v[4], vsFpm: v[5], iasKt: v[6],
-      bugDeg: v[7], bankCmd: v[8], pitchCmd: v[9], vsCmd: v[10] };
+      bugDeg: v[7], bankCmd: v[8], pitchCmd: v[9], vsCmd: v[10], apr: v[11], aprSource: v[12] === 1 ? 'gps' : 'ils', daFt: v[13],
+      locDots: v[14], gsDots: v[15] };
+  };
+  // Attitude and heading reference: 'data' (the aircraft's own: the 172's vacuum gyros, the jets' AHRS) or 'ahrs'
+  // (a glass cockpit's AHRS and magnetometer, e.g. a G1000 172). Returns the reference in use: 'ahrs' | 'gyro'.
+  A.setAttitudeReference = (ref) => (ex.avd_set_attitude_reference(ref === 'ahrs' ? 1 : 0) === 1 ? 'ahrs' : 'gyro');
+  // { ahrs, attFlag (no valid attitude: red ATT), align (0..1; a gyro: its rotor speed), tumbled }
+  A.attitude = () => {
+    const v = new Float64Array(memory.buffer, ex.avd_attitude(), 4);
+    return { ahrs: v[0] === 1, attFlag: v[1] === 1, align: v[2], tumbled: v[3] === 1 };
   };
   // Autoland: 1 engaged, 0 off, -1 no approach to fly, -2 on the ground.
   A.autoland = (on) => ex.avd_autoland(on ? 1 : 0);

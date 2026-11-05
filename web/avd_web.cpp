@@ -143,6 +143,10 @@ struct Sim {
     // vertical speed, autothrottle.
     bool apOn = false;
     scenarios::Autopilot ap;
+    bool apMinimums = false;  // the autopilot disconnected itself at DA (status [11] = 4 until re-engaged)
+    // The attitude and heading reference (avd_set_attitude_reference): 0 as
+    // the aircraft's data fit them, 1 a glass cockpit's AHRS. Kept across resets.
+    int attitudeReference = 0;
 };
 constexpr Real kOwnWakeAge = 4.0;
 
@@ -503,6 +507,7 @@ namespace {
 // A fresh aircraft for a reset.
 void newAircraft() {
     g->ac = std::make_unique<Aircraft>(g->def, g->frame);
+    if (g->attitudeReference == 1) g->ac->setAhrsReference(true);
     // The new aircraft's clock starts at zero: re-anchor a hazard to it.
     if (g->wx.hazard != 0) {
         g->wx.hazardTime = 0;
@@ -957,9 +962,39 @@ AVD_EXPORT double* avd_flow() {
     return g_flow;
 }
 
-// Attitude indicator caging knob (square the gyro to the case; use in level flight).
+// Attitude indicator caging knob (square the gyro to the case; use in level
+// flight). On an AHRS (the jets, or avd_set_attitude_reference(1)) its reset:
+// it re-aligns, the ATT flag showing for its alignment (30 s).
 AVD_EXPORT void avd_ai_cage() {
     if (g) g->ac->instruments().cageAttitude(g->ac->state().body.attitude);
+}
+
+// The attitude and heading reference: 0 as the aircraft's data fit them (the
+// 172's vacuum gyros, the jets' AHRS), 1 a glass cockpit's AHRS and
+// magnetometer (a G1000 172: no turn or erection errors, no tumble, no drift;
+// the vacuum system then drives nothing the pilot flies by). Applied now
+// (aligned) and kept across resets; a new aircraft (avd_load) starts at 0.
+// Returns the reference now in use (0 gyro, 1 AHRS), -1 without an aircraft.
+AVD_EXPORT int avd_set_attitude_reference(int mode) {
+    if (!g || !g->ac) return -1;
+    g->attitudeReference = mode == 1 ? 1 : 0;
+    g->ac->setAhrsReference(g->attitudeReference == 1);
+    return g->ac->instruments().ahrsReference() ? 1 : 0;
+}
+
+// [reference (0 gyro, 1 AHRS), ATT flag (no valid attitude: an AHRS aligning,
+// unpowered or failed; an electric gyro unpowered), alignment 0..1 (an AHRS;
+// a gyro: its rotor speed), tumbled (a gyro)].
+double g_attitude[4];
+AVD_EXPORT double* avd_attitude() {
+    std::fill(std::begin(g_attitude), std::end(g_attitude), 0.0);
+    if (!g || !g->ac) return g_attitude;
+    const InstrumentPanel& p = g->ac->instruments();
+    g_attitude[0] = p.ahrsReference() ? 1 : 0;
+    g_attitude[1] = p.state().attitudeFlag ? 1 : 0;
+    g_attitude[2] = p.truth().attitudeGyroSpin;
+    g_attitude[3] = p.state().attitudeTumbled ? 1 : 0;
+    return g_attitude;
 }
 
 // Jet systems (32 doubles): [0] turbofans, [1] gear position 0..1, [2] gear
@@ -1089,12 +1124,43 @@ PilotInput autolandInput() {
     return g->autoland.update(ac, kDt);
 }
 
-// One step of the autopilot: HDG on the heading bug, NAV on the GPS's active leg.
+// The region ILS NAV 1 is tuned to: its airport and runway end, or false.
+bool tunedIls(const scenarios::Airport*& airport, const RunwayDef*& runway) {
+    const int khz = static_cast<int>(std::lround(g->ac->instruments().readings().navActiveKhz[0]));
+    for (const scenarios::Airport& a : g_airports)
+        for (const scenarios::IlsDef& i : a.ils)
+            if (i.khz == khz && i.runway >= 0 && i.runway < static_cast<int>(a.runways.size())) {
+                airport = &a;
+                runway = &a.runways[static_cast<std::size_t>(i.runway)];
+                return true;
+            }
+    return false;
+}
+
+// One step of the autopilot: HDG on the heading bug, NAV on the GPS's active
+// leg, APR on NAV 1's ILS (the front course on the OBS) or the GPS approach.
 PilotInput autopilotInput() {
-    g->ap.headingBug = g->ac->instruments().readings().headingBug;
-    g->ap.gps = &g->gps.indication();
-    g->ap.magneticVariation = g->airport.magneticVariation;
-    return g->ap.update(*g->ac, g->raw, kDt);
+    scenarios::Autopilot& ap = g->ap;
+    const CockpitState& r = g->ac->instruments().readings();
+    ap.headingBug = r.headingBug;
+    ap.gps = &g->gps.indication();
+    ap.magneticVariation = g->airport.magneticVariation;
+    if (g_destAirport >= 0) ap.magneticVariation = regionAirport(g_destAirport).magneticVariation;
+    if (ap.approachSource == scenarios::Autopilot::ApproachSource::Ils) {
+        ap.approachCourse = r.obs;
+        const scenarios::Airport* a = nullptr;
+        const RunwayDef* rw = nullptr;
+        if (tunedIls(a, rw)) {
+            ap.fieldElevation = a->elevation;
+            ap.runwayLength = rw->length - rw->displaced;
+        }
+    }
+    const PilotInput in = ap.update(*g->ac, g->raw, kDt);
+    if (ap.disconnected()) {
+        g->apMinimums = true;
+        if (!ap.autothrottle) g->apOn = false;  // nothing left engaged
+    }
+    return in;
 }
 
 // Advance by wall-clock seconds at a fixed 240 Hz (at most 0.25 s per call).
@@ -1786,30 +1852,45 @@ AVD_EXPORT int avd_autoland(int on) {
 }
 
 // The autopilot. lateral: 0 off, 1 ROL (wings level), 2 HDG (the heading bug,
-// avd_heading_bug), 3 NAV (the GPS route's active leg); vertical: 0 off,
+// avd_heading_bug), 3 NAV (the GPS route's active leg), 4 APR (the approach
+// set by avd_autopilot_approach: armed on the HDG bug / the GPS route and the
+// vertical mode given, it captures the localizer or GPS final course, then
+// the glideslope or glidepath, and flies them to DA, where the autopilot
+// disconnects; the autothrottle stays on); vertical: 0 off,
 // 1 PIT (the attitude now), 2 ALT (hold the selected altitude), 3 VS (the
 // selected rate to the selected altitude, captured: ALT); autothrottle 0/1 on
 // the selected IAS. Altitude in feet on the altimeter, vertical speed fpm,
 // IAS kt. Changing modes keeps the integrators; engaging from off takes them
 // from where the airplane is. Returns 1 engaged, 0 everything off, -2 on the
-// ground, -3 NAV without a route.
+// ground, -3 NAV without a route, -4 APR without its guidance (NAV 1 not on
+// a region ILS; no GPS route).
 AVD_EXPORT int avd_autopilot(int lateral, int vertical, int autothrottle, double altFt, double vsFpm, double iasKt) {
     if (!g || !g->ac) return 0;
     scenarios::Autopilot& ap = g->ap;
-    lateral = std::clamp(lateral, 0, 3);
+    lateral = std::clamp(lateral, 0, 4);
     vertical = std::clamp(vertical, 0, 3);
     if (lateral == 0 && vertical == 0 && autothrottle == 0) {
         g->apOn = false;
+        g->apMinimums = false;
         return 0;
     }
     if (g->ac->telemetry().onGround) return -2;
     if (lateral == 3 && !g->gps.indication().valid) return -3;
+    if (lateral == 4) {
+        // APR needs its guidance: NAV 1 on a region ILS, or the GPS route.
+        const scenarios::Airport* a = nullptr;
+        const RunwayDef* rw = nullptr;
+        if (ap.approachSource == scenarios::Autopilot::ApproachSource::Ils ? !tunedIls(a, rw) : !g->gps.indication().valid) return -4;
+    }
     if (!g->apOn) ap.engage(*g->ac, g->raw);
+    g->apMinimums = false;
     ap.lateral = static_cast<scenarios::Autopilot::Lateral>(lateral);
     // VS re-armed (a new rate or altitude); ALT* (capture) is kept while VS stays selected.
+    // So is a captured glideslope while APR stays selected (any vertical mode but off).
     const auto vert = static_cast<scenarios::Autopilot::Vertical>(vertical);
-    if (!(vert == scenarios::Autopilot::Vertical::VerticalSpeed && ap.vertical == scenarios::Autopilot::Vertical::AltitudeCapture &&
-          std::abs(ap.selectedVs - fpmToMs(vsFpm)) < 0.01 && std::abs(ap.selectedAltitude - ftToM(altFt)) < 0.1))
+    const bool keepGs = lateral == 4 && vertical != 0 && ap.vertical == scenarios::Autopilot::Vertical::GlidePath;
+    if (!keepGs && !(vert == scenarios::Autopilot::Vertical::VerticalSpeed && ap.vertical == scenarios::Autopilot::Vertical::AltitudeCapture &&
+                     std::abs(ap.selectedVs - fpmToMs(vsFpm)) < 0.01 && std::abs(ap.selectedAltitude - ftToM(altFt)) < 0.1))
         ap.vertical = vert;
     ap.autothrottle = autothrottle != 0;
     ap.selectedAltitude = ftToM(altFt);
@@ -1821,15 +1902,49 @@ AVD_EXPORT int avd_autopilot(int lateral, int vertical, int autothrottle, double
     return 1;
 }
 
-// [on, lateral (0 off, 1 ROL, 2 HDG, 3 NAV), vertical (0 off, 1 PIT, 2 ALT,
-// 3 VS, 4 ALT* capturing), autothrottle, selected altitude ft, vertical speed
-// fpm, IAS kt, heading bug deg, commanded bank deg, commanded pitch deg,
-// commanded vertical speed fpm].
-double g_autopilot[11];
+// APR's approach: source 0 the ILS on NAV 1 (its front course on the OBS,
+// the field and runway from the ILS tuned), 1 the GPS approach (the route to
+// the destination, its LPV-style glidepath); the decision altitude in feet on
+// the altimeter (<= 0: 200 ft above the ILS's threshold, or the
+// destination's). Arm with avd_autopilot(4, ...). Returns 1, or -1 when the
+// default DA has no field to come from.
+AVD_EXPORT int avd_autopilot_approach(int source, double daFt) {
+    if (!g || !g->ac) return 0;
+    scenarios::Autopilot& ap = g->ap;
+    ap.approachSource = source == 1 ? scenarios::Autopilot::ApproachSource::Gps : scenarios::Autopilot::ApproachSource::Ils;
+    if (daFt > 0) {
+        ap.decisionAltitude = ftToM(daFt);
+        return 1;
+    }
+    const scenarios::Airport* a = nullptr;
+    const RunwayDef* rw = nullptr;
+    if (source != 1 && tunedIls(a, rw)) ap.decisionAltitude = a->elevation + ftToM(200);
+    else if (g_destAirport >= 0) ap.decisionAltitude = regionAirport(g_destAirport).elevation + ftToM(200);
+    else return -1;
+    return 1;
+}
+
+// [on, lateral (0 off, 1 ROL, 2 HDG, 3 NAV, 4 APR), vertical (0 off, 1 PIT,
+// 2 ALT, 3 VS, 4 ALT* capturing, 5 GS/GP coupled), autothrottle, selected
+// altitude ft, vertical speed fpm, IAS kt, heading bug deg, commanded bank
+// deg, commanded pitch deg, commanded vertical speed fpm, APR state (0 off,
+// 1 armed, 2 LOC/LNAV captured with GS/GP armed, 3 GS/GP captured, 4
+// MINIMUMS: disconnected at DA), APR source (0 ILS, 1 GPS), DA ft, lateral
+// deviation dots, vertical deviation dots (+ fly right / up; 2 dots full scale)].
+double g_autopilot[16];
 AVD_EXPORT double* avd_autopilot_status() {
     std::fill(std::begin(g_autopilot), std::end(g_autopilot), 0.0);
-    if (!g || !g->apOn) return g_autopilot;
+    if (!g) return g_autopilot;
     const scenarios::Autopilot& ap = g->ap;
+    g_autopilot[12] = ap.approachSource == scenarios::Autopilot::ApproachSource::Gps ? 1 : 0;
+    g_autopilot[13] = mToFt(ap.decisionAltitude);
+    if (!g->apOn) {
+        if (g->apMinimums) g_autopilot[11] = 4;
+        return g_autopilot;
+    }
+    g_autopilot[11] = g->apMinimums ? 4 : static_cast<int>(ap.approachState());
+    g_autopilot[14] = ap.lateralDots();
+    g_autopilot[15] = ap.verticalDots();
     g_autopilot[0] = 1;
     g_autopilot[1] = static_cast<int>(ap.lateral);
     g_autopilot[2] = static_cast<int>(ap.vertical);

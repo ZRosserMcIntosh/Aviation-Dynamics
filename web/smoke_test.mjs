@@ -100,6 +100,25 @@ c = A.cockpitState();
 check(c[6] === 0 && Math.abs(c[5] - c[55]) < 5, `steep roll: AI ${c[5].toFixed(0)} deg vs ${c[55].toFixed(0)} deg, not tumbled`);
 A.avd_ai_cage();
 check(A.cockpitState()[6] === 0, 'caging knob');
+// A G1000 172: the attitude and heading from an AHRS. Four minutes after a
+// vacuum failure (its gyro would be down to a third of its speed and frozen)
+// a 30 deg bank is shown right (rolling, within the AHRS's 0.05 s filter
+// lag), no flag, no tumble; back to the data's gyros.
+{
+  A.avd_reset_air(0, 0, 900, 0, 110, 0);
+  check(A.setAttitudeReference('ahrs') === 'ahrs' && A.attitude().ahrs && !A.attitude().attFlag, 'G1000 172: AHRS attitude, aligned');
+  A.avd_failure(2, 1);
+  A.avd_set_assist(2);
+  for (let t = 0; t < 240; t += 0.25) { A.avd_set_input(0, 0, 0, A.avd_trim_throttle(), A.avd_trim_mixture(), 0, 0, 0, 0); A.avd_advance(0.25); }
+  A.avd_set_assist(0);
+  for (let i = 0; i < 12 && Math.abs(A.cockpitState()[55]) < 30; ++i) { A.avd_set_input(0, 0.4, 0, A.avd_trim_throttle(), A.avd_trim_mixture(), 0, 0, 0, 0); A.avd_advance(0.25); }
+  c = A.cockpitState();
+  const at = A.attitude();
+  check(Math.abs(c[5] - c[55]) < 2 && Math.abs(c[55]) > 15 && !at.attFlag && !at.tumbled && c[6] === 0,
+    `G1000 172, vacuum failed 4 min: AI ${c[5].toFixed(1)} deg vs ${c[55].toFixed(1)} deg, no flag, no tumble`);
+  A.avd_failure(2, 0);
+  check(A.setAttitudeReference('data') === 'gyro' && !A.attitude().ahrs, 'back to the vacuum gyros');
+}
 
 // ---- The Top G (turbofan, retractable gear, speedbrake) ----
 const B = await createAvdModule();
@@ -281,6 +300,31 @@ check(cg[32] === 109.7 && cg[37] === 1 && cg[40] === 1 && Math.abs(cg[38]) < 0.1
   check(r === 1 && st.on && st.lateral === 2 && st.vertical === 2 && Math.abs(off) < 3 && worstAlt < 120 && Math.abs(s1[10] - ias) < 5,
     `autopilot: HDG ${off.toFixed(1)} deg off the bug after 90 s, altitude within ${worstAlt.toFixed(0)} ft, ${s1[10].toFixed(0)} kt on ${ias}`);
   check(B.autopilot({}) === 0 && !B.autopilotStatus().on, 'autopilot off');
+}
+// APR: the Top G 10 NM out on the Congonhas 35L final, level at the path's
+// altitude, ILS ISO on NAV 1: the localizer and glideslope captured, flown to
+// DA (200 ft above the field), where the autopilot disconnects (the
+// autothrottle stays). The jet's attitude is its AHRS: no ATT flag.
+{
+  B.avd_reset(4);
+  const s0 = B.state().slice();
+  check(B.attitude().ahrs && !B.attitude().attFlag, 'Top G: AHRS attitude, aligned');
+  B.avd_heading_bug(s0[37]);
+  const set = B.autopilotApproach({ source: 'ils' });
+  const r = B.autopilot({ lateral: 4, vertical: 2, autothrottle: true, altFt: s0[13], vsFpm: 0, iasKt: Math.round(s0[10]) });
+  let st = B.autopilotStatus(), t = 0, sawLoc = false, sawGs = false, worstLoc = 0, worstGs = 0;
+  for (; t < 400 && st.apr !== 4; t += 0.25) {
+    B.avd_advance(0.25);
+    st = B.autopilotStatus();
+    sawLoc = sawLoc || st.apr === 2;
+    sawGs = sawGs || (st.apr === 3 && st.vertical === 5);
+    if (st.apr === 3) { worstLoc = Math.max(worstLoc, Math.abs(st.locDots)); worstGs = Math.max(worstGs, Math.abs(st.gsDots)); }
+  }
+  const above = B.state()[14];
+  check(set === 1 && r === 1 && sawLoc && sawGs && st.apr === 4 && st.on && st.lateral === 0 && st.vertical === 0 && st.autothrottle &&
+    worstLoc < 1 && worstGs < 1 && st.daFt > 2750 && st.daFt < 2900,  // Congonhas 2,631 ft + 200
+    `APR: ILS 35L captured, coupled within ${worstLoc.toFixed(2)} / ${worstGs.toFixed(2)} dots, MINIMUMS at DA ${st.daFt.toFixed(0)} ft after ${t.toFixed(0)} s (${above.toFixed(0)} ft above the ground), A/T on`);
+  check(B.autopilot({}) === 0 && B.autopilotStatus().apr === 0, 'autopilot off after minimums');
 }
 // Anywhere in Brazil (data/world/airports_br.json): Galeão 15's ILS (IGL)
 // at its 10 NM fix, 360 km away; a region airport's record maps onto the

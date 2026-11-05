@@ -205,7 +205,14 @@ if the 3° path can be flown from there, else it flies the whole procedure. It
 configures the airplane itself (gear, flaps by their limit speeds). From a
 cruise start 8 km out and well above the path, every aircraft landed and
 stopped on Congonhas 35L and Guarulhos 10L: touchdowns 400–522 m past the
-threshold, within 2 m of the centreline (`web/smoke_test.mjs` checks the Top G).
+threshold, within 2 m of the centreline (measured before the softer flare,
+which lengthens the float). `web/smoke_test.mjs` checks the Top G from its
+Congonhas final: with the softer flare it stops 1,469 m down 35L (of 1,940),
+on the centreline, the dummy at 1.7 g.
+
+The autopilot's approach mode (APR, `scenarios::Autopilot`) flies the same
+needles with the same laws down to the decision altitude and disconnects
+there; the pilot lands (see the fidelity matrix).
 
 ## Limits
 

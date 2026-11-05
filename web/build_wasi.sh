@@ -24,6 +24,7 @@ for f in avd_text avd_load avd_error_text avd_set_weather avd_reset avd_set_inpu
          avd_traffic_wake avd_points avd_air_velocity avd_line_pilot avd_autoland avd_autoland_status avd_autopilot avd_autopilot_status avd_occupant avd_reset_final \
          avd_set_destination avd_destination avd_destination_runway avd_destinations_text avd_region \
          avd_ground_height avd_route avd_route_text avd_gps avd_set_destination_record \
+         avd_autopilot_approach avd_set_attitude_reference avd_attitude \
          avd_abi_version avd_layout avd_build_id; do
   EXPORTS="$EXPORTS -Wl,--export=$f"
 done
