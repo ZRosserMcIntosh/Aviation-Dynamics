@@ -683,6 +683,7 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         o.num("self_sustaining_ng", e.selfSustainingNg);
         o.num("starter_current_a", e.starterCurrent);
         o.num("sfc_lb_per_shp_h", e.sfcRated, 0.45359237 / (kShp * 3600));
+        o.num("fuel_power_exponent", e.fuelPowerExponent);
         o.num("idle_fuel_flow_lb_per_h", e.idleFuelFlow, 0.45359237 / 3600);
         o.num("oil_pressure_idle_psi", e.oilPressureIdle, kPsi);
         o.num("oil_pressure_max_psi", e.oilPressureMax, kPsi);
@@ -944,6 +945,8 @@ void readDefinition(Obj& r, AircraftDefinition& d) {
         ip.num("boot_residual_mm", p.bootResidual, 1e-3);
         ip.boolean("windshield_heat", p.windshieldHeat);
         ip.boolean("ice_detector", p.iceDetector);
+        ip.boolean("propeller_deice", p.propellerDeice);
+        ip.num("propeller_deice_cycle_s", p.propellerDeiceCycle);
     }
     if (r.has("vacuum")) {
         Obj v = r.child("vacuum");

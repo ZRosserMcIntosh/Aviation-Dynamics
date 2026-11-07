@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 #include "approach_pilot.hpp"
 
+#include <cstdlib>
+
 #include <cmath>
 
 namespace avd::scenarios {
@@ -215,24 +217,25 @@ PilotInput ApproachPilot::update(const Aircraft& ac, Real dt) {
     if (phase_ == Phase::Flare) flareMax_ = std::max(flareMax_, pitchTarget_);
     Real floor = arrested ? std::max(flarePitch_ - 0.035, flareMax_ - 0.04) : std::max(flarePitch_, flareMax_ - 0.017);
     // Below 2 m (the radio altimeter's flare) the nose is never lowered at
-    // all: there the wing loses lift as the ground comes up (see below) and
-    // a nose let down 2 deg after a level-off at 6 ft dropped a 737 in.
+    // all: a nose let down 2 deg after a level-off at 6 ft dropped a 737 in.
     if (radioAltimeter && arrested && height < 2.0) floor = std::max(floor, flareMax_);
     // The radio altimeter's law is firmer, and firmer still in the last 3 m
-    // (up to 11 times at the runway): the wing's lift falls about 10 % at a
-    // fixed attitude from 10 m down to 2 m of wheel height in this model's
-    // ground effect, the sink grows there whatever the attitude was, and only
-    // a quick answer to it in the last seconds holds the touchdown under
-    // 200 fpm. (Firmer all the way down, the flare arrested high in the
-    // city's turbulence, floated and dropped a CRJ in at 700 fpm.)
-    const Real flareK = radioAltimeter ? 0.03 * (1 + 10 * clamp((3.0 - height) / 3.0, 0.0, 1.0)) : 0.025;
+    // (up to 4 times at the runway), a quick answer to the last seconds'
+    // sink. The ground cushion helps it there: at a fixed attitude the wing
+    // gains a few per cent of lift from 10 m down to the wheels' touchdown.
+    // (While the model's ground effect wrongly took ~10 % of the lift away
+    // there, this ramp went to 11 times; against the real cushion that pulled
+    // a CRJ up into a balloon at 0.5 m and a long, hard landing at 1,000 m.
+    // Firmer all the way down, the flare arrested high in the city's
+    // turbulence, floated and dropped a CRJ in at 700 fpm.)
+    const Real flareK = radioAltimeter ? 0.03 * (1 + 3 * clamp((3.0 - height) / 3.0, 0.0, 1.0)) : 0.025;
     const Real rawFlare = flarePitch_ + flareK * (vsTarget - vsNow) + flareInt_;
     Real want = phase_ == Phase::Flare
                           ? clamp(rawFlare, floor, flarePitch_ + 0.12)
                           : clamp(pitchRef + vsPid_.update(vsTarget - vsNow, dt), -0.2, 0.25);
     // The stall warning (the shaker, the horn) caps the nose where it is:
     // nothing more is asked of the wing (in ground effect its stalling angle
-    // falls; a Top G's flare reached its pusher at 7 deg of alpha).
+    // falls).
     const bool shaker = phase_ == Phase::Flare && radioAltimeter && r.stallHorn;
     if (shaker) want = std::min(want, pitch - 0.005);
     // The integral is kept from winding against the limits (radio altimeter

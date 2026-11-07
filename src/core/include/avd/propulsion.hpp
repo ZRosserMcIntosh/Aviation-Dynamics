@@ -301,7 +301,8 @@ public:
 
 private:
     TurbopropDef def_;
-    Real willansA_ = 0, willansB_ = 0;  // corrected fuel flow = A + B x corrected gas power
+    Real willansA_ = 0, willansB_ = 0;  // corrected fuel flow = A + B Pr (corrected gas power / Pr)^n
+    Real willansPr_ = 1;                // Pr: gas power at the flat rating, sea level static ISA (W)
 };
 
 }  // namespace avd

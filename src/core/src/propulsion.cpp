@@ -768,12 +768,16 @@ void TurbofanEngine::setSteady(TurbofanState& s, const TurbofanInputs& in) const
 TurbopropEngine::TurbopropEngine(const TurbopropDef& def) : def_(def) {
     // Willans line (fuel flow linear in power at a given corrected speed
     // line, corrected): through the low-idle flow and the published SFC at
-    // the flat rating, both at sea level, static, ISA.
+    // the flat rating, both at sea level, static, ISA; with fuelPowerExponent
+    // below 1, a curve through the same two points (TurbopropDef).
     const Real pIdle = gasPower(def_.ngLowIdle, 1, 1);
     const Real pRated = def_.ratedPower * (1 + def_.frictionTorqueFraction);
     const Real fRated = def_.sfcRated * def_.ratedPower;
-    willansB_ = (fRated - def_.idleFuelFlow) / std::max(pRated - pIdle, 1.0);
-    willansA_ = def_.idleFuelFlow - willansB_ * pIdle;
+    willansPr_ = std::max(pRated, 1.0);
+    const Real n = def_.fuelPowerExponent;
+    const Real span = n == 1 ? pRated - pIdle : pRated - pRated * std::pow(std::max(pIdle, 0.0) / willansPr_, n);
+    willansB_ = (fRated - def_.idleFuelFlow) / std::max(span, 1.0);
+    willansA_ = fRated - willansB_ * pRated;
 }
 
 void TurbopropEngine::inletRatios(Real pressure, Real temperature, Real mach, Real& delta0, Real& theta0) {
@@ -831,7 +835,8 @@ Real TurbopropEngine::availablePower(Real pressure, Real temperature, Real mach)
 
 Real TurbopropEngine::fuelFlow(Real ng, Real delta0, Real theta0) const {
     const Real corrected = gasPower(ng / std::sqrt(theta0), 1, 1);
-    const Real flow = willansA_ + willansB_ * corrected;
+    const Real n = def_.fuelPowerExponent;
+    const Real flow = willansA_ + willansB_ * (n == 1 ? corrected : willansPr_ * std::pow(corrected / willansPr_, n));
     return delta0 * std::sqrt(theta0) * std::max(flow, 0.3 * def_.idleFuelFlow);
 }
 

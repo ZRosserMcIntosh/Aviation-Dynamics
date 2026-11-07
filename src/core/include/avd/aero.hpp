@@ -265,6 +265,9 @@ public:
 private:
     bool hasSpoilers_ = false;
     Vec3 localFlow(const Surface& S, const Strip& st, const Vec3& r, const AeroInputs& in) const;
+    // Height of the surface's centroid above the ground (in.heightAboveGround
+    // is the main wing's).
+    Real surfaceHeight(const Surface& S, const AeroInputs& in) const;
     Vec3 slipstreamAt(const Vec3& position, const AeroInputs& in) const;
     // Nonlinear lifting line (Phillips & Snyder 2000) over strips [n0, n0+n)
     // of surface si: fills out.llInduced. gammaOf(k, v, attached) is the
@@ -287,5 +290,17 @@ private:
 // With `ice` (per surface), the iced airframe's.
 Real trimmedMaxLiftCoefficient(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach,
                                const SurfaceIce* ice = nullptr);
+
+// A lifting surface's stall as an angle-of-attack computer's flight-test
+// calibration sees it, for a flap angle (rad): M 0.2, sea level, out of
+// ground effect, clean, the elevator neutral. Body angles of attack (rad):
+// where its first primary strip reaches its own stall angle, and where the
+// surface's lift coefficient first reaches 95 % of its maximum (the stall:
+// past it the lift barely rises while the strips let go one by one).
+struct StallCalibration {
+    Real firstStripAlpha = 0;
+    Real stallAlpha = 0;
+};
+StallCalibration surfaceStallCalibration(const AeroModel& model, int surface, const Vec3& cg, Real flap);
 
 }  // namespace avd

@@ -439,14 +439,15 @@ namespace {
 
 // Air velocity at p induced by a horseshoe vortex of unit circulation: bound
 // from a to b, trailing legs to infinity along u (Phillips & Snyder 2000, eq. 4).
-Vec3 horseshoe(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& u) {
+// Without `bound`, the two trailing legs alone.
+Vec3 horseshoe(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& u, bool bound = true) {
     const Vec3 r1 = p - a, r2 = p - b;
     const Real n1 = length(r1), n2 = length(r2);
     Vec3 v;
     const Real tiny = 1e-9;
     const Real d2 = n2 * (n2 - dot(u, r2));
     if (d2 > tiny) v += cross(u, r2) / d2;
-    const Real db = n1 * n2 * (n1 * n2 + dot(r1, r2));
+    const Real db = bound ? n1 * n2 * (n1 * n2 + dot(r1, r2)) : 0.0;
     if (db > tiny) v += cross(r1, r2) * ((n1 + n2) / db);
     const Real d1 = n1 * (n1 - dot(u, r1));
     if (d1 > tiny) v -= cross(u, r1) / d1;
@@ -493,6 +494,16 @@ void luSolve(const Real* LU, const int* piv, Real* r, int n) {
 
 }  // namespace
 
+Real AeroModel::surfaceHeight(const Surface& S, const AeroInputs& in) const {
+    const Real h = in.heightAboveGround;
+    if (h > 1e8 || dot(in.groundUpBody, in.groundUpBody) < 0.5 || surfaces_.empty()) return h;
+    // The offset fades out from 3 to 4 spans up, where the factor is 1 to
+    // within 1e-4 whichever height it is given (so cruise and stall traces
+    // are untouched to the last bit).
+    const Real b = std::max(S.span, 1.0);
+    return h + dot(S.centroid - surfaces_[0].centroid, in.groundUpBody) * (1 - smoothstep(3 * b, 4 * b, h));
+}
+
 template <class GammaOf>
 void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, AeroOutputs& out, GammaOf&& gammaOf) const {
     const Surface& S = surfaces_[static_cast<std::size_t>(si)];
@@ -508,7 +519,21 @@ void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, Ae
     const Vec3 aft{-1, 0, 0};
     Vec3 u = length(sum) > 3.0 * n ? normalized(-sum) : aft;
     if (dot(u, aft) < 0.2) u = aft;
-    // Ground images (a flat ground below, within a few spans).
+    // Ground images (a flat ground below, within a few spans): the mirror of
+    // the trailing vortex system, opposite in sense, whose upwash at the line
+    // cuts the induced angle (Wieselsberger 1922, NACA TM-77; McCormick,
+    // "Aerodynamics, Aeronautics and Flight Mechanics", ch. 9: induced drag
+    // times (16h/b)^2 / (1 + (16h/b)^2), more lift at a given alpha). Not the
+    // image of the bound vortex: that is a chord-scale effect the line's
+    // single vortex cannot place. Seen at the bound vortex itself it only
+    // slows the flow there, by G / (4 pi h) -- 4-6 m/s (a tenth of q) under a
+    // transport's flapped wing a few metres up, the lift falling where it
+    // rises -- while over the rear of the chord (Pistolesi's 3/4-chord point)
+    // the same image is an upwash that adds lift; for a real section at h/c
+    // near 1 the two largely cancel, and only well inside a chord of the
+    // ground does the Venturi flow under a cambered section win (Katz &
+    // Plotkin, "Low-Speed Aerodynamics", 2nd ed., the lumped-vortex example
+    // near a wall).
     const bool ground = S.def.groundEffect && dot(in.groundUpBody, in.groundUpBody) > 0.5 && in.heightAboveGround < 3 * S.span;
     Real h = ground ? in.heightAboveGround : 1e9;
     if (ground) {
@@ -548,7 +573,7 @@ void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, Ae
             for (int j = 0; j < n; ++j) {
                 const Strip& sj = strips_[static_cast<std::size_t>(n0 + j)];
                 Vec3 v = horseshoe(p, sj.boundA, sj.boundB, u);
-                if (h < 1e8) v -= horseshoe(p, mirror(sj.boundA), mirror(sj.boundB), ui);
+                if (h < 1e8) v -= horseshoe(p, mirror(sj.boundA), mirror(sj.boundB), ui, false);
                 V[i * n + j] = v;
             }
         }
@@ -715,8 +740,10 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
         const Surface& S = surfaces_[si];
         SurfaceOutput& so = out.surfaces[si];
         so = {};
-        // Ground effect on induced flow.
-        const Real ge = S.def.groundEffect && S.horizontal ? groundEffectFactor(in.heightAboveGround, S.span) : 1.0;
+        // Ground effect on induced flow (strip theory), at the surface's own
+        // height: the input is the main wing's, and a T-tail sits most of a
+        // fin's height above it.
+        const Real ge = S.def.groundEffect && S.horizontal ? groundEffectFactor(surfaceHeight(S, in), S.span) : 1.0;
         const Real arEff = S.aspectRatio / ge;
         const Real a3 = liftCurveSlope3D(arEff, S.sweep, S.def.section.liftSlope, beta);
         // Downwash from the source surface: the linear estimate here; the
@@ -728,7 +755,7 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
         if (src >= 0) {
             const Real clSrc = out.surfaces[src].cl;
             const Real aSrc = surfaces_[src].liftSlope;
-            srcGe = groundEffectFactor(in.heightAboveGround, surfaces_[src].span);
+            srcGe = groundEffectFactor(surfaceHeight(surfaces_[static_cast<std::size_t>(src)], in), surfaces_[src].span);
             epsLinear = (S.def.downwashAtZeroLift + S.downwashGradient * clSrc / aSrc) * srcGe;
             so.downwash = epsLinear;
         }
@@ -1126,6 +1153,59 @@ Real trimmedMaxLiftCoefficient(const AeroModel& model, Real refArea, const Vec3&
         else if (cl < best - 0.15) break;  // well past the peak
     }
     return best;
+}
+
+StallCalibration surfaceStallCalibration(const AeroModel& model, int surface, const Vec3& cg, Real flap) {
+    StallCalibration r;
+    if (surface < 0 || surface >= model.surfaceCount()) return r;
+    const Real v = 0.2 * 340.3;
+    AeroInputs in;
+    in.density = isa::kSeaLevelDensity;
+    in.speedOfSound = 340.3;
+    in.cg = cg;
+    in.controls.flap = flap;
+    AeroOutputs out;
+    model.prepare(out);
+    // Half-degree steps (interpolated), on until 5 deg past both the first
+    // strip's stall and the highest lift yet.
+    constexpr Real kDeg = kTwoPi / 360.0, kStep = 0.5 * kDeg, kTop = 26.0 * kDeg;
+    std::vector<std::pair<Real, Real>> cl;  // (alpha, surface CL)
+    Real prevMargin = 0, best = -1e9, bestAlpha = 0;
+    bool found = false;
+    for (Real alpha = 0; alpha <= kTop + 1e-9 && (!found || alpha < std::max(r.firstStripAlpha, bestAlpha) + 5 * kDeg); alpha += kStep) {
+        in.velocityBody = {v * std::cos(alpha), 0, v * std::sin(alpha)};
+        model.evaluate(in, out);
+        Real least = 1e9;
+        for (int i = model.firstStrip(surface); i < model.endStrip(surface); ++i) {
+            const StripTelemetry& s = out.strips[static_cast<std::size_t>(i)];
+            if (s.q > 30 && model.stripIsPrimary(i)) least = std::min(least, s.stallAlpha - s.alpha);
+        }
+        if (!found && least <= 0) {
+            r.firstStripAlpha = alpha > 0 ? alpha - kStep * least / (least - prevMargin) : 0.0;
+            found = true;
+        }
+        prevMargin = least;
+        const Real c = out.surfaces[static_cast<std::size_t>(surface)].cl;
+        cl.emplace_back(alpha, c);
+        if (c > best) {
+            best = c;
+            bestAlpha = alpha;
+        }
+    }
+    if (!found) r.firstStripAlpha = kTop;
+    r.stallAlpha = kTop;
+    for (std::size_t k = 0; k < cl.size(); ++k)
+        if (cl[k].second >= 0.95 * best) {
+            const auto& [a1, c1] = cl[k];
+            if (k == 0) {
+                r.stallAlpha = a1;
+            } else {
+                const auto& [a0, c0] = cl[k - 1];
+                r.stallAlpha = a0 + (a1 - a0) * (0.95 * best - c0) / std::max(c1 - c0, 1e-9);
+            }
+            break;
+        }
+    return r;
 }
 
 }  // namespace avd

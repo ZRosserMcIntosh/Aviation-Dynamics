@@ -286,6 +286,49 @@ TEST_CASE("icing: thermal anti-ice keeps a jet's wing clean for a thrust cost; b
     CHECK(c.cockpitControlIndex("engine1.carb_heat") >= 0);
 }
 
+TEST_CASE("icing: the King Air's surface boots shed the wing's and tail's ice, the electric prop de-ice its blades; the controls are anti_ice.*") {
+    // The King Air 350 at FL100, 180 KIAS, in a 0.5 g/m^3 layer at about
+    // -15 C: pneumatic boots on the wing and tail on one switch, electric
+    // propeller de-ice on its own, heated windshield.
+    SimpleWeather::Params wp = icingLayer(0.5, -10);
+    wp.cloudBase = 2000;
+    wp.cloudTop = 4000;
+    const AircraftDefinition d = loadReference("king_air_350");
+    {
+        Aircraft ac(d);
+        CHECK(ac.cockpitControlIndex("anti_ice.surface") >= 0);
+        CHECK(ac.cockpitControlIndex("anti_ice.prop") >= 0);
+        CHECK(ac.cockpitControlIndex("electrical.load.pitot_heat") >= 0);
+        CHECK(ac.cockpitControlIndex("anti_ice.wing") < 0);
+        CHECK(!ac.antiIceBleed());  // boots and electric heat: no bleed
+        CHECK(ac.cycleCockpitControl("anti_ice.prop"));  // "press F"
+        CHECK(ac.cockpitControl("anti_ice.prop") == 1);
+    }
+    auto run = [&](bool on) {
+        Flight f(d, 180, 3000, wp);
+        f.ac.setCockpitControl("anti_ice.surface", on ? 1 : 0);
+        f.ac.setCockpitControl("anti_ice.prop", on ? 1 : 0);
+        f.fly(300);
+        return f.ac.icing().status();
+    };
+    const IcingStatus off = run(false);
+    const IcingStatus on = run(true);
+    std::cerr << "  King Air 5 min at FL100 in 0.5 g/m^3: unprotected wing " << off.surfaces[0].thickness * 1e3 << " mm, tail "
+              << off.surfaces[1].thickness * 1e3 << " mm, propeller " << off.propellerIce[0] * 1e3 << " mm (thrust -"
+              << 100 * off.propellerThrustLoss[0] << " %); protected wing " << on.surfaces[0].thickness * 1e3 << " mm, tail "
+              << on.surfaces[1].thickness * 1e3 << " mm, propeller " << on.propellerIce[0] * 1e3 << " mm; windshield " << on.windshieldIce
+              << "\n";
+    CHECK(off.surfaces[0].thickness > 1e-3);
+    CHECK(off.surfaces[1].thickness > 1e-3);
+    CHECK(off.propellerIce[0] > 0.2e-3);
+    CHECK(off.propellerThrustLoss[0] > 0.02);
+    // Boots: a cycle's worth over the residual; the heated blades shed each cycle.
+    CHECK(on.surfaces[0].thickness < 0.5 * off.surfaces[0].thickness);
+    CHECK(on.surfaces[1].thickness < 0.5 * off.surfaces[1].thickness);
+    CHECK(on.propellerIce[0] < 0.7 * off.propellerIce[0]);
+    CHECK(on.windshieldIce == 0);
+}
+
 TEST_CASE("carburettor ice: the chart's risk band (FAA AC 20-113): cruise to about +20 C, glide to about +28 C, humid air only") {
     const CarburettorDef& cd = c172().engines[0].carburettor;
     CHECK(cd.present);
