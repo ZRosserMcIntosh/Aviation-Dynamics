@@ -57,9 +57,9 @@ moment, and they have a yaw damper.
 | Blind landings | An instrument-only approach pilot (`scenarios::ApproachPilot`) flies the ILS or GPS approach with an autoland flare, decrab and rollout. All seven aircraft land in zero visibility within CAT III touchdown limits, calm and in crosswinds to 10 kt. In the browser it is the autoland (`avd_autoland`): the GPS route from anywhere, the airplane configured, to a stop on the centreline | `tests/test_blind_landing.cpp`, [blind-landings.md](docs/validation/blind-landings.md) |
 | Autopilot | Heading select, the GPS route, altitude hold, vertical speed with altitude capture, an autothrottle, and a coupled approach (APR: the ILS localizer and glideslope or the GPS's LPV-style deviations, armed then captured, flown to the decision altitude, where it disconnects) (`scenarios::Autopilot`), flown from the instruments with the pitch trim run behind it, on every aircraft. The autoland (`scenarios::ApproachPilot`) touches the jets down at 140–200 fpm | `tests/test_autopilot.cpp` |
 | Assists | Easy, Sport and Simulation, plus an auto-trim that holds straight and level. They act only through the pilot's controls; the physics is the same in all three ([ADR 0004](docs/decisions/0004-assistance-is-not-physics.md)) | `tests/test_systems_scenarios.cpp`, `tests/test_jet.cpp` |
-| Browser | WebAssembly build (wasi-sdk, no exceptions or RTTI) with a C ABI. Streams the airflow, wake and body data the 3D site draws (streamlines, smoke, wind tunnel). Node smoke test, a self-contained 2D cockpit page, flight replay | `web/`, `web/smoke_test.mjs` |
+| Browser | WebAssembly build (wasi-sdk, no exceptions or RTTI) with a C ABI. Streams the airflow, wake and body data the 3D site draws (streamlines, smoke, wind tunnel). No call stalls the page in flight: a dense 1 km building tile stands in 2–3.5 ms, an air start takes a few ms, the stall speeds follow the flaps over frames ([web/README.md](web/README.md), "Cost per call"). Node smoke test, a self-contained 2D cockpit page, flight replay | `web/`, `web/smoke_test.mjs` |
 
-Everything in this table is tested: <!-- validation:begin tests -->285<!-- validation:end --> test cases, on Linux (gcc, clang,
+Everything in this table is tested: <!-- validation:begin tests -->287<!-- validation:end --> test cases, on Linux (gcc, clang,
 sanitizers), macOS, Windows and WASM in CI. How far each area is validated,
 and its main gap, is in the [fidelity matrix](docs/fidelity-matrix.md); the
 comparisons with published data, with their sources and every row that is
@@ -71,7 +71,7 @@ and are regenerated from the test output so they cannot drift.
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-./build/tests/avd_tests             # <!-- validation:begin tests -->285<!-- validation:end --> test cases
+./build/tests/avd_tests             # <!-- validation:begin tests -->287<!-- validation:end --> test cases
 ./build/tests/avd_tests "blind"     # a filter: the blind landings
 ./build/avdemo validate [--json f]  # the comparison tables against published data (172S POH, G650ER)
 ./build/tools/avdtrace --record     # record the golden traces (tests/golden/README.md)

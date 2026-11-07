@@ -1085,47 +1085,89 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
     }
 }
 
-Real trimmedMaxLiftCoefficient(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach, const SurfaceIce* ice) {
-    const Real a = 340.3, v = std::max(mach, 0.15) * a;
-    AeroInputs in;
-    in.ice = ice;
-    in.density = isa::kSeaLevelDensity;
-    in.speedOfSound = a;
-    in.cg = cg;
-    in.controls.flap = flap;
-    AeroOutputs out;
-    model.prepare(out);
-    const Real q = 0.5 * in.density * v * v;
-    // Lift and pitching moment at alpha with the elevator at e (-1..1).
-    auto eval = [&](Real alpha, Real e, Real& lift) {
-        in.velocityBody = {v * std::cos(alpha), 0, v * std::sin(alpha)};
-        in.controls.elevator = e;
-        model.evaluate(in, out);
-        lift = out.force.x * std::sin(alpha) - out.force.z * std::cos(alpha);
-        return out.moment.y;
-    };
-    Real best = 0;
-    for (Real alphaDeg = 0; alphaDeg <= 30.0; alphaDeg += 0.25) {
-        const Real alpha = alphaDeg * kTwoPi / 360.0;
-        Real lift = 0, liftLo = 0, liftHi = 0;
-        const Real mLo = eval(alpha, -1, liftLo), mHi = eval(alpha, 1, liftHi);
-        if ((mLo > 0) == (mHi > 0)) {
-            // Cannot trim here: the elevator is out of authority (nose-up) or the
-            // pitch-down limit is reached; stop once the stick is fully back.
-            if (mHi < 0) break;
-            continue;
+TrimmedMaxLift::TrimmedMaxLift(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach, const SurfaceIce* ice,
+                               Real enough)
+    : model_(&model), refArea_(refArea), enough_(enough) {
+    // The ice as it is now: the sweep may outlive the caller's array (spread over frames).
+    if (ice) ice_.assign(ice, ice + model.surfaceCount());
+    const Real a = 340.3;
+    v_ = std::max(mach, 0.15) * a;
+    in_.density = isa::kSeaLevelDensity;
+    in_.speedOfSound = a;
+    in_.cg = cg;
+    in_.controls.flap = flap;
+    model.prepare(out_);
+    q_ = 0.5 * in_.density * v_ * v_;
+}
+
+// Lift and pitching moment at the sweep's alpha with the elevator at e (-1..1).
+Real TrimmedMaxLift::eval(Real e, Real& lift) {
+    const Real alpha = alphaDeg_ * kTwoPi / 360.0;
+    in_.ice = ice_.empty() ? nullptr : ice_.data();
+    in_.velocityBody = {v_ * std::cos(alpha), 0, v_ * std::sin(alpha)};
+    in_.controls.elevator = e;
+    model_->evaluate(in_, out_);
+    ++evaluations_;
+    lift = out_.force.x * std::sin(alpha) - out_.force.z * std::cos(alpha);
+    return out_.moment.y;
+}
+
+// Sweeps alpha (0.25 deg steps) out of ground effect with no slipstream; at
+// each, the elevator that trims the pitching moment (bisection between the
+// stops), and the lift there. One evaluation per call of the loop body below,
+// in the order the sweep has always made them: each lifting-line solve starts
+// from the last one's circulation, and past the stall (where the solution
+// leans on the path to it) the result depends on that order.
+bool TrimmedMaxLift::step(int maxEvaluations) {
+    for (int n = 0; n < maxEvaluations && !done_; ++n) {
+        if (phase_ == 0 && !(alphaDeg_ <= 30.0)) {
+            done_ = true;
+            break;
         }
-        Real lo = -1, hi = 1, mlo = mLo;
-        for (int k = 0; k < 30; ++k) {
-            const Real mid = 0.5 * (lo + hi), m = eval(alpha, mid, lift);
-            if ((m > 0) == (mlo > 0)) { lo = mid; mlo = m; } else hi = mid;
+        Real lift = 0;
+        if (phase_ == 0) {
+            mLo_ = eval(-1, lift);
+            phase_ = 1;
+        } else if (phase_ == 1) {
+            const Real mHi = eval(1, lift);
+            if ((mLo_ > 0) == (mHi > 0)) {
+                // Cannot trim here: the elevator is out of authority (nose-up) or the
+                // pitch-down limit is reached; stop once the stick is fully back.
+                if (mHi < 0) done_ = true;
+                alphaDeg_ += 0.25;
+                phase_ = 0;
+                continue;
+            }
+            lo_ = -1, hi_ = 1, mlo_ = mLo_;
+            phase_ = 2;
+        } else if (phase_ < 32) {
+            const Real mid = 0.5 * (lo_ + hi_), m = eval(mid, lift);
+            if ((m > 0) == (mlo_ > 0)) {
+                lo_ = mid;
+                mlo_ = m;
+            } else {
+                hi_ = mid;
+            }
+            ++phase_;
+        } else {
+            eval(0.5 * (lo_ + hi_), lift);
+            const Real cl = lift / (q_ * refArea_);
+            if (cl > best_) best_ = cl;
+            else if (cl < best_ - 0.15) done_ = true;  // well past the peak
+            if (best_ >= enough_) done_ = true;       // as much as the caller asked about
+            alphaDeg_ += 0.25;
+            phase_ = 0;
         }
-        eval(alpha, 0.5 * (lo + hi), lift);
-        const Real cl = lift / (q * refArea);
-        if (cl > best) best = cl;
-        else if (cl < best - 0.15) break;  // well past the peak
     }
-    return best;
+    return done_;
+}
+
+Real trimmedMaxLiftCoefficient(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach, const SurfaceIce* ice,
+                               Real enough) {
+    TrimmedMaxLift sweep(model, refArea, cg, flap, mach, ice, enough);
+    while (!sweep.step(1 << 20)) {
+    }
+    return sweep.result();
 }
 
 }  // namespace avd
