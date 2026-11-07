@@ -93,6 +93,15 @@ public:
     virtual GroundHit raycast(const Vec3& origin, const Vec3& dir, Real maxDistance) const = 0;
     // Terrain height (m, NED down coordinate of the surface) below a point.
     virtual GroundHit below(const Vec3& point) const { return raycast(point - Vec3{0, 0, 1000}, {0, 0, 1}, 1e5); }
+    // The down coordinate of the surface below(point) meets (false: none),
+    // without its normal and surface; the same height to within rounding.
+    // Grounds that find it more cheaply than a ray override it (a city tile
+    // stands thousands of buildings on the ground, BuildingLayer::parseAvb1).
+    virtual bool belowDown(const Vec3& point, Real& down) const {
+        const GroundHit h = below(point);
+        if (h.hit) down = h.point.z;
+        return h.hit;
+    }
     // Solid geometry the point is inside (e.g. a building): fills `contact`
     // with the nearest exit point and outward normal and returns true. Used
     // for the airframe hard points (wingtips, tail, propeller). Terrain-only
@@ -219,10 +228,16 @@ public:
     // The terrain's down coordinate at a horizontal position (runways lie on it).
     Real terrainDown(Real north, Real east) const;
     void surfaceAt(Real north, Real east, Real& down, Vec3& normal, SurfaceProperties& s) const;
+    // surfaceAt's down coordinate alone (its normal costs four more terrain samples).
+    Real surfaceDown(Real north, Real east) const;
     GroundHit raycast(const Vec3& origin, const Vec3& dir, Real maxDistance) const override;
+    bool belowDown(const Vec3& point, Real& down) const override;
 
 private:
     Real blendDown(Real north, Real east) const;
+    // The field whose flat area holds the point (nullptr: none), and the
+    // runway under it there (nullptr: none; `along` m from its threshold).
+    const Field* fieldAt(Real north, Real east, const RunwayDef*& runway, Real& along) const;
     struct Grid {
         std::shared_ptr<const ElevationGrid> grid;
         Real blend = 5000;  // m inside its edge over which it blends into what lies under it

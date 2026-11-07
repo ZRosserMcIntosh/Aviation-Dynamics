@@ -1,5 +1,7 @@
 // Aviation Dynamics — tests: the open-world ground (terrain tiles, buildings).
 // SPDX-License-Identifier: MIT
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <sstream>
@@ -444,4 +446,101 @@ TEST_CASE("region terrain: the city's 50 m grid nested in the region's -- the pe
     CHECK(g2.terrainCount() == 2);
     g2.setTerrain(coarse);
     CHECK(g2.terrainCount() == 1);
+}
+
+TEST_CASE("building layer: a dense city tile stands its buildings where the ray-cast footing did, in a fraction of the time") {
+    // The browser streams 1 km tiles of up to ~7,000 buildings; each stands on
+    // the lowest of the ground under its centroid and first corner. That
+    // footing was two below() ray casts (six identical tangent-plane passes
+    // each, every pass four terrain samples for a normal nobody used);
+    // RegionGround::belowDown now gives the same height from one sample.
+    const auto region = makeSaoPauloGround();
+    // 1. The vertical ray: one pass is what the six made (the old loop, by hand).
+    // 2. belowDown: the same height, to the last bits of rounding where the terrain slopes.
+    std::uint32_t seed = 12345;
+    auto rnd = [&](Real lo, Real hi) {
+        seed = seed * 1664525u + 1013904223u;
+        return lo + (hi - lo) * (seed >> 8) / 16777216.0;
+    };
+    const Airport cgh = congonhas(saoPauloWorldFrame());
+    std::vector<Vec3> pts;
+    for (int k = 0; k < 2000; ++k) pts.push_back(ned(rnd(-30000, 30000), rnd(-30000, 30000), 3000));  // the region, hills and fields
+    for (int k = 0; k < 200; ++k) {
+        const Vec3 p = runwayPoint(cgh.runways[0], rnd(-200, 2100));  // Congonhas: its runways and the field around them
+        pts.push_back({p.x + rnd(-40, 40), p.y + rnd(-40, 40), -3000});
+    }
+    int exact = 0, bitIdentical = 0;
+    Real worst = 0;
+    for (const Vec3& p : pts) {
+        const GroundHit h = region->below(p);
+        // GroundQuery::below's ray, refined six times as RegionGround::raycast always did.
+        const Vec3 o = p - Vec3{0, 0, 1000}, dir{0, 0, 1};
+        Real t = (region->terrainDown(o.x, o.y) - o.z) / dir.z;
+        for (int i = 0; i < 6; ++i) {
+            const Vec3 q = o + dir * t;
+            Real down;
+            Vec3 nrm;
+            SurfaceProperties s;
+            region->surfaceAt(q.x, q.y, down, nrm, s);
+            t = dot(Vec3{q.x, q.y, down} - o, nrm) / dot(dir, nrm);
+        }
+        if (h.hit && h.point.z == (o + dir * t).z && h.distance == t) ++exact;
+        Real down = 0;
+        CHECK(region->belowDown(p, down) == h.hit);
+        worst = std::max(worst, std::abs(down - h.point.z));
+        if (down == h.point.z) ++bitIdentical;
+    }
+    std::cerr << "  " << pts.size() << " points: below() as the six-pass ray " << exact << ", belowDown bit-identical " << bitIdentical
+              << ", worst " << worst << " m\n";
+    CHECK(exact == static_cast<int>(pts.size()));
+    CHECK(worst < 1e-9);
+    CHECK(bitIdentical > static_cast<int>(pts.size()) / 2);
+
+    // 3. Dense synthetic AVB1 tiles (2,500 buildings each, over the city's
+    // hills 7 km north-east of the anchor and over Congonhas' field): the
+    // same buildings as through the ray-cast footing (a ground with
+    // GroundQuery's own below and belowDown).
+    struct RayOnly final : GroundQuery {
+        const GroundQuery* inner = nullptr;
+        GroundHit raycast(const Vec3& o, const Vec3& d, Real m) const override { return inner->raycast(o, d, m); }
+    } rays;
+    rays.inner = region.get();
+    const BuildingLayer fast(*region), old(rays);
+    const Vec3 cghEnu = world::enuFromNed(runwayPoint(cgh.runways[0], 900));
+    double msFast = 0, msOld = 0;
+    Real worstB = 0;
+    int same = 0, total = 0;
+    for (const auto& [ti, tj] : {std::pair<int, int>{7, 7}, {static_cast<int>(std::floor(cghEnu.x / 1000)), static_cast<int>(std::floor(cghEnu.y / 1000))}}) {
+        std::vector<std::uint8_t> blk = {'A', 'V', 'B', '1'};
+        auto u16 = [&](int v) { blk.push_back(static_cast<std::uint8_t>(v & 0xff)); blk.push_back(static_cast<std::uint8_t>((v >> 8) & 0xff)); };
+        const int count = 2500;
+        u16(count); u16(0);
+        for (int b = 0; b < count; ++b) {
+            u16(static_cast<int>(rnd(30, 1500))); u16(b % 7 == 0 ? 30 : 0); blk.push_back(1); blk.push_back(1);
+            const int n = 4 + b % 5, cx = static_cast<int>(rnd(-500, 10500)), cy = static_cast<int>(rnd(-500, 10500));
+            u16(n);
+            for (int k = 0; k < n; ++k) {
+                const Real a = kTwoPi * k / n, r = rnd(30, 150);
+                u16(static_cast<int>(cx + r * std::cos(a))); u16(static_cast<int>(cy + r * std::sin(a)));
+            }
+        }
+        std::vector<WorldBuilding> a, b;
+        const auto t0 = std::chrono::steady_clock::now();
+        CHECK(fast.parseAvb1(blk.data(), blk.size(), ti * 1000.0, tj * 1000.0, a));
+        const auto t1 = std::chrono::steady_clock::now();
+        CHECK(old.parseAvb1(blk.data(), blk.size(), ti * 1000.0, tj * 1000.0, b));
+        const auto t2 = std::chrono::steady_clock::now();
+        msFast += std::chrono::duration<double, std::milli>(t1 - t0).count();
+        msOld += std::chrono::duration<double, std::milli>(t2 - t1).count();
+        CHECK(a.size() == b.size() && a.size() + 10 > static_cast<std::size_t>(count));  // (a roof no higher than its walls start is not a building)
+        for (std::size_t k = 0; k < std::min(a.size(), b.size()); ++k) {
+            CHECK(a[k].footprint == b[k].footprint);
+            worstB = std::max({worstB, std::abs(a[k].base - b[k].base), std::abs(a[k].top - b[k].top)});
+            if (a[k].base == b[k].base && a[k].top == b[k].top) ++same;
+            ++total;
+        }
+    }
+    std::cerr << "  two tiles, " << total << " buildings: " << msFast << " ms (through below(), one ray pass already: " << msOld
+              << " ms); " << same << " bit-identical, worst " << worstB << " m\n";
+    CHECK(worstB < 1e-9);
 }

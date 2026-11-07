@@ -471,6 +471,7 @@ bool BuildingLayer::parseAvb1(const std::uint8_t* data, std::size_t size, Real x
         WorldBuilding b;
         for (int r = 0; r < rings; ++r) {
             if (!take(&n, 2)) return false;
+            if (r == 0) b.footprint.reserve(n);
             for (int i = 0; i < n; ++i) {
                 std::int16_t xy[2];
                 if (!take(xy, 4)) return false;
@@ -485,8 +486,8 @@ bool BuildingLayer::parseAvb1(const std::uint8_t* data, std::size_t size, Real x
         // The inner ground under the centroid and the first corner (as the renderer stands it).
         Real g = 1e300;
         for (const Pt& q : {Pt{cx, cy}, b.footprint.front()}) {
-            const GroundHit hit = inner_->below(world::nedFromEnu({q.first, q.second, 1e4}));
-            if (hit.hit) g = std::min(g, -hit.point.z);
+            Real down = 0;
+            if (inner_->belowDown(world::nedFromEnu({q.first, q.second, 1e4}), down)) g = std::min(g, -down);
         }
         if (!(g < 1e299)) continue;
         b.base = g - sink + (mh > 0 ? mh / 10.0 + sink : 0.0);
