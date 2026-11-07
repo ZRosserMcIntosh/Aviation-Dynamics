@@ -437,6 +437,13 @@ struct TurbopropDef {
     Real selfSustainingNg = 0.45;     // Ng from which the lit engine accelerates without the starter
     Real starterCurrent = 300;        // A while cranking
     Real sfcRated = 9.26e-8;          // kg/J at the flat rating, sea level ISA (0.548 lb/shp/h)
+    // Shape of the corrected fuel flow against corrected gas power through
+    // the idle and rated points: flow_c = A + B Pr (P_c / Pr)^n. 1: a straight
+    // Willans line. Below 1 the marginal SFC falls as the corrected power rises
+    // past the rating -- the cold intake at altitude, where the same ITT is a
+    // higher turbine-entry to compressor-inlet temperature ratio (Saravanamuttoo,
+    // Gas Turbine Theory, ch. 9: SFC falls with that ratio).
+    Real fuelPowerExponent = 1.0;
     Real idleFuelFlow = 0.0126;       // kg/s, sea-level static low idle (100 lb/h)
     Real oilPressureIdle = 4.1e5;     // Pa at low idle (60 psi)
     Real oilPressureMax = 8.3e5;      // Pa at 100 % Ng (120 psi)
@@ -797,6 +804,12 @@ struct IceProtectionDef {
     Real bootResidual = 0.8e-3;       // m of ice left after a cycle
     bool windshieldHeat = false;      // electrically heated windshield (always on)
     bool iceDetector = false;         // an ICE annunciator (a vibrating-probe detector)
+    // Electric propeller de-ice (cockpit "anti_ice.prop"): heating elements
+    // in boots on the inboard blades, cycled by a timer; each cycle loosens
+    // the ice there and the centrifugal force throws it (King Air class:
+    // ~90 s cycle).
+    bool propellerDeice = false;
+    Real propellerDeiceCycle = 90;    // s
 };
 
 struct VacuumDef {

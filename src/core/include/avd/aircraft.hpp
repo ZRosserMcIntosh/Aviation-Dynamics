@@ -522,6 +522,13 @@ private:
     bool contactWas_[kMaxContacts] = {};
     Real groundStateTimer_ = 0;  // debounce for touchdown/lift-off events
     bool pusher_ = false, gearOverspeedWas_ = false;
+    // Computed stall warning: the AoA computer's flap schedule per detent
+    // (rad; beyondFirstStrip -1: not yet computed; stallSchedule()).
+    struct StallSchedulePoint {
+        Real stallAlpha = 0;        // body angle of attack of the wing's stall
+        Real beyondFirstStrip = 0;  // how far that lies past the first strip's stall (>= 0)
+    };
+    mutable std::vector<StallSchedulePoint> stallSchedule_;
     bool yawDamperOn_ = true;          // the yaw damper switch
     Real ydLowPass_ = 0, ydCommand_ = 0;  // washout filter state, rudder command
     bool wasOnGround_ = false, stallWarningWas_ = false, overspeedWas_ = false, overGWas_ = false;
@@ -541,6 +548,7 @@ private:
     std::array<bool, kMaxEngines> carbHeat_{};          // carb heat levers (HOT)
     std::array<bool, kIcingMaxSwitches> antiIce_{};     // ice protection switches (IcingModel::switchName order)
     void updateIcing(Real dt, const Context& c);
+    StallSchedulePoint stallSchedule(Real flap) const;
 
     std::vector<CockpitControl> cockpit_;
     std::vector<FlightEvent> events_;

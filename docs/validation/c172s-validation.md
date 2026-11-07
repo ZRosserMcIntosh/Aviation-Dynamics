@@ -51,11 +51,11 @@ windmilling, which is the chart's condition.
 | Propeller thrust in the glide (engine failed, windmilling)<br><small>the windmilling propeller drives the dead engine's friction and pumping, 9.2 hp at 993 rpm; + is pulling</small> | — | -219 N | — | — | info | — |
 | Glide ratio at 68 KIAS with the engine idling (practice glide)<br><small>throttle closed, mixture rich: the idling engine turns 1153 rpm, -1.4 hp, propeller thrust -55 N; flatter than the engine-failure glide, as pilots find</small> | — | 11.1 :1 | — | — | info | — |
 | Airframe lift/drag at 68 KIAS, no propeller force<br><small>aero model alone, L = W</small> | — | 11.9 :1 | — | — | info | — |
-| Take-off ground roll (short field)<br><small>flaps 10, lift off at 51 KIAS, climb at 56 KIAS</small> | 960 ft | 781 ft | -18.6 % | ±20 % | within | C172S POH Section 5 (short-field take-off, sea level, ISA) |
-| Take-off distance over a 50 ft obstacle | 1,630 ft | 1,529 ft | -6.2 % | ±20 % | within | C172S POH Section 5 (short-field take-off, sea level, ISA) |
+| Take-off ground roll (short field)<br><small>flaps 10, lift off at 51 KIAS, climb at 56 KIAS</small> | 960 ft | 766 ft | -20.2 % | ±22 % | within | C172S POH Section 5 (short-field take-off, sea level, ISA) |
+| Take-off distance over a 50 ft obstacle | 1,630 ft | 1,526 ft | -6.4 % | ±20 % | within | C172S POH Section 5 (short-field take-off, sea level, ISA) |
 | Lift-off speed | 51 KIAS | 51.5 KIAS | — | 48–55 KIAS | within | C172S POH Section 5 |
-| Landing ground roll, pilot braking technique<br><small>touchdown at 50 KCAS, 1 s to the pedals, 1 s ramp, 50 % sustained pedal (no anti-skid), the throttle closed (the idling propeller drags a little); see the discussion in the validation note</small> | 575 ft | 564 ft | -2.0 % | ±25 % | within | C172S POH Section 5 (short-field landing, sea level, ISA) |
-| Landing roll, tyre-limited bound (full pedal at touchdown)<br><small>physics check, not a handbook figure</small> | — | 311 ft | — | — | info | — |
+| Landing ground roll, pilot braking technique<br><small>touchdown at 50 KCAS, 1 s to the pedals, 1 s ramp, 50 % sustained pedal (no anti-skid), the throttle closed (the idling propeller drags a little); see the discussion in the validation note</small> | 575 ft | 558 ft | -2.9 % | ±25 % | within | C172S POH Section 5 (short-field landing, sea level, ISA) |
+| Landing roll, tyre-limited bound (full pedal at touchdown)<br><small>physics check, not a handbook figure</small> | — | 310 ft | — | — | info | — |
 | Static rpm, full throttle | 2,300-2,420 rpm | 2,383 rpm | — | 2,300–2,420 rpm | within | C172S POH Section 4 (full-throttle static check) |
 <!-- validation:end -->
 

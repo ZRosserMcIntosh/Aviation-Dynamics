@@ -182,18 +182,32 @@ void IcingModel::configure(const AircraftDefinition& def, const AeroModel& aero)
         g.boots = p.type == IceProtectionType::Boots;
         if (!g.boots) switchThermal_[k] = true;
     }
-    for (std::size_t e = 0; e < def.engines.size() && e < static_cast<std::size_t>(kIcingMaxEngines); ++e) {
-        const PistonEngineDef& ed = def.engines[e];
-        const PropellerDef& pd = ed.propeller;
-        PropGeometry& pg = prop_[e];
+    prop_ = {};
+    auto propeller = [&](PropGeometry& pg, const PropellerDef& pd, Real ratedRpm) {
         pg.present = pd.diameter > 0;
         pg.radius = 0.5 * pd.diameter;
         pg.chord = pd.chordVsRadius.empty() ? 0.08 * pd.diameter : std::max(pd.chordVsRadius(0.4), 0.02);
         const Real tc = pd.thicknessVsRadius.empty() ? 0.12 : pd.thicknessVsRadius(0.4);
         pg.diameter = 2 * icing::leadingEdgeRadius(pg.chord, tc);
-        pg.ratedOmega = ed.ratedRpm * kTwoPi / 60;
+        pg.ratedOmega = ratedRpm * kTwoPi / 60;
+    };
+    for (std::size_t e = 0; e < def.engines.size() && e < static_cast<std::size_t>(kIcingMaxEngines); ++e) {
+        const PistonEngineDef& ed = def.engines[e];
+        propeller(prop_[e], ed.propeller, ed.ratedRpm);
         carb_[e] = ed.carburettor;
         ratedPower_[e] = ed.ratedPower;
+    }
+    // Turboprops' propellers (an airframe has piston engines or turboprops,
+    // indexed alike from 0).
+    if (def.engines.empty())
+        for (std::size_t e = 0; e < def.turboprops.size() && e < static_cast<std::size_t>(kIcingMaxEngines); ++e)
+            propeller(prop_[e], def.turboprops[e].propeller, def.turboprops[e].ratedPropRpm);
+    // Electric propeller de-ice: a switch of its own.
+    propSwitch_ = -1;
+    if (def.iceProtection.propellerDeice && static_cast<int>(switches_.size()) < kIcingMaxSwitches) {
+        propSwitch_ = static_cast<int>(switches_.size());
+        switches_.push_back("prop");
+        switchThermal_.push_back(false);
     }
     status_ = {};
     status_.surfaceCount = n;
@@ -205,6 +219,7 @@ void IcingModel::reset() {
     status_ = {};
     status_.surfaceCount = n;
     bootTimer_ = {};
+    propTimer_ = 0;
     detectorTimer_ = 0;
     refreshEffects();
 }
@@ -254,6 +269,7 @@ void IcingModel::update(Real dt, const Inputs& in) {
     status_.bootsInflating = false;
     std::array<bool, kIcingMaxSwitches> shed{};
     for (std::size_t k = 0; k < switches_.size(); ++k) {
+        if (static_cast<int>(k) == propSwitch_) continue;
         if (!in.switches[k]) {
             bootTimer_[k] = 0;
             continue;
@@ -311,6 +327,18 @@ void IcingModel::update(Real dt, const Inputs& in) {
         status_.iceDetected = detectorTimer_ > 0;
     }
     status_.intensity = icing::intensityClass(status_.accretionRate);
+    // Propeller de-ice timer: a cycle ends every propellerDeiceCycle seconds
+    // with the switch on (the first after one heating period).
+    bool propShed = false;
+    if (propSwitch_ >= 0 && in.switches[static_cast<std::size_t>(propSwitch_)]) {
+        propTimer_ += dt;
+        if (propTimer_ >= protection_.propellerDeiceCycle) {
+            propShed = true;
+            propTimer_ = 0;
+        }
+    } else {
+        propTimer_ = 0;
+    }
     for (std::size_t e = 0; e < static_cast<std::size_t>(kIcingMaxEngines); ++e) {
         const EngineInputs& ei = in.engines[e];
         // Propeller: the inboard blade section (0.4 R) at its helical speed:
@@ -326,6 +354,9 @@ void IcingModel::update(Real dt, const Inputs& in) {
             k = std::max(k + (r.growth - r.loss) * dt, 0.0);
             const Real shedAt = 0.02 * pg.chord * std::min(sq(pg.ratedOmega / std::max(ei.omega, 1.0)), 4.0);
             if (k > shedAt) k *= 0.2;
+            // Electric de-ice: each heating cycle frees the boot's ice and
+            // the blade throws it (once the blade turns).
+            if (propShed && ei.omega > 0.2 * pg.ratedOmega) k = 0;
         }
         // Carburettor.
         heatRise_[e] = 0;
