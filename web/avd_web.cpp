@@ -5,9 +5,11 @@
 // only renders and reads input. World positions are returned in the São Paulo
 // World frame (ENU metres from MASP); see web/README.md for the buffer layout.
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -78,6 +80,33 @@ constexpr int layout[] = {state, cockpit, jet, loadsheet, flowHeader, flowStride
 #define AVD_BUILD_ID "dev"  // web/build_wasi.sh bakes "<git short hash>[-dirty] <date>"
 #endif
 
+// A trimmed-CLmax sweep's inputs (trimmedMaxLiftCoefficient at Mach `mach`):
+// the same inputs give the same result to the bit.
+struct ClmaxRequest {
+    Real flap = 0, mach = 0;
+    Vec3 cg;
+    std::vector<SurfaceIce> ice;  // per surface; empty: the clean airframe
+    bool operator==(const ClmaxRequest& o) const {
+        if (flap != o.flap || mach != o.mach || cg.x != o.cg.x || cg.y != o.cg.y || cg.z != o.cg.z || ice.size() != o.ice.size())
+            return false;
+        for (std::size_t i = 0; i < ice.size(); ++i)
+            if (ice[i].thickness != o.ice[i].thickness || ice[i].glaze != o.ice[i].glaze) return false;
+        return true;
+    }
+};
+// A value that follows the flight (the low-speed band as the flaps, Mach and
+// ice move): the last value swept, the sweep under way, and the request kept
+// from the frame the key last changed (swept once that one is done).
+struct ClmaxSlot {
+    Real value = 0;
+    Real lastKey = -1;   // the key of the last request (-1: none yet)
+    Real lastTime = 0;   // the aircraft's time at the last call
+    std::unique_ptr<TrimmedMaxLift> job;
+    ClmaxRequest jobRequest;
+    bool pending = false;
+    ClmaxRequest pendingRequest;
+};
+
 struct Sim {
     AircraftDefinition def;
     LocalFrame frame = scenarios::saoPauloWorldFrame();
@@ -116,10 +145,14 @@ struct Sim {
     Real runwayWaterDepth() const { return std::max(runwayWater, wetting.depth()); }
     std::string events;
     int jetStart = 0;  // jet Quick Start: 0 idle, 1 starting engine 1, 2 engine 2, 3 done
-    // Trimmed CLmax cache for the low-speed awareness band and V-speeds.
+    // Trimmed CLmax for the low-speed awareness band, the V-speeds and the
+    // air starts' speed floor (ensureClmaxModel and below).
     std::unique_ptr<AeroModel> clmaxModel;
-    Real clmaxKey = -1, clmax = 0, clmaxTakeoff = 0, clmaxLanding = 0;
-    Real clmaxCleanKey = -1, clmaxClean = 0;  // the clean airframe's at the current flap (avd_icing)
+    bool clmaxReady = false;  // take-off and landing flap computed
+    Real clmaxTakeoff = 0, clmaxLanding = 0;
+    ClmaxSlot clmax;       // at the current flap, Mach and ice (avd_jet, avd_icing)
+    ClmaxSlot clmaxClean;  // the clean airframe's at the current flap (avd_icing)
+    std::vector<std::pair<ClmaxRequest, Real>> clmaxMemo;  // finished sweeps by their inputs
     // Planned load (kg per station, m^3 per tank), applied to every new spawn.
     std::vector<Real> loadStations, loadTanks;
     // The aircraft's wake: shed into the air, and felt when flown into (its
@@ -803,15 +836,103 @@ std::size_t takeoffDetent(const std::vector<Real>& det) {
     return k > 0 ? k : det.size() / 2;
 }
 
-// Trimmed maximum lift coefficients (clean is per flight condition; take-off
-// and landing flap at low Mach), computed once per aircraft.
+// ---- Trimmed maximum lift coefficients ----
+// One sweep (trimmedMaxLiftCoefficient) is up to ~3,000 evaluations of the
+// aerodynamic model in a jet: 0.2-1 s in the browser's WebAssembly, so:
+//   * finished sweeps are kept by their inputs (the same inputs give the same
+//     result to the bit): a second air start at that flap costs nothing;
+//   * an air start only asks whether the requested speed is above 1.25 Vs,
+//     and its sweep stops as soon as the lift says so (avd_reset_air);
+//   * the values that follow the flight (the low-speed band as the flaps
+//     extend, the Mach number changes, ice builds) are swept a few ms per
+//     call (kClmaxBudgetMs), the last value shown until the new one is done.
+//     Each is the value the inputs of the frame its key changed give, as
+//     before; it arrives some frames later instead of stalling one.
+constexpr double kClmaxBudgetMs = 2.0;
+
+const AeroModel& clmaxModel() {
+    if (!g->clmaxModel) g->clmaxModel = std::make_unique<AeroModel>(g->def);
+    return *g->clmaxModel;
+}
+ClmaxRequest clmaxRequest(Real flap, Real mach, const SurfaceIce* ice) {
+    ClmaxRequest r;
+    r.flap = flap;
+    r.mach = mach;
+    r.cg = g->ac->massProperties().cg;
+    if (ice) r.ice.assign(ice, ice + clmaxModel().surfaceCount());
+    return r;
+}
+std::unique_ptr<TrimmedMaxLift> clmaxSweep(const ClmaxRequest& r, Real enough = std::numeric_limits<Real>::infinity()) {
+    return std::make_unique<TrimmedMaxLift>(clmaxModel(), g->def.referenceArea, r.cg, r.flap, r.mach, r.ice.empty() ? nullptr : r.ice.data(),
+                                            enough);
+}
+const Real* clmaxMemoFind(const ClmaxRequest& r) {
+    for (const auto& [k, v] : g->clmaxMemo)
+        if (k == r) return &v;
+    return nullptr;
+}
+void clmaxMemoPut(const ClmaxRequest& r, Real v) {
+    if (clmaxMemoFind(r)) return;
+    if (g->clmaxMemo.size() >= 32) g->clmaxMemo.erase(g->clmaxMemo.begin());
+    g->clmaxMemo.emplace_back(r, v);
+}
+// At once (kept for the next time).
+Real clmaxNow(const ClmaxRequest& r) {
+    if (const Real* v = clmaxMemoFind(r)) return *v;
+    const auto sweep = clmaxSweep(r);
+    while (!sweep->step(1 << 20)) {
+    }
+    clmaxMemoPut(r, sweep->result());
+    return sweep->result();
+}
+// The slot's value for `key`, swept from the inputs (`request()`) of the
+// frame the key changed: later ones over frames (a sweep under way finishes
+// first, then the latest request is swept). The first value comes at once,
+// and so does every value for a reader that comes back after more than a
+// second of flight (a script, a test: not a display, which reads every frame).
+template <class F>
+Real clmaxFollow(ClmaxSlot& s, Real key, F&& request) {
+    const Real now = g->ac->time();
+    const bool atOnce = s.lastKey < 0 || now - s.lastTime > 1.0;
+    s.lastTime = now;
+    if (key != s.lastKey) {
+        s.lastKey = key;
+        s.pending = true;
+        s.pendingRequest = request();
+    }
+    if (atOnce && s.pending) s.job.reset();  // superseded: only the latest value is wanted
+    const auto start = std::chrono::steady_clock::now();
+    for (;;) {
+        if (!s.job) {
+            if (!s.pending) break;
+            s.pending = false;
+            s.jobRequest = std::move(s.pendingRequest);
+            if (const Real* v = clmaxMemoFind(s.jobRequest)) {
+                s.value = *v;
+                continue;
+            }
+            s.job = clmaxSweep(s.jobRequest);
+        }
+        if (s.job->step(1)) {  // (one evaluation: up to a ms past the stall in a jet)
+            s.value = s.job->result();
+            clmaxMemoPut(s.jobRequest, s.value);
+            s.job.reset();
+            continue;
+        }
+        if (!atOnce && std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count() > kClmaxBudgetMs)
+            break;
+    }
+    return s.value;
+}
+
+// Trimmed maximum lift coefficients at take-off and landing flap (low
+// Mach), computed once per aircraft (the approach speed and V-speeds).
 void ensureClmaxModel() {
-    if (g->clmaxModel) return;
+    if (g->clmaxReady) return;
+    g->clmaxReady = true;
     const std::vector<Real>& det = g->def.controls.flapDetents;
-    g->clmaxModel = std::make_unique<AeroModel>(g->def);
-    const Vec3 cg0 = g->ac->massProperties().cg;
-    g->clmaxTakeoff = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det[takeoffDetent(det)], 0.2);
-    g->clmaxLanding = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, cg0, det.back(), 0.2);
+    g->clmaxTakeoff = clmaxNow(clmaxRequest(det[takeoffDetent(det)], 0.2, nullptr));
+    g->clmaxLanding = clmaxNow(clmaxRequest(det.back(), 0.2, nullptr));
 }
 // The airframe's ice, quantised (0.25 mm steps of wing and tail ice): the
 // trimmed CLmax caches are recomputed when it moves on. 0 without ice.
@@ -824,18 +945,15 @@ Real iceKey() {
     return 1 + k;
 }
 // The trimmed CLmax at the current flap, Mach and ice (the jet array's
-// cache, refreshed when any of them moves on).
+// value, following them over frames).
 Real trimmedMaxLiftCoefficientCached() {
     ensureClmaxModel();
     const Aircraft& ac = *g->ac;
     const AircraftTelemetry& t = ac.telemetry();
     const Real key = std::round(radToDeg(t.flapAngle) * 2) * 1000 + std::round(std::max(t.mach, 0.2) * 20) + 1e6 * iceKey();
-    if (key != g->clmaxKey) {
-        g->clmaxKey = key;
-        g->clmax = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, ac.massProperties().cg, t.flapAngle,
-                                             std::max(t.mach, 0.2), ac.icing().iced() ? ac.icing().surfaces() : nullptr);
-    }
-    return g->clmax;
+    return clmaxFollow(g->clmax, key, [&] {
+        return clmaxRequest(t.flapAngle, std::max(t.mach, 0.2), ac.icing().iced() ? ac.icing().surfaces() : nullptr);
+    });
 }
 Real jetApproachKias() {
     ensureClmaxModel();
@@ -937,9 +1055,27 @@ AVD_EXPORT void avd_reset_air(double east, double north, double heightAboveField
     // Jets at height: no slower than Mach 0.72 (behind the drag curve otherwise).
     if (jet && altMsl > 9000)
         while (v < 300 && scenarios::tasFromCas(ktToMs(v), air) / air.speedOfSound < 0.72) v += 1;
-    AeroModel am(d);
-    const Real cl = trimmedMaxLiftCoefficient(am, d.referenceArea, g->ac->massProperties().cg, det[static_cast<std::size_t>(flap)], 0.2);
-    if (cl > 0.1) v = std::max(v, 1.25 * msToKt(std::sqrt(2 * g->ac->massProperties().mass * 9.80665 / (1.225 * d.referenceArea * cl))));
+    // At least 1.25 Vs: only whether v is above it matters, so the sweep
+    // stops once the lift at v / 1.25 is reached (a few alphas, not the
+    // whole sweep to the stall and past it); a full one (kept for the next
+    // start) only when it is not. The same v either way.
+    const Real mass = g->ac->massProperties().mass;
+    auto floorKt = [&](Real cl) { return 1.25 * msToKt(std::sqrt(2 * mass * 9.80665 / (1.225 * d.referenceArea * cl))); };
+    const ClmaxRequest req = clmaxRequest(det[static_cast<std::size_t>(flap)], 0.2, nullptr);
+    const Real enough = std::max(1.000001 * 2 * mass * 9.80665 / (1.225 * d.referenceArea * sq(ktToMs(v / 1.25))), 0.2);
+    Real cl = 0;
+    if (const Real* known = clmaxMemoFind(req)) {
+        cl = *known;
+    } else {
+        const auto sweep = clmaxSweep(req, enough);
+        while (!sweep->step(1 << 20)) {
+        }
+        cl = sweep->result();
+        // Stopped short (cl >= enough) yet not clear of the floor (rounding): the whole sweep after all.
+        if (cl < enough) clmaxMemoPut(req, cl);
+        else if (floorKt(cl) > v) cl = clmaxNow(req);
+    }
+    if (cl > 0.1) v = std::max(v, floorKt(cl));
     placeTrimmed(ned, altMsl, degToRad(headingDeg), v, flap, 0.0);
     finishReset(true);
 }
@@ -1326,9 +1462,12 @@ AVD_EXPORT double* avd_jet() {
     const CockpitState& cs = ac.instruments().state();
     g_jet[0] = ac.turbofanCount();
     g_jet[1] = ac.gearPosition();
-    g_jet[2] = ac.cockpitControl("gear.lever") != 0;
+    // (Read every frame: the control ids are built once, not per call.)
+    static const std::string kGearLever = "gear.lever", kSpeedbrakeLever = "speedbrake.lever";
+    static const std::string kEngineFuel[2] = {"engine1.fuel", "engine2.fuel"};
+    g_jet[2] = ac.cockpitControl(kGearLever) != 0;
     g_jet[3] = ac.speedbrakePosition();
-    g_jet[4] = std::max(ac.cockpitControl("speedbrake.lever"), 0);
+    g_jet[4] = std::max(ac.cockpitControl(kSpeedbrakeLever), 0);
     g_jet[5] = t.mach;
     g_jet[6] = t.fuelMass;
     Real ff = 0;
@@ -1337,7 +1476,7 @@ AVD_EXPORT double* avd_jet() {
         const CockpitState::EngineGauges& s = cs.engines[static_cast<std::size_t>(i)];
         double* o = g_jet + 8 + 8 * i;
         o[0] = s.n1; o[1] = s.n2; o[2] = s.itt > 0 ? s.itt - 273.15 : 0.0; o[3] = s.fuelFlow * 3600; o[4] = e.thrust / 1000;
-        o[5] = e.running; o[6] = e.starting; o[7] = ac.cockpitControl("engine" + std::to_string(i + 1) + ".fuel") == 1;
+        o[5] = e.running; o[6] = e.starting; o[7] = ac.cockpitControl(kEngineFuel[i]) == 1;
         g_jet[30 + i] = s.oilPressure / 6894.757;
         ff += e.fuelFlow;
         g_jet[58 + i] = t.throttles[static_cast<std::size_t>(i)];
@@ -1370,9 +1509,9 @@ AVD_EXPORT double* avd_jet() {
     const std::vector<Real>& det = g->def.controls.flapDetents;
     ensureClmaxModel();
     // With ice on the airframe, the iced airframe's (avd/icing.hpp).
-    trimmedMaxLiftCoefficientCached();
+    const Real clmax = trimmedMaxLiftCoefficientCached();
     auto vs = [&](Real cl) { return cl > 0.1 ? msToKt(std::sqrt(2 * t.mass * 9.80665 / (1.225 * g->def.referenceArea * cl))) : 0.0; };
-    g_jet[32] = vs(g->clmax);
+    g_jet[32] = vs(clmax);
     g_jet[33] = vs(g->clmaxTakeoff);
     g_jet[34] = vs(g->clmaxLanding);
     g_jet[35] = t.mass;
@@ -2712,14 +2851,12 @@ AVD_EXPORT double* avd_icing() {
     ensureClmaxModel();
     const AircraftTelemetry& t = ac.telemetry();
     const Real cleanKey = std::round(radToDeg(t.flapAngle) * 2) * 1000 + std::round(std::max(t.mach, 0.2) * 20);
-    if (cleanKey != g->clmaxCleanKey) {
-        g->clmaxCleanKey = cleanKey;
-        g->clmaxClean = trimmedMaxLiftCoefficient(*g->clmaxModel, g->def.referenceArea, ac.massProperties().cg, t.flapAngle, std::max(t.mach, 0.2));
-    }
-    const Real iced = m.iced() ? trimmedMaxLiftCoefficientCached() : g->clmaxClean;
+    // (Without ice the jet array's sweep is the same one: kept, and found, by its inputs.)
+    const Real iced = m.iced() ? trimmedMaxLiftCoefficientCached() : 0.0;
+    const Real clean = clmaxFollow(g->clmaxClean, cleanKey, [&] { return clmaxRequest(t.flapAngle, std::max(t.mach, 0.2), nullptr); });
     auto vs = [&](Real cl) { return cl > 0.1 ? msToKt(std::sqrt(2 * t.mass * 9.80665 / (1.225 * g->def.referenceArea * cl))) : 0.0; };
-    o[42] = vs(iced);
-    o[43] = vs(g->clmaxClean);
+    o[42] = vs(m.iced() ? iced : clean);
+    o[43] = vs(clean);
     o[44] = ac.antiIceBleed();
     o[45] = m.switchCount();
     // How far the ice has brought the wing's stall angle down (deg), at the

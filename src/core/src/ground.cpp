@@ -223,7 +223,13 @@ Real RegionGround::terrainDown(Real n, Real e) const {
     const Field* nearest = nullptr;
     Real nearestGap = 1e18;
     for (const Field& f : fields_) {
-        const Real gap = std::hypot(n - f.north, e - f.east) - f.radius;
+        const Real dn = n - f.north, de = e - f.east;
+        // The distance is at least the longer leg (the rounded hypot too): a
+        // field the point is outside of and no nearer than the nearest so far
+        // needs no hypot (the same answer, a few times faster over a city).
+        const Real leg = std::max(std::abs(dn), std::abs(de)) - f.radius;
+        if (leg > 0 && leg >= nearestGap) continue;
+        const Real gap = std::hypot(dn, de) - f.radius;
         if (gap <= 0) return f.down;
         if (gap < nearestGap) nearestGap = gap, nearest = &f;
     }
@@ -251,23 +257,39 @@ Real RegionGround::blendDown(Real n, Real e) const {
     return dsum / wsum;
 }
 
-void RegionGround::surfaceAt(Real n, Real e, Real& down, Vec3& normal, SurfaceProperties& s) const {
-    s = surfaces::kGrass;
-    s.waterDepth = waterDepth_;
+const RegionGround::Field* RegionGround::fieldAt(Real n, Real e, const RunwayDef*& runway, Real& along) const {
+    runway = nullptr;
     for (const Field& f : fields_) {
-        if (std::hypot(n - f.north, e - f.east) > f.radius) continue;
-        down = f.down;
-        normal = {0, 0, -1};
+        const Real fn = n - f.north, fe = e - f.east;
+        if (std::max(std::abs(fn), std::abs(fe)) > f.radius || std::hypot(fn, fe) > f.radius) continue;
         for (const RunwayDef& r : f.runways) {
             const Real ch = std::cos(r.headingTrue), sh = std::sin(r.headingTrue);
             const Real dn = n - r.threshold.x, de = e - r.threshold.y;
-            const Real along = dn * ch + de * sh, across = -dn * sh + de * ch;
-            if (along < 0 || along > r.length || std::abs(across) > 0.5 * r.width) continue;
-            down = r.threshold.z - r.slope * along;
-            normal = normalized(Vec3{-r.slope * ch, -r.slope * sh, -1});
-            s = r.surface;
+            const Real a = dn * ch + de * sh, across = -dn * sh + de * ch;
+            if (a < 0 || a > r.length || std::abs(across) > 0.5 * r.width) continue;
+            runway = &r;
+            along = a;
+            break;
+        }
+        return &f;
+    }
+    return nullptr;
+}
+
+void RegionGround::surfaceAt(Real n, Real e, Real& down, Vec3& normal, SurfaceProperties& s) const {
+    s = surfaces::kGrass;
+    s.waterDepth = waterDepth_;
+    const RunwayDef* r = nullptr;
+    Real along = 0;
+    if (const Field* f = fieldAt(n, e, r, along)) {
+        down = f->down;
+        normal = {0, 0, -1};
+        if (r) {
+            const Real ch = std::cos(r->headingTrue), sh = std::sin(r->headingTrue);
+            down = r->threshold.z - r->slope * along;
+            normal = normalized(Vec3{-r->slope * ch, -r->slope * sh, -1});
+            s = r->surface;
             s.waterDepth = waterDepth_;
-            return;
         }
         return;
     }
@@ -277,6 +299,25 @@ void RegionGround::surfaceAt(Real n, Real e, Real& down, Vec3& normal, SurfacePr
     const Real dN = (terrainDown(n + h, e) - terrainDown(n - h, e)) / (2 * h);
     const Real dE = (terrainDown(n, e + h) - terrainDown(n, e - h)) / (2 * h);
     normal = normalized(Vec3{dN, dE, -1});
+}
+
+Real RegionGround::surfaceDown(Real n, Real e) const {
+    const RunwayDef* r = nullptr;
+    Real along = 0;
+    if (const Field* f = fieldAt(n, e, r, along)) return r ? r->threshold.z - r->slope * along : f->down;
+    return terrainDown(n, e);
+}
+
+// below(): the vertical ray from 1000 m above the point, 1e5 m long. It meets
+// the surface at the point's own horizontal position (raycast, the vertical
+// case), at t = (down - origin) * nz / nz: the same height but for the last
+// bit of rounding where the terrain slopes, with no normal to sample.
+bool RegionGround::belowDown(const Vec3& point, Real& down) const {
+    const Vec3 o = point - Vec3{0, 0, 1000};
+    const Real t = surfaceDown(o.x, o.y) - o.z;
+    if (t < 0 || t > 1e5) return false;
+    down = o.z + t;
+    return true;
 }
 
 GroundHit RegionGround::raycast(const Vec3& o, const Vec3& dir, Real maxDistance) const {
@@ -320,15 +361,24 @@ GroundHit RegionGround::raycast(const Vec3& o, const Vec3& dir, Real maxDistance
     // Gentle terrain (or a vertical ray): start on the plane of the terrain
     // under the origin and refine on the local tangent plane.
     if (dir.z <= 1e-9) return h;
-    Real t = (terrainDown(o.x, o.y) - o.z) / dir.z;
-    for (int i = 0; i < 6; ++i) {
+    // A vertical ray (below(): every ground and gear query, each building's
+    // footing) meets the surface at its own horizontal position whatever t
+    // is, so the first refinement is already the last: the same surfaceAt,
+    // the same t, five more times. One pass gives the identical hit at a
+    // sixth of the cost (a city tile stands thousands of buildings).
+    const bool vertical = dir.x == 0 && dir.y == 0;
+    Real t = vertical ? 0.0 : (terrainDown(o.x, o.y) - o.z) / dir.z;
+    for (int i = 0; i < (vertical ? 1 : 6); ++i) {
         const Vec3 p = o + dir * t;
         Real down;
         Vec3 nrm;
         SurfaceProperties s;
         surfaceAt(p.x, p.y, down, nrm, s);
         const Real denom = dot(dir, nrm);
-        if (std::abs(denom) < 1e-9) break;
+        if (std::abs(denom) < 1e-9) {
+            if (vertical) t = (terrainDown(o.x, o.y) - o.z) / dir.z;  // the start the loop would have kept
+            break;
+        }
         t = dot(Vec3{p.x, p.y, down} - o, nrm) / denom;
         h.normal = nrm;
         h.surface = s;

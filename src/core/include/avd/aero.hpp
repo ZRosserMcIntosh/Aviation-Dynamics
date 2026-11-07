@@ -19,6 +19,7 @@
 #pragma once
 
 #include <array>
+#include <limits>
 #include <vector>
 
 #include "avd/aircraft_def.hpp"
@@ -287,9 +288,42 @@ private:
 // flight with the elevator trimming the pitching moment about cg, for a flap
 // angle (rad) and Mach number: the basis of stall and V-speeds. Sweeps alpha
 // out of ground effect with no slipstream; elevator saturating limits it.
-// With `ice` (per surface), the iced airframe's.
+// With `ice` (per surface), the iced airframe's. With `enough`, the sweep
+// stops once the lift coefficient reaches it (the result is then at least
+// `enough`, and no more than the maximum): for a caller asking only whether
+// the airframe can fly at a given lift coefficient.
 Real trimmedMaxLiftCoefficient(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach,
-                               const SurfaceIce* ice = nullptr);
+                               const SurfaceIce* ice = nullptr, Real enough = std::numeric_limits<Real>::infinity());
+
+// The same sweep as a job that can be spread over many calls (a frame's
+// budget at a time in the browser): step() makes at most `maxEvaluations`
+// more evaluations of the model, in the order trimmedMaxLiftCoefficient makes
+// them, so the result is the same to the bit. It keeps a copy of the ice; the
+// model must outlive it.
+class TrimmedMaxLift {
+public:
+    TrimmedMaxLift(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach, const SurfaceIce* ice = nullptr,
+                   Real enough = std::numeric_limits<Real>::infinity());
+    // True once the sweep is done (then result() is final).
+    bool step(int maxEvaluations);
+    bool done() const { return done_; }
+    Real result() const { return best_; }
+    int evaluations() const { return evaluations_; }
+
+private:
+    Real eval(Real e, Real& lift);
+    const AeroModel* model_;
+    std::vector<SurfaceIce> ice_;
+    AeroInputs in_;
+    AeroOutputs out_;
+    Real refArea_, enough_, v_ = 0, q_ = 0;
+    Real alphaDeg_ = 0;
+    int phase_ = 0;  // 0, 1: the elevator stops; 2..31: bisection; 32: the trimmed point
+    Real mLo_ = 0, lo_ = -1, hi_ = 1, mlo_ = 0;
+    Real best_ = 0;
+    bool done_ = false;
+    int evaluations_ = 0;
+};
 
 // A lifting surface's stall as an angle-of-attack computer's flight-test
 // calibration sees it, for a flap angle (rad): M 0.2, sea level, out of

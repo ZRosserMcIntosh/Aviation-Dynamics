@@ -1,8 +1,10 @@
 // Aviation Dynamics — turbofan, retractable gear, speedbrake and the Top G
 // (G650ER-class) reference jet.
 // SPDX-License-Identifier: MIT
+#include <array>
 #include <vector>
 
+#include "avd/aero.hpp"
 #include "avd/assists.hpp"
 #include "avd/loading.hpp"
 #include "avd/wake.hpp"
@@ -1204,4 +1206,94 @@ TEST_CASE("top g: a normal flare in ground effect leaves the shaker and pusher q
     CHECK_RANGE(radToDeg(s.pushAlpha), 11.5, 16.5);
     CHECK_RANGE(radToDeg(s.pushAlpha - s.warnAlpha), 0.5, 3.0);
     CHECK(s.warnIas > s.pushIas);  // (at 1 deg/s of pitch the speed falls fast: 25.207's 5 kt is for 1 kt/s)
+}
+
+namespace {
+// trimmedMaxLiftCoefficient as it was written before TrimmedMaxLift (one
+// loop, bisection on the elevator): the reference the job must match.
+Real clmaxReference(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach, const SurfaceIce* ice, int& evals) {
+    const Real a = 340.3, v = std::max(mach, 0.15) * a;
+    AeroInputs in;
+    in.ice = ice;
+    in.density = isa::kSeaLevelDensity;
+    in.speedOfSound = a;
+    in.cg = cg;
+    in.controls.flap = flap;
+    AeroOutputs out;
+    model.prepare(out);
+    const Real q = 0.5 * in.density * v * v;
+    auto eval = [&](Real alpha, Real e, Real& lift) {
+        in.velocityBody = {v * std::cos(alpha), 0, v * std::sin(alpha)};
+        in.controls.elevator = e;
+        model.evaluate(in, out);
+        ++evals;
+        lift = out.force.x * std::sin(alpha) - out.force.z * std::cos(alpha);
+        return out.moment.y;
+    };
+    Real best = 0;
+    for (Real alphaDeg = 0; alphaDeg <= 30.0; alphaDeg += 0.25) {
+        const Real alpha = alphaDeg * kTwoPi / 360.0;
+        Real lift = 0, liftLo = 0, liftHi = 0;
+        const Real mLo = eval(alpha, -1, liftLo), mHi = eval(alpha, 1, liftHi);
+        if ((mLo > 0) == (mHi > 0)) {
+            if (mHi < 0) break;
+            continue;
+        }
+        Real lo = -1, hi = 1, mlo = mLo;
+        for (int k = 0; k < 30; ++k) {
+            const Real mid = 0.5 * (lo + hi), m = eval(alpha, mid, lift);
+            if ((m > 0) == (mlo > 0)) {
+                lo = mid;
+                mlo = m;
+            } else {
+                hi = mid;
+            }
+        }
+        eval(alpha, 0.5 * (lo + hi), lift);
+        const Real cl = lift / (q * refArea);
+        if (cl > best) best = cl;
+        else if (cl < best - 0.15) break;
+    }
+    return best;
+}
+}  // namespace
+
+TEST_CASE("trimmed CLmax: spread over steps, or stopped once the lift is enough, it is the one-shot sweep to the bit") {
+    // The browser spreads the sweep over frames (the low-speed band as the
+    // flaps run) and an air start stops it once the lift at its speed is
+    // found: neither may change a value. Past the stall the lifting line
+    // leans on the path to its solution, so the evaluations must be the
+    // same ones in the same order (the CRJ's landing flap differs by 3 % with
+    // a root finder that converges in fewer of them).
+    for (const char* id : {"tupi_t180", "cj4"}) {
+        const AircraftDefinition d = loadReference(id);
+        const AeroModel model(d);
+        const Aircraft ac(d);
+        const Vec3 cg = ac.massProperties().cg;
+        std::array<SurfaceIce, 8> ice{};
+        ice[0] = ice[1] = ice[2] = {0.004, 0.5};
+        for (const Real flap : {d.controls.flapDetents.front(), d.controls.flapDetents.back()})
+            for (const SurfaceIce* iced : {static_cast<const SurfaceIce*>(nullptr), static_cast<const SurfaceIce*>(ice.data())}) {
+                int evals = 0;
+                const Real reference = clmaxReference(model, d.referenceArea, cg, flap, 0.2, iced, evals);
+                const Real oneShot = trimmedMaxLiftCoefficient(model, d.referenceArea, cg, flap, 0.2, iced);
+                TrimmedMaxLift job(model, d.referenceArea, cg, flap, 0.2, iced);
+                std::array<SurfaceIce, 8> scratch = ice;  // the job keeps its own copy of the ice
+                int calls = 1;
+                while (!job.step(7)) {
+                    ++calls;
+                    scratch[0].thickness += 0.001;
+                }
+                const Real enough = 0.5 * reference;
+                TrimmedMaxLift early(model, d.referenceArea, cg, flap, 0.2, iced, enough);
+                while (!early.step(1000)) {
+                }
+                std::cerr << "  " << id << " flap " << radToDeg(flap) << (iced ? " iced" : "") << ": CLmax " << reference << " ("
+                          << evals << " evaluations; in " << calls << " steps of 7: " << job.result() << "); stopped at "
+                          << enough << ": " << early.result() << " after " << early.evaluations() << "\n";
+                CHECK(oneShot == reference);
+                CHECK(job.result() == reference && job.evaluations() == evals);
+                CHECK(early.result() >= enough && early.result() <= reference && early.evaluations() < evals / 2);
+            }
+    }
 }
