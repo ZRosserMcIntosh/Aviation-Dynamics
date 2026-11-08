@@ -428,6 +428,7 @@ void AeroModel::prepare(AeroOutputs& out) const {
     out.llSeparated.assign(static_cast<std::size_t>(nMax), 0);
     out.llGrad.assign(static_cast<std::size_t>(nMax), {});
     out.llControl.assign(strips_.size(), {});
+    out.llShed.assign(strips_.size(), 1);
     out.llLu.assign(static_cast<std::size_t>(llOffset_[surfaces_.size()]), 0);
     out.llPivot.assign(strips_.size(), 0);
     out.llValid.fill(false);
@@ -582,6 +583,32 @@ void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, Ae
         out.llValid[s] = true;
         out.llLuValid[s] = false;
     }
+    // Still air. The lifting line's wake is carried downstream by the flow
+    // past the strip; where the air hardly moves past it along the wake --
+    // an aircraft parked or just starting its roll, the span outside a
+    // slipstream at a standstill, a tailwind blowing over the trailing edge
+    // -- there is no steady trailing vortex system for its circulation to
+    // feed. Its flow direction there is set by gear settling, rotation and
+    // gusts of centimetres a second, much of it past the stall or reversed,
+    // and the coupled solve then has no well-posed answer: it ran into its
+    // iteration cap (a Jacobian and an LU every iteration) on most steps on
+    // the ground. So a strip sheds its circulation into the wake by the speed
+    // at which its free flow carries the wake (along the legs), fading out
+    // from 1 to 0.2 m/s: below, the section works in its own free flow plus
+    // what the others induce (strip theory, uniquely solved), at a dynamic
+    // pressure of at most 0.6 Pa. In any flight every strip sees tens of
+    // metres a second and the factor is exactly 1.
+    constexpr Real kStillAir = 0.2, kMovingAir = 1.0;  // m/s
+    Real* shed = out.llShed.data() + n0;
+    for (int i = 0; i < n; ++i) shed[i] = smoothstep(kStillAir, kMovingAir, -dot(vFree[i], u));
+    auto gammaShed = [&](int i, const Vec3& w, Real* attached) {
+        const Real g = gammaOf(i, w, attached);
+        if (shed[i] >= 1) return g;
+        // The separated-flow viscosity below fades with it: a strip that
+        // sheds nothing is not pulled toward its neighbours' circulation.
+        if (attached) *attached = 1 - shed[i] * (1 - *attached);
+        return g * shed[i];
+    };
     // Newton on R_i = G_i - g_i(v_i - sum_j V_ij G_j), from the last solution.
     Real* G = out.llGamma.data();
     Real* R = out.llResidual.data();
@@ -613,7 +640,7 @@ void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, Ae
             const Vec3 w = flowAt(i);
             wSave[static_cast<std::size_t>(std::min(i, 63))] = w;
             Real att = 1;
-            const Real g = gammaOf(i, w, &att);
+            const Real g = gammaShed(i, w, &att);
             // Artificial viscosity where the flow has separated (Chattot
             // 2004): a stalled strip's circulation is pulled toward its
             // neighbours', so the loss of its lift cannot feed the runaway
@@ -655,9 +682,14 @@ void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, Ae
                     continue;
                 }
                 const Vec3 w = i < 64 ? wSave[static_cast<std::size_t>(i)] : flowAt(i);
-                const Real g = gammaOf(i, w, nullptr);
-                const Real dh = 1e-3 * std::max(length(w), 1.0);
-                grad[i] = Vec3{gammaOf(i, w + Vec3{dh, 0, 0}, nullptr) - g, gammaOf(i, w + Vec3{0, dh, 0}, nullptr) - g, gammaOf(i, w + Vec3{0, 0, dh}, nullptr) - g} / dh;
+                const Real g = gammaShed(i, w, nullptr);
+                // The step is relative to the strip's flow: g is homogeneous
+                // (second degree) in it, so its gradient is a matter of
+                // direction. A floor of 1 m/s here made the step a fifth of a
+                // 5 mm/s flow, 11 deg of angle across the stall: a Jacobian
+                // that pointed Newton nowhere below walking pace.
+                const Real dh = 1e-3 * std::max(length(w), 1e-6);
+                grad[i] = Vec3{gammaShed(i, w + Vec3{dh, 0, 0}, nullptr) - g, gammaShed(i, w + Vec3{0, dh, 0}, nullptr) - g, gammaShed(i, w + Vec3{0, 0, dh}, nullptr) - g} / dh;
             }
             for (int i = 0; i < n; ++i) {
                 for (int j = 0; j < n; ++j) J[i * n + j] = (i == j ? 1.0 : 0.0) + dot(grad[i], V[i * n + j]);
@@ -1034,7 +1066,7 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
             tel.stallAlpha = e.stallAlpha;
             tel.zeroLiftAlpha = e.zeroLiftAlpha;
             tel.iceStallShift = e.iceShift;
-            if (ll) tel.gamma = e.gamma;
+            if (ll) tel.gamma = e.gamma * out.llShed[static_cast<std::size_t>(i)];
             liftSum += q * area * sec.cl;
             qaFree += qFree * area;
             alphaSum += e.alpha * cs * st.area;

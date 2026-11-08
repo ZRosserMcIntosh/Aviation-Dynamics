@@ -144,6 +144,10 @@ struct AeroOutputs {
     // Per strip: zero-lift shift, clmax increment / slope, cm, cd, chord
     // extension, spoiled lift fraction.
     std::vector<std::array<Real, 6>> llControl;
+    // Per strip: the share of its section's circulation it sheds into the
+    // lifting-line wake (1 in any flight; less only where the air hardly
+    // carries the wake away from it -- see solveLiftingLine).
+    std::vector<Real> llShed;
     std::array<Vec3, 8> llDir{};           // flow direction the influence was built for
     std::array<Real, 8> llHeight{};
     std::array<bool, 8> llValid{};
