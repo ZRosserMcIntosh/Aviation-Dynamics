@@ -222,8 +222,10 @@ TEST_CASE("blind landings: ILS in a crosswind; RNAV (GPS) approaches") {
     // nearly straight across, and the mechanical turbulence it makes over the
     // city.
     const Airport& sp = airport("SBSP");
-    // (The Top G's flare there reaches its stall warning in the gusts and
-    // stops pulling: 274 fpm.)
+    // (The Top G's flare there used to reach its stall warning in the gusts
+    // and stop pulling, 274 fpm: the AoA computer's thresholds sat on the
+    // first outboard strip's stall with landing flap, 5 deg short of the
+    // wing's. On the flap schedule now: 140 fpm.)
     for (const char* id : {"tupi_t180", "top_g", "crj700", "b738"}) {
         const bool jet = std::string(id) != "tupi_t180";
         checkLanding(fly(id, "SBSP", 0, true, jet ? 10 : 6, 6, 60), sp.runways[0], 300);

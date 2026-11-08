@@ -31,6 +31,10 @@
    "citation": "Saravanamuttoo, Rogers & Cohen, Gas Turbine Theory (5th ed.), ch. 9: free-turbine torque-speed characteristic, corrected (non-dimensional) parameters, off-design matching."
   },
   {
+   "id": "CRUISE",
+   "citation": "Published King Air 350 cruise reports (stock PT6A-60A): AOPA Pilot, Turbine Pilot (Oct 2014): 310 KTAS on 773 lb/h total at FL240 (high-speed cruise); Twin & Turbine: 312 KTAS at FL240 at 90 % torque, ~400 lb/h per side; AOPA Pilot, Turbine Pilot (Jun 2002): FL270, 60 % torque, 1,600 rpm, ITT 680 degC, ~280 lb/h per engine; AOPA Pilot (Sep 2014): long-range cruise at FL350, 230-240 KTAS on ~360 lb/h total. Pilot reports, not the flight manual's tables: weights and temperatures approximate."
+  },
+  {
    "id": "EST",
    "citation": "Engineering estimate for this simulation (no published source); see the note."
   }
@@ -88,7 +92,7 @@
    "field": "fuselages, drag_items",
    "kind": "calibrated",
    "source": "ROSKAM",
-   "note": "Flat-plate areas from a wetted-area build-up (fuselage 0.21, nacelles and exhaust stacks 0.13, excrescences, antennas, cooling inlets and interference 0.09 m^2 of CdA); with the strips' profile drag CD0 ~0.025. The excrescence item is the one adjusted against the published maximum cruise speed."
+   "note": "Flat-plate areas from a wetted-area build-up (fuselage 0.21, nacelles and exhaust stacks 0.13, excrescences, antennas, cooling inlets and interference 0.17 m^2 of CdA); with the strips' profile drag CD0 ~0.028. The excrescence item is the one adjusted against the published maximum cruise: 310 KTAS at FL240 on 90 % torque (CRUISE)."
   },
   {
    "field": "turboprops",
@@ -100,7 +104,13 @@
    "field": "turboprops[*].thermodynamic_power_shp, itt_theta_exponent, gas_power_exponent, ng_zero_power",
    "kind": "calibrated",
    "source": "SARAVANAMUTTOO",
-   "note": "Gas power on corrected parameters (delta0 sqrt(theta0) x g(Ng/sqrt(theta0)), g cubic from 50 % Ng) with the ITT limit reached at 100 % corrected Ng at sea level ISA: a thermodynamic rating of 1,575 shp (1.5 x the flat rating) and ITT = theta0^0.15 x the corrected ITT put the end of the flat rating (torque limit to ITT limit) near 15,000 ft ISA in the climb and ~780 shp at FL240 at 300 KTAS, the power class of the published maximum cruise. Take-off at sea level ISA: Ng ~94 %, ITT ~770 degC, torque-limited; still torque-limited at ISA+20."
+   "note": "Gas power on corrected parameters (delta0 sqrt(theta0) x g(Ng/sqrt(theta0)), g cubic from 50 % Ng) with the ITT limit reached at 100 % corrected Ng at sea level ISA: a thermodynamic rating of 1,575 shp (1.5 x the flat rating) and ITT = theta0^0.3 x the corrected ITT put the end of the flat rating (torque limit to ITT limit) near 17,000 ft ISA in the climb and ~840 shp (90 % torque at 1,500 rpm) at FL240 at 310 KTAS, the published maximum cruise torque (CRUISE: 90 % at FL240). Take-off at sea level ISA: Ng ~93 %, ITT ~760 degC, torque-limited; still torque-limited at ISA+20. (theta0^0.15 gave 80 % torque at FL240, the cruise speed made up by too little drag.)"
+  },
+  {
+   "field": "turboprops[*].fuel_power_exponent",
+   "kind": "calibrated",
+   "source": "CRUISE",
+   "note": "Corrected fuel flow = A + B Pr (P_c / Pr)^0.75 through the low-idle flow and the published take-off SFC (0.548 lb/shp/h, unchanged): at altitude the corrected power runs past the sea-level rating (the cold intake: a higher turbine-entry to inlet temperature ratio at the same ITT) and the marginal SFC falls. FL240 maximum cruise 392 lb/h (SFC 0.47; published 386-400), FL270 60 % torque 290 lb/h (~280), FL350 long-range 176 lb/h (~180). The straight line (exponent 1) read ~0.53 lb/shp/h at altitude, 12-15 % high."
   },
   {
    "field": "turboprops[*].ng_low_idle, ng_high_idle, itt_idle_c, idle_fuel_flow_lb_per_h, acceleration_time_s, start_time_s, light_off_ng",
@@ -154,7 +164,13 @@
    "field": "stall_warning",
    "kind": "estimated",
    "source": "EST",
-   "note": "Lift-transducer stall warning modelled as the computed least strip margin with a 2 deg margin; no stick pusher."
+   "note": "Lift-transducer stall warning modelled as the computed least strip margin with a 2 deg margin; no stick pusher. The transducer has no icing schedule (icing_alpha_shift 0): with ice on the wing its warning comes late, as a vane's does."
+  },
+  {
+   "field": "ice_protection",
+   "kind": "estimated",
+   "source": "SPEC",
+   "note": "The King Air 350's ice protection: pneumatic de-ice boots on the wing and horizontal tail leading edges on one SURFACE DEICE switch (anti_ice.surface; inflated here every 60 s while on, the shed leaving ~0.8 mm, where the airplane's switch is momentary per cycle), electrically heated propeller boots on an automatic timer (anti_ice.prop, ~90 s cycle: the inboard blade's ice thrown each cycle), electrically heated windshield (always on here), heated pitot tubes (the pitot_heat load: electrical.load.pitot_heat). Not modelled: the engine inlet inertial separators (ice vanes; no turbine-engine icing in the core), the heated fuel vents and stall-warning transducer, the brake de-ice."
   },
   {
    "field": "contacts",
@@ -538,7 +554,7 @@
     0.0,
     0.3
    ],
-   "drag_area_m2": 0.09
+   "drag_area_m2": 0.17
   }
  ],
  "turboprops": [
@@ -569,7 +585,7 @@
    "itt_limit_c": 820,
    "itt_idle_c": 600,
    "itt_exponent": 1.5,
-   "itt_theta_exponent": 0.15,
+   "itt_theta_exponent": 0.3,
    "turbine_stall_torque_ratio": 2.0,
    "acceleration_time_s": 5.0,
    "deceleration_time_s": 3.0,
@@ -578,7 +594,7 @@
    "starter_ng": 0.22,
    "self_sustaining_ng": 0.45,
    "starter_current_a": 300,
-   "sfc_lb_per_shp_h": 0.548,
+   "sfc_lb_per_shp_h": 0.548, "fuel_power_exponent": 0.75,
    "idle_fuel_flow_lb_per_h": 100,
    "oil_pressure_idle_psi": 60,
    "oil_pressure_max_psi": 120,
@@ -698,7 +714,7 @@
    "itt_limit_c": 820,
    "itt_idle_c": 600,
    "itt_exponent": 1.5,
-   "itt_theta_exponent": 0.15,
+   "itt_theta_exponent": 0.3,
    "turbine_stall_torque_ratio": 2.0,
    "acceleration_time_s": 5.0,
    "deceleration_time_s": 3.0,
@@ -707,7 +723,7 @@
    "starter_ng": 0.22,
    "self_sustaining_ng": 0.45,
    "starter_current_a": 300,
-   "sfc_lb_per_shp_h": 0.548,
+   "sfc_lb_per_shp_h": 0.548, "fuel_power_exponent": 0.75,
    "idle_fuel_flow_lb_per_h": 100,
    "oil_pressure_idle_psi": 60,
    "oil_pressure_max_psi": 120,
@@ -1191,7 +1207,18 @@
   "strip": 6,
   "computed": true,
   "alpha_margin_deg": 2.0,
-  "pusher_margin_deg": 0
+  "pusher_margin_deg": 0,
+  "icing_alpha_shift_deg": 0
+ },
+ "ice_protection": {
+  "surfaces": [
+   {"surface": 0, "type": "boots", "switch": "surface"},
+   {"surface": 1, "type": "boots", "switch": "surface"}
+  ],
+  "boot_cycle_s": 60,
+  "windshield_heat": true,
+  "propeller_deice": true,
+  "propeller_deice_cycle_s": 90
  },
  "vacuum": {
   "present": false

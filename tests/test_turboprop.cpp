@@ -581,3 +581,55 @@ TEST_CASE("king air: take-off at MTOW, all engines, to 50 ft") {
     CHECK_RANGE(liftoff, 95, 115);
     CHECK(std::abs(radToDeg(ac.telemetry().heading)) < 3);
 }
+
+TEST_CASE("king air: fuel flow at maximum cruise, a part-power cruise and long-range cruise against published figures") {
+    // Per engine, ISA, mid weight (12,530 lb). Published: take-off SFC 0.548
+    // lb/shp/h (P&WC, 575 lb/h at 1,050 shp); FL240 high-speed cruise 310 KTAS
+    // on 773 lb/h for both engines (AOPA Pilot, Turbine Pilot, Oct 2014) and
+    // 312 KTAS at 90 % torque, ~400 lb/h per side (Twin & Turbine); FL270 at
+    // 60 % torque, 1,600 rpm, ~280 lb/h per engine (AOPA Pilot, Turbine Pilot,
+    // Jun 2002); long-range cruise at FL350, 230-240 KTAS on ~360 lb/h for both
+    // (AOPA Pilot, Sep 2014). The straight Willans line read ~0.53 lb/shp/h at
+    // altitude (the take-off SFC): 12-15 % high against these.
+    SimpleWeather atm;
+    struct Point {
+        Real ktas = 0, shp = 0, torque = 0, lbh = 0;
+    };
+    auto cruise = [&](Real ft, Real ktas, Real rpm, bool maxPower, Real torque = -1) {
+        Aircraft ac(kingAir());
+        ac.setGearImmediately(false);
+        TrimRequest req;
+        req.altitude = ftToM(ft);
+        req.tas = ktToMs(ktas);
+        req.propLever = propLeverFor(rpm);
+        if (maxPower) {
+            req.throttle = 1;
+            req.solveTas = true;
+        }
+        TrimResult r = trim(ac, req, atm);
+        // A torque setting: the speed that needs it (secant on the trimmed torque).
+        for (int k = 0; torque > 0 && k < 8 && std::abs(ac.turbopropState(0).torqueFraction - torque) > 0.002; ++k) {
+            const Real q0 = ac.turbopropState(0).torqueFraction, v0 = req.tas;
+            req.tas = v0 * (1 + 0.01);
+            trim(ac, req, atm);
+            const Real q1 = ac.turbopropState(0).torqueFraction;
+            req.tas = v0 + (torque - q0) * (0.01 * v0) / std::max(q1 - q0, 1e-6);
+            r = trim(ac, req, atm);
+        }
+        CHECK(r.converged);
+        const TurbopropState& s = ac.turbopropState(0);
+        Point p{msToKt(r.tas), s.shaftPower / kHorsepower, s.torqueFraction, r.fuelFlow / 2 * 3600 / kPound};
+        std::fprintf(stderr, "  FL%03.0f %4.0f rpm: %5.1f KTAS, %4.0f shp (torque %4.1f %%), ITT %4.0f degC, %5.1f lb/h, SFC %.3f\n", ft / 100, rpm, p.ktas,
+                     p.shp, 100 * p.torque, s.itt - 273.15, p.lbh, p.lbh / p.shp);
+        return p;
+    };
+    const Point maxCruise = cruise(24000, 290, 1500, true);
+    CHECK_RANGE(maxCruise.ktas, 303, 318);
+    CHECK_RANGE(maxCruise.torque, 0.85, 0.95);           // ~90 % torque
+    CHECK_RANGE(maxCruise.lbh, 375, 410);                // 386-400 lb/h
+    CHECK_RANGE(maxCruise.lbh / maxCruise.shp, 0.44, 0.50);  // well under the take-off SFC
+    const Point part = cruise(27000, 270, 1600, false, 0.60);
+    CHECK_RANGE(part.lbh, 265, 300);                     // ~280 lb/h
+    const Point lrc = cruise(35000, 235, 1500, false);
+    CHECK_RANGE(lrc.lbh, 165, 195);                      // ~180 lb/h
+}

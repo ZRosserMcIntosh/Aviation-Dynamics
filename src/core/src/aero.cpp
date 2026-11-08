@@ -439,14 +439,15 @@ namespace {
 
 // Air velocity at p induced by a horseshoe vortex of unit circulation: bound
 // from a to b, trailing legs to infinity along u (Phillips & Snyder 2000, eq. 4).
-Vec3 horseshoe(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& u) {
+// Without `bound`, the two trailing legs alone.
+Vec3 horseshoe(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& u, bool bound = true) {
     const Vec3 r1 = p - a, r2 = p - b;
     const Real n1 = length(r1), n2 = length(r2);
     Vec3 v;
     const Real tiny = 1e-9;
     const Real d2 = n2 * (n2 - dot(u, r2));
     if (d2 > tiny) v += cross(u, r2) / d2;
-    const Real db = n1 * n2 * (n1 * n2 + dot(r1, r2));
+    const Real db = bound ? n1 * n2 * (n1 * n2 + dot(r1, r2)) : 0.0;
     if (db > tiny) v += cross(r1, r2) * ((n1 + n2) / db);
     const Real d1 = n1 * (n1 - dot(u, r1));
     if (d1 > tiny) v -= cross(u, r1) / d1;
@@ -493,6 +494,16 @@ void luSolve(const Real* LU, const int* piv, Real* r, int n) {
 
 }  // namespace
 
+Real AeroModel::surfaceHeight(const Surface& S, const AeroInputs& in) const {
+    const Real h = in.heightAboveGround;
+    if (h > 1e8 || dot(in.groundUpBody, in.groundUpBody) < 0.5 || surfaces_.empty()) return h;
+    // The offset fades out from 3 to 4 spans up, where the factor is 1 to
+    // within 1e-4 whichever height it is given (so cruise and stall traces
+    // are untouched to the last bit).
+    const Real b = std::max(S.span, 1.0);
+    return h + dot(S.centroid - surfaces_[0].centroid, in.groundUpBody) * (1 - smoothstep(3 * b, 4 * b, h));
+}
+
 template <class GammaOf>
 void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, AeroOutputs& out, GammaOf&& gammaOf) const {
     const Surface& S = surfaces_[static_cast<std::size_t>(si)];
@@ -508,7 +519,21 @@ void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, Ae
     const Vec3 aft{-1, 0, 0};
     Vec3 u = length(sum) > 3.0 * n ? normalized(-sum) : aft;
     if (dot(u, aft) < 0.2) u = aft;
-    // Ground images (a flat ground below, within a few spans).
+    // Ground images (a flat ground below, within a few spans): the mirror of
+    // the trailing vortex system, opposite in sense, whose upwash at the line
+    // cuts the induced angle (Wieselsberger 1922, NACA TM-77; McCormick,
+    // "Aerodynamics, Aeronautics and Flight Mechanics", ch. 9: induced drag
+    // times (16h/b)^2 / (1 + (16h/b)^2), more lift at a given alpha). Not the
+    // image of the bound vortex: that is a chord-scale effect the line's
+    // single vortex cannot place. Seen at the bound vortex itself it only
+    // slows the flow there, by G / (4 pi h) -- 4-6 m/s (a tenth of q) under a
+    // transport's flapped wing a few metres up, the lift falling where it
+    // rises -- while over the rear of the chord (Pistolesi's 3/4-chord point)
+    // the same image is an upwash that adds lift; for a real section at h/c
+    // near 1 the two largely cancel, and only well inside a chord of the
+    // ground does the Venturi flow under a cambered section win (Katz &
+    // Plotkin, "Low-Speed Aerodynamics", 2nd ed., the lumped-vortex example
+    // near a wall).
     const bool ground = S.def.groundEffect && dot(in.groundUpBody, in.groundUpBody) > 0.5 && in.heightAboveGround < 3 * S.span;
     Real h = ground ? in.heightAboveGround : 1e9;
     if (ground) {
@@ -548,7 +573,7 @@ void AeroModel::solveLiftingLine(int si, int n0, int n, const AeroInputs& in, Ae
             for (int j = 0; j < n; ++j) {
                 const Strip& sj = strips_[static_cast<std::size_t>(n0 + j)];
                 Vec3 v = horseshoe(p, sj.boundA, sj.boundB, u);
-                if (h < 1e8) v -= horseshoe(p, mirror(sj.boundA), mirror(sj.boundB), ui);
+                if (h < 1e8) v -= horseshoe(p, mirror(sj.boundA), mirror(sj.boundB), ui, false);
                 V[i * n + j] = v;
             }
         }
@@ -715,8 +740,10 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
         const Surface& S = surfaces_[si];
         SurfaceOutput& so = out.surfaces[si];
         so = {};
-        // Ground effect on induced flow.
-        const Real ge = S.def.groundEffect && S.horizontal ? groundEffectFactor(in.heightAboveGround, S.span) : 1.0;
+        // Ground effect on induced flow (strip theory), at the surface's own
+        // height: the input is the main wing's, and a T-tail sits most of a
+        // fin's height above it.
+        const Real ge = S.def.groundEffect && S.horizontal ? groundEffectFactor(surfaceHeight(S, in), S.span) : 1.0;
         const Real arEff = S.aspectRatio / ge;
         const Real a3 = liftCurveSlope3D(arEff, S.sweep, S.def.section.liftSlope, beta);
         // Downwash from the source surface: the linear estimate here; the
@@ -728,7 +755,7 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
         if (src >= 0) {
             const Real clSrc = out.surfaces[src].cl;
             const Real aSrc = surfaces_[src].liftSlope;
-            srcGe = groundEffectFactor(in.heightAboveGround, surfaces_[src].span);
+            srcGe = groundEffectFactor(surfaceHeight(surfaces_[static_cast<std::size_t>(src)], in), surfaces_[src].span);
             epsLinear = (S.def.downwashAtZeroLift + S.downwashGradient * clSrc / aSrc) * srcGe;
             so.downwash = epsLinear;
         }
@@ -1085,47 +1112,142 @@ void AeroModel::evaluate(const AeroInputs& in, AeroOutputs& out) const {
     }
 }
 
-Real trimmedMaxLiftCoefficient(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach, const SurfaceIce* ice) {
-    const Real a = 340.3, v = std::max(mach, 0.15) * a;
+TrimmedMaxLift::TrimmedMaxLift(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach, const SurfaceIce* ice,
+                               Real enough)
+    : model_(&model), refArea_(refArea), enough_(enough) {
+    // The ice as it is now: the sweep may outlive the caller's array (spread over frames).
+    if (ice) ice_.assign(ice, ice + model.surfaceCount());
+    const Real a = 340.3;
+    v_ = std::max(mach, 0.15) * a;
+    in_.density = isa::kSeaLevelDensity;
+    in_.speedOfSound = a;
+    in_.cg = cg;
+    in_.controls.flap = flap;
+    model.prepare(out_);
+    q_ = 0.5 * in_.density * v_ * v_;
+}
+
+// Lift and pitching moment at the sweep's alpha with the elevator at e (-1..1).
+Real TrimmedMaxLift::eval(Real e, Real& lift) {
+    const Real alpha = alphaDeg_ * kTwoPi / 360.0;
+    in_.ice = ice_.empty() ? nullptr : ice_.data();
+    in_.velocityBody = {v_ * std::cos(alpha), 0, v_ * std::sin(alpha)};
+    in_.controls.elevator = e;
+    model_->evaluate(in_, out_);
+    ++evaluations_;
+    lift = out_.force.x * std::sin(alpha) - out_.force.z * std::cos(alpha);
+    return out_.moment.y;
+}
+
+// Sweeps alpha (0.25 deg steps) out of ground effect with no slipstream; at
+// each, the elevator that trims the pitching moment (bisection between the
+// stops), and the lift there. One evaluation per call of the loop body below,
+// in the order the sweep has always made them: each lifting-line solve starts
+// from the last one's circulation, and past the stall (where the solution
+// leans on the path to it) the result depends on that order.
+bool TrimmedMaxLift::step(int maxEvaluations) {
+    for (int n = 0; n < maxEvaluations && !done_; ++n) {
+        if (phase_ == 0 && !(alphaDeg_ <= 30.0)) {
+            done_ = true;
+            break;
+        }
+        Real lift = 0;
+        if (phase_ == 0) {
+            mLo_ = eval(-1, lift);
+            phase_ = 1;
+        } else if (phase_ == 1) {
+            const Real mHi = eval(1, lift);
+            if ((mLo_ > 0) == (mHi > 0)) {
+                // Cannot trim here: the elevator is out of authority (nose-up) or the
+                // pitch-down limit is reached; stop once the stick is fully back.
+                if (mHi < 0) done_ = true;
+                alphaDeg_ += 0.25;
+                phase_ = 0;
+                continue;
+            }
+            lo_ = -1, hi_ = 1, mlo_ = mLo_;
+            phase_ = 2;
+        } else if (phase_ < 32) {
+            const Real mid = 0.5 * (lo_ + hi_), m = eval(mid, lift);
+            if ((m > 0) == (mlo_ > 0)) {
+                lo_ = mid;
+                mlo_ = m;
+            } else {
+                hi_ = mid;
+            }
+            ++phase_;
+        } else {
+            eval(0.5 * (lo_ + hi_), lift);
+            const Real cl = lift / (q_ * refArea_);
+            if (cl > best_) best_ = cl;
+            else if (cl < best_ - 0.15) done_ = true;  // well past the peak
+            if (best_ >= enough_) done_ = true;       // as much as the caller asked about
+            alphaDeg_ += 0.25;
+            phase_ = 0;
+        }
+    }
+    return done_;
+}
+
+Real trimmedMaxLiftCoefficient(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach, const SurfaceIce* ice,
+                               Real enough) {
+    TrimmedMaxLift sweep(model, refArea, cg, flap, mach, ice, enough);
+    while (!sweep.step(1 << 20)) {
+    }
+    return sweep.result();
+}
+
+StallCalibration surfaceStallCalibration(const AeroModel& model, int surface, const Vec3& cg, Real flap) {
+    StallCalibration r;
+    if (surface < 0 || surface >= model.surfaceCount()) return r;
+    const Real v = 0.2 * 340.3;
     AeroInputs in;
-    in.ice = ice;
     in.density = isa::kSeaLevelDensity;
-    in.speedOfSound = a;
+    in.speedOfSound = 340.3;
     in.cg = cg;
     in.controls.flap = flap;
     AeroOutputs out;
     model.prepare(out);
-    const Real q = 0.5 * in.density * v * v;
-    // Lift and pitching moment at alpha with the elevator at e (-1..1).
-    auto eval = [&](Real alpha, Real e, Real& lift) {
+    // Half-degree steps (interpolated), on until 5 deg past both the first
+    // strip's stall and the highest lift yet.
+    constexpr Real kDeg = kTwoPi / 360.0, kStep = 0.5 * kDeg, kTop = 26.0 * kDeg;
+    std::vector<std::pair<Real, Real>> cl;  // (alpha, surface CL)
+    Real prevMargin = 0, best = -1e9, bestAlpha = 0;
+    bool found = false;
+    for (Real alpha = 0; alpha <= kTop + 1e-9 && (!found || alpha < std::max(r.firstStripAlpha, bestAlpha) + 5 * kDeg); alpha += kStep) {
         in.velocityBody = {v * std::cos(alpha), 0, v * std::sin(alpha)};
-        in.controls.elevator = e;
         model.evaluate(in, out);
-        lift = out.force.x * std::sin(alpha) - out.force.z * std::cos(alpha);
-        return out.moment.y;
-    };
-    Real best = 0;
-    for (Real alphaDeg = 0; alphaDeg <= 30.0; alphaDeg += 0.25) {
-        const Real alpha = alphaDeg * kTwoPi / 360.0;
-        Real lift = 0, liftLo = 0, liftHi = 0;
-        const Real mLo = eval(alpha, -1, liftLo), mHi = eval(alpha, 1, liftHi);
-        if ((mLo > 0) == (mHi > 0)) {
-            // Cannot trim here: the elevator is out of authority (nose-up) or the
-            // pitch-down limit is reached; stop once the stick is fully back.
-            if (mHi < 0) break;
-            continue;
+        Real least = 1e9;
+        for (int i = model.firstStrip(surface); i < model.endStrip(surface); ++i) {
+            const StripTelemetry& s = out.strips[static_cast<std::size_t>(i)];
+            if (s.q > 30 && model.stripIsPrimary(i)) least = std::min(least, s.stallAlpha - s.alpha);
         }
-        Real lo = -1, hi = 1, mlo = mLo;
-        for (int k = 0; k < 30; ++k) {
-            const Real mid = 0.5 * (lo + hi), m = eval(alpha, mid, lift);
-            if ((m > 0) == (mlo > 0)) { lo = mid; mlo = m; } else hi = mid;
+        if (!found && least <= 0) {
+            r.firstStripAlpha = alpha > 0 ? alpha - kStep * least / (least - prevMargin) : 0.0;
+            found = true;
         }
-        eval(alpha, 0.5 * (lo + hi), lift);
-        const Real cl = lift / (q * refArea);
-        if (cl > best) best = cl;
-        else if (cl < best - 0.15) break;  // well past the peak
+        prevMargin = least;
+        const Real c = out.surfaces[static_cast<std::size_t>(surface)].cl;
+        cl.emplace_back(alpha, c);
+        if (c > best) {
+            best = c;
+            bestAlpha = alpha;
+        }
     }
-    return best;
+    if (!found) r.firstStripAlpha = kTop;
+    r.stallAlpha = kTop;
+    for (std::size_t k = 0; k < cl.size(); ++k)
+        if (cl[k].second >= 0.95 * best) {
+            const auto& [a1, c1] = cl[k];
+            if (k == 0) {
+                r.stallAlpha = a1;
+            } else {
+                const auto& [a0, c0] = cl[k - 1];
+                r.stallAlpha = a0 + (a1 - a0) * (0.95 * best - c0) / std::max(c1 - c0, 1e-9);
+            }
+            break;
+        }
+    return r;
 }
 
 }  // namespace avd

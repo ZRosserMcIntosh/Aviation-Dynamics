@@ -1,8 +1,10 @@
 // Aviation Dynamics — turbofan, retractable gear, speedbrake and the Top G
 // (G650ER-class) reference jet.
 // SPDX-License-Identifier: MIT
+#include <array>
 #include <vector>
 
+#include "avd/aero.hpp"
 #include "avd/assists.hpp"
 #include "avd/loading.hpp"
 #include "avd/wake.hpp"
@@ -1085,4 +1087,213 @@ TEST_CASE("top g: spoiler panels dump lift where they are and shed their own vor
     const TrimResult td = trimAt(down, 5000, ktToMs(200) * 1.08, 1, true);
     CHECK(tu.converged && td.converged);
     CHECK(td.trim > tu.trim);  // more nose-up trim needed against the gear's nose-down drag moment
+}
+
+namespace {
+
+// The Top G at the maximum landing weight's class, landing flap and gear
+// down, trimmed on a 3 deg path at `kias` with its lowest wheel `h0` above a
+// flat runway; then a hand-flown style flare: the attitude raised to
+// `flareDeg` above the approach attitude over 2 s, the thrust closed, held to
+// touchdown (or 20 s). Longitudinal rig as in aftStickStall.
+struct FlareRun {
+    Real maxAlpha = 0;   // rad
+    bool pushed = false, warned = false, touched = false;
+};
+FlareRun flare(Real kias, Real h0, Real flareDeg) {
+    Aircraft ac(jet());
+    SimpleWeather atm;
+    ac.setGearImmediately(true);
+    TrimRequest req;
+    req.altitude = 300;
+    req.tas = tasFromCas(ktToMs(kias), atm.atmosphere().at(300.0));
+    req.flapDetent = 3;
+    req.flightPath = degToRad(-3);
+    const TrimResult tr = trim(ac, req, atm);
+    CHECK(tr.converged);
+    const Vec3 cg = ac.massProperties().cg;
+    Real lowest = -1e9;
+    for (const GearDef& gd : jet().gear) lowest = std::max(lowest, tr.state.body.attitude.rotate(gd.attach + Vec3{0, 0, gd.length} - cg).z);
+    const FlatGround ground(tr.state.body.position.z + lowest + h0);
+    ac.setState(tr.state);
+    ac.prepareContext(tr.input, ground, atm);
+    ac.settleDownwash();
+    ac.setElevatorTrim(tr.trim);
+    PilotInput in = tr.input;
+    FlareRun r;
+    for (int i = 0; i < 240 * 20 && !r.touched; ++i) {
+        const Real t = i * kDt;
+        const Real thetaCmd = tr.theta + degToRad(flareDeg) * clamp(t / 2.0, 0.0, 1.0);
+        const AircraftTelemetry& tel = ac.telemetry();
+        in.pitch = clamp(tr.elevator + 3.0 * (thetaCmd - tel.pitch) - 1.0 * tel.omega.y, -1.0, 1.0);
+        in.throttle = std::max(tr.input.throttle * (1 - t / 3.0), 0.0);
+        ac.step(kDt, in, ground, atm);
+        DynamicState s = ac.state();
+        const Quat level = Quat::fromEuler(0, s.body.attitude.pitch(), s.body.attitude.yaw());
+        Vec3 vb = s.body.attitude.inverseRotate(s.body.velocity);
+        vb.y = 0;
+        s.body.velocity = level.rotate(vb);
+        s.body.attitude = level;
+        s.body.omega.x = s.body.omega.z = 0;
+        ac.setState(s);
+        r.maxAlpha = std::max(r.maxAlpha, ac.telemetry().alpha);
+        r.pushed = r.pushed || ac.telemetry().stickPusher;
+        r.warned = r.warned || ac.telemetry().stallWarning;
+        r.touched = ac.telemetry().onGround;
+    }
+    return r;
+}
+
+// Landing flap, gear down, idle at 5,000 ft: the nose raised 1 deg/s past
+// the trimmed attitude until the stick pusher fires (or 30 s).
+struct FlapStall {
+    Real warnAlpha = -1, pushAlpha = -1, warnIas = 0, pushIas = 0;  // rad, KIAS
+};
+FlapStall landingFlapStall() {
+    Aircraft ac(jet());
+    SimpleWeather atm;
+    FlatGround ground(0);
+    const TrimResult tr = trimAt(ac, 5000, tasFromCas(ktToMs(140), atm.atmosphere().at(ftToM(5000))), 3, true);
+    CHECK(tr.converged);
+    PilotInput in = tr.input;
+    in.throttle = 0;
+    FlapStall r;
+    for (int i = 0; i < 240 * 30 && r.pushAlpha < 0; ++i) {
+        const AircraftTelemetry& t = ac.telemetry();
+        const Real thetaCmd = tr.theta + degToRad(1.0) * i * kDt;
+        in.pitch = clamp(tr.elevator + 3.0 * (thetaCmd - t.pitch) - 1.0 * t.omega.y, -1.0, 1.0);
+        ac.step(kDt, in, ground, atm);
+        DynamicState s = ac.state();
+        const Quat level = Quat::fromEuler(0, s.body.attitude.pitch(), s.body.attitude.yaw());
+        Vec3 vb = s.body.attitude.inverseRotate(s.body.velocity);
+        vb.y = 0;
+        s.body.velocity = level.rotate(vb);
+        s.body.attitude = level;
+        s.body.omega.x = s.body.omega.z = 0;
+        ac.setState(s);
+        const Real ias = msToKt(ac.instruments().readings().indicatedAirspeed);
+        if (r.warnAlpha < 0 && ac.telemetry().stallWarning) r.warnAlpha = ac.telemetry().alpha, r.warnIas = ias;
+        if (ac.telemetry().stickPusher) r.pushAlpha = ac.telemetry().alpha, r.pushIas = ias;
+    }
+    return r;
+}
+
+}  // namespace
+
+TEST_CASE("top g: a normal flare in ground effect leaves the shaker and pusher quiet; a landing-flap approach to the stall gets both near the wing's stall") {
+    // The flare: Vref (~125 KIAS at this weight) and a little slower, the
+    // attitude up 6 deg from 15 m: the alpha of a firm flare (6-8 deg) in
+    // ground effect. The pusher used to fire here, at ~7.7 deg (the first
+    // outboard strip's stall with landing flap, 5 deg short of the wing's).
+    for (const auto& [kias, up] : {std::pair<Real, Real>{125, 6.0}, {118, 6.0}}) {
+        const FlareRun f = flare(kias, 15, up);
+        std::fprintf(stderr, "  flare from %.0f KIAS, +%.0f deg: max alpha %.1f deg, warning %d, pusher %d, touched %d\n", kias, up, radToDeg(f.maxAlpha),
+                     f.warned, f.pushed, f.touched);
+        CHECK(f.maxAlpha > degToRad(5.5));  // a real flare, in the old pusher's range
+        CHECK(!f.pushed);
+        CHECK(!f.warned);
+    }
+    // The approach to the stall, landing flap, out of ground effect: warning
+    // first, then the pusher, at the stall angle the model's own wing gives
+    // for the flap (13-14 deg; a G650-class wing with landing flap stalls in
+    // the low teens of alpha, cf. NTSB AAR-12/02 on the G650's flaps-10 stall
+    // angle, ~11 deg in ground effect), at about the 1-g stall speed.
+    const FlapStall s = landingFlapStall();
+    std::fprintf(stderr, "  landing flap stall: warning at %.1f deg / %.0f KIAS, pusher at %.1f deg / %.0f KIAS\n", radToDeg(s.warnAlpha), s.warnIas,
+                 radToDeg(s.pushAlpha), s.pushIas);
+    CHECK(s.pushAlpha > 0);
+    CHECK(s.warnAlpha > 0 && s.warnAlpha < s.pushAlpha);
+    CHECK_RANGE(radToDeg(s.pushAlpha), 11.5, 16.5);
+    CHECK_RANGE(radToDeg(s.pushAlpha - s.warnAlpha), 0.5, 3.0);
+    CHECK(s.warnIas > s.pushIas);  // (at 1 deg/s of pitch the speed falls fast: 25.207's 5 kt is for 1 kt/s)
+}
+
+namespace {
+// trimmedMaxLiftCoefficient as it was written before TrimmedMaxLift (one
+// loop, bisection on the elevator): the reference the job must match.
+Real clmaxReference(const AeroModel& model, Real refArea, const Vec3& cg, Real flap, Real mach, const SurfaceIce* ice, int& evals) {
+    const Real a = 340.3, v = std::max(mach, 0.15) * a;
+    AeroInputs in;
+    in.ice = ice;
+    in.density = isa::kSeaLevelDensity;
+    in.speedOfSound = a;
+    in.cg = cg;
+    in.controls.flap = flap;
+    AeroOutputs out;
+    model.prepare(out);
+    const Real q = 0.5 * in.density * v * v;
+    auto eval = [&](Real alpha, Real e, Real& lift) {
+        in.velocityBody = {v * std::cos(alpha), 0, v * std::sin(alpha)};
+        in.controls.elevator = e;
+        model.evaluate(in, out);
+        ++evals;
+        lift = out.force.x * std::sin(alpha) - out.force.z * std::cos(alpha);
+        return out.moment.y;
+    };
+    Real best = 0;
+    for (Real alphaDeg = 0; alphaDeg <= 30.0; alphaDeg += 0.25) {
+        const Real alpha = alphaDeg * kTwoPi / 360.0;
+        Real lift = 0, liftLo = 0, liftHi = 0;
+        const Real mLo = eval(alpha, -1, liftLo), mHi = eval(alpha, 1, liftHi);
+        if ((mLo > 0) == (mHi > 0)) {
+            if (mHi < 0) break;
+            continue;
+        }
+        Real lo = -1, hi = 1, mlo = mLo;
+        for (int k = 0; k < 30; ++k) {
+            const Real mid = 0.5 * (lo + hi), m = eval(alpha, mid, lift);
+            if ((m > 0) == (mlo > 0)) {
+                lo = mid;
+                mlo = m;
+            } else {
+                hi = mid;
+            }
+        }
+        eval(alpha, 0.5 * (lo + hi), lift);
+        const Real cl = lift / (q * refArea);
+        if (cl > best) best = cl;
+        else if (cl < best - 0.15) break;
+    }
+    return best;
+}
+}  // namespace
+
+TEST_CASE("trimmed CLmax: spread over steps, or stopped once the lift is enough, it is the one-shot sweep to the bit") {
+    // The browser spreads the sweep over frames (the low-speed band as the
+    // flaps run) and an air start stops it once the lift at its speed is
+    // found: neither may change a value. Past the stall the lifting line
+    // leans on the path to its solution, so the evaluations must be the
+    // same ones in the same order (the CRJ's landing flap differs by 3 % with
+    // a root finder that converges in fewer of them).
+    for (const char* id : {"tupi_t180", "cj4"}) {
+        const AircraftDefinition d = loadReference(id);
+        const AeroModel model(d);
+        const Aircraft ac(d);
+        const Vec3 cg = ac.massProperties().cg;
+        std::array<SurfaceIce, 8> ice{};
+        ice[0] = ice[1] = ice[2] = {0.004, 0.5};
+        for (const Real flap : {d.controls.flapDetents.front(), d.controls.flapDetents.back()})
+            for (const SurfaceIce* iced : {static_cast<const SurfaceIce*>(nullptr), static_cast<const SurfaceIce*>(ice.data())}) {
+                int evals = 0;
+                const Real reference = clmaxReference(model, d.referenceArea, cg, flap, 0.2, iced, evals);
+                const Real oneShot = trimmedMaxLiftCoefficient(model, d.referenceArea, cg, flap, 0.2, iced);
+                TrimmedMaxLift job(model, d.referenceArea, cg, flap, 0.2, iced);
+                std::array<SurfaceIce, 8> scratch = ice;  // the job keeps its own copy of the ice
+                int calls = 1;
+                while (!job.step(7)) {
+                    ++calls;
+                    scratch[0].thickness += 0.001;
+                }
+                const Real enough = 0.5 * reference;
+                TrimmedMaxLift early(model, d.referenceArea, cg, flap, 0.2, iced, enough);
+                while (!early.step(1000)) {
+                }
+                std::cerr << "  " << id << " flap " << radToDeg(flap) << (iced ? " iced" : "") << ": CLmax " << reference << " ("
+                          << evals << " evaluations; in " << calls << " steps of 7: " << job.result() << "); stopped at "
+                          << enough << ": " << early.result() << " after " << early.evaluations() << "\n";
+                CHECK(oneShot == reference);
+                CHECK(job.result() == reference && job.evaluations() == evals);
+                CHECK(early.result() >= enough && early.result() <= reference && early.evaluations() < evals / 2);
+            }
+    }
 }

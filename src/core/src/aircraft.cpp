@@ -146,6 +146,47 @@ Aircraft::Aircraft(const AircraftDefinition& def, const LocalFrame& frame)
     }
 }
 
+// The AoA computer's flap schedule (computed stall warning). The computer
+// protects the strip nearest its own stall angle; clean, that strip's stall
+// is the wing's (the first strip's stall and the lift's 95 %-of-maximum point
+// within a degree of each other). With flaps the lifting line puts the
+// unflapped strips just outboard of the flap (in the flap's tip vortex)
+// through their section stall several degrees of body alpha before the
+// wing's lift stops rising -- and once one has let go its local angle jumps
+// past its stall (its own downwash is gone), so no strip margin says where
+// the wing is any more. The Top G's landing-flap pusher fired at 8.7 deg of
+// alpha (7.7 in ground effect) where its wing stalls at about 14, inside a
+// normal flare. A real computer schedules its thresholds on the airplane's
+// stall angle of attack for the flap setting, found in flight test out of
+// ground effect (14 CFR 25.103(b) and 25.207: the pusher's angle defines the
+// stall, the shaker leads it). So where the model's own wing (calibrated
+// here, surfaceStallCalibration) stalls beyond its first strip, the margin is
+// at least that of the body angle of attack to the wing's stall angle.
+// Computed per detent the first time a threshold comes within reach (a few
+// sweeps of the aero model), then kept; interpolated between detents.
+Aircraft::StallSchedulePoint Aircraft::stallSchedule(Real flap) const {
+    const std::vector<Real>& d = def_.controls.flapDetents;
+    if (d.empty()) return {};
+    if (stallSchedule_.size() != d.size()) stallSchedule_.assign(d.size(), StallSchedulePoint{0, -1});
+    auto at = [&](std::size_t k) {
+        StallSchedulePoint& p = stallSchedule_[k];
+        if (p.beyondFirstStrip < 0) {
+            const StallCalibration c = surfaceStallCalibration(*aeroModel_, def_.stallWarning.surface, mass_.cg, d[k]);
+            p.stallAlpha = c.stallAlpha;
+            p.beyondFirstStrip = std::max(c.stallAlpha - c.firstStripAlpha, 0.0);
+        }
+        return p;
+    };
+    if (flap <= d.front()) return at(0);
+    for (std::size_t k = 1; k < d.size(); ++k)
+        if (flap <= d[k]) {
+            const Real t = d[k] > d[k - 1] ? (flap - d[k - 1]) / (d[k] - d[k - 1]) : 1.0;
+            const StallSchedulePoint a = at(k - 1), b = at(k);
+            return {a.stallAlpha + t * (b.stallAlpha - a.stallAlpha), a.beyondFirstStrip + t * (b.beyondFirstStrip - a.beyondFirstStrip)};
+        }
+    return at(d.size() - 1);
+}
+
 // Per-leg tyre and wheel constants from the definition.
 void Aircraft::prepareGear() {
     // Static load estimate: the legs ahead of the CG and those behind it share
@@ -354,8 +395,9 @@ void Aircraft::rebuildCockpit() {
     for (int k = 0; k < icing_.switchCount(); ++k) {
         std::string n = icing_.switchName(k);
         if (!n.empty()) n[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(n[0])));
-        cockpit_.push_back({"anti_ice." + icing_.switchName(k), n + (icing_.switchIsThermal(k) ? " Anti-Ice (bleed air)" : " De-Ice Boots"),
-                            {"OFF", "ON"}, 0});
+        const std::string label = k == icing_.propellerSwitch() ? "Propeller De-Ice (electric)"
+                                  : n + (icing_.switchIsThermal(k) ? " Anti-Ice (bleed air)" : " De-Ice Boots");
+        cockpit_.push_back({"anti_ice." + icing_.switchName(k), label, {"OFF", "ON"}, 0});
     }
 }
 
@@ -972,7 +1014,12 @@ Aircraft::Derivatives Aircraft::derive(const DynamicState& s, const Context& c, 
         const Vec3 vDisc = vBody + cross(w, r) - (windBody + gradBody * r);
         const Vec3 axis = normalized(ed.thrustAxis);
         const Real vAx = dot(vDisc, axis);
-        const PropellerForces pf = props_[i].evaluate(vAx, omega, rho, c.air.state.speedOfSound, ts.bladeAngle);
+        PropellerForces pf = props_[i].evaluate(vAx, omega, rho, c.air.state.speedOfSound, ts.bladeAngle);
+        if (engineCount() == 0 && i < kIcingMaxEngines && icing_.propellerThrustFactor(i) != 1) {
+            // Ice on the blades: less thrust for more torque.
+            pf.thrust *= icing_.propellerThrustFactor(i);
+            pf.torque *= icing_.propellerTorqueFactor(i);
+        }
         const Vec3 thrust = axis * pf.thrust;
         force += thrust;
         moment += cross(r, thrust);
@@ -1618,6 +1665,13 @@ void Aircraft::updateIcing(Real dt, const Context& c) {
         e.powerFraction = std::max(es.brakePower, 0.0) / def_.engines[static_cast<std::size_t>(i)].ratedPower;
         e.carbHeat = carbHeat_[static_cast<std::size_t>(i)];
     }
+    // Turboprops' propellers (indexed from 0 like their shafts).
+    if (engineCount() == 0)
+        for (int i = 0; i < turbopropCount() && i < kIcingMaxEngines; ++i) {
+            IcingModel::EngineInputs& e = in.engines[static_cast<std::size_t>(i)];
+            e.omega = s_.shaftOmega[i];
+            e.axialSpeed = aeroOut_.airspeed;
+        }
     icing_.update(dt, in);
 }
 
@@ -1761,11 +1815,20 @@ void Aircraft::postStep(Real dt, const Context& c, const DynamicState& prev) {
         }
         if (idx < end) {
             const StripTelemetry& st = aeroOut_.strips[idx];
-            vane = st.q > 30 && st.alpha > cleanStall(st) - def_.stallWarning.alphaMargin;
+            // Margin (rad) to the threshold reference: the strip's own stall.
+            Real margin = cleanStall(st) - st.alpha;
+            // With flaps, within reach of the thresholds, the computer's flap
+            // schedule on the body angle of attack where it lies beyond the
+            // first strip's stall (stallSchedule()).
+            if (def_.stallWarning.computed && margin < 0.15) {
+                const StallSchedulePoint sp = stallSchedule(flapAngle_);
+                if (sp.beyondFirstStrip > 0) margin = std::max(margin, sp.stallAlpha - icingShift - aeroOut_.alpha);
+            }
+            vane = st.q > 30 && margin < def_.stallWarning.alphaMargin;
             if (def_.stallWarning.pusherMargin > 0) {
-                const Real onAt = cleanStall(st) - def_.stallWarning.pusherMargin;
-                if (st.q > 30 && !tel_.onGround && st.alpha > onAt) pusher_ = true;
-                else if (pusher_ && (st.alpha < onAt - 0.0873 || tel_.onGround)) pusher_ = false;  // 5 deg hysteresis
+                const Real onAt = def_.stallWarning.pusherMargin;
+                if (st.q > 30 && !tel_.onGround && margin < onAt) pusher_ = true;
+                else if (pusher_ && (margin > onAt + 0.0873 || tel_.onGround)) pusher_ = false;  // 5 deg hysteresis
             }
         }
     }

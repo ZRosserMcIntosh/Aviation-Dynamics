@@ -605,4 +605,60 @@ A.avd_set_wake(1);
   const ji = C.icing();
   check(ji.bleed && ji.protectionHeat > 0.6 && (ji.protectionMask & 1) === 1 && ji.iceDetector, `CJ4 wing anti-ice on: bleed drawn, leading edge heat ${ji.protectionHeat.toFixed(2)}`);
 }
+// ---- Main-thread cost of the calls the site makes (web/README.md, "Cost per call") ----
+// Air starts give the trimmed state they always gave (recorded from the build
+// before the CLmax sweep was memoised and cut short: state[0..18], [24..27],
+// the trim throttle), in a few ms when the requested speed is clear of
+// 1.25 Vs; a dense building tile stands in a few ms.
+{
+  const same = (x, y) => Math.abs(x - y) <= 1e-9 * Math.max(1, Math.abs(y));
+  const expect = {
+    tupi_t180: [
+      { args: [0, 0, 600, 0, 100, 0], thr: 0.4878728939711703, s: [0.0003137481141562628, 1.269703530952686, 1401.7372134331613, -0.7070392982248496, -0.009772363724735535, 0.009772561982731028, -0.7070391988463139, -1.5957815197366648e-05, 1.5837458153080595, 7.83269604198722e-06, 99.70659428879755, 107.15215106014185, 107.15215106014185, 4595.709707013627, 2132.4283648198298, 9.387408897727227e-07, 1.5837458103467523, -1.7619767508677017e-05, 0.9973353115726316, 0.4878728939711703, 0.8592018243433936, 0, -0.06389293319588032] },
+      { args: [0, 0, 300, 120, 55, 2], thr: 0.38439852002457436, s: [1.0230685466733025, -0.5910310357222176, 1101.7907095286928, -0.9651768029698438, 0.010191636549637261, 0.03803357585842507, 0.2586180903586859, -6.441961410824637e-05, 4.5132555520477275, 119.99996926421636, 56.56622977920672, 60.38052588004798, 60.38052588004796, 3611.5133378396913, 1148.3155703175942, 1.4231664764949355e-06, 4.5132555390523885, 0.0003010691629727664, 0.9947166569316727, 0.38439852002457436, 0.8720239870919145, 20, -0.08334648082559146] },
+    ],
+    top_g: [
+      { args: [3200, -2200, 330, 305, 220, 0], thr: 0.3537548403782448, s: [3186.691602585516, -2190.6795485506423, 1133.2283741522974, 0.30057851207911895, 0.027746636784302472, -0.00874848395353631, 0.9533132466571406, -3.261351513371032e-07, 3.3343007747102984, 304.9999999889585, 219.65379534530334, 232.30820626167443, 232.30820626167443, 3705.30384924298, 1153.459075831133, 1.5831145158525734e-05, 3.3343007361536814, -6.577720772555314e-09, 0.9961141031658124, 0.3537548403782448, 1, 0, 0.20204447740865641] },
+      { args: [0, 0, 600, 0, 80, 0], thr: 0.33400560024068476, s: [0.001483691027431538, 15.887526580581783, 1404.7981506346302, -0.7048895457831058, -0.05595290872703124, 0.05595291272070683, -0.7048895458217127, -3.2692834904333513e-07, 9.077046771260173, 359.9999999709109, 147.39968637301385, 158.54739952344187, 158.54739952344187, 4588.646066960745, 2128.677454908023, 4.556868561209648e-06, 9.07704675499935, -2.2769789776931885e-08, 0.9852225492186235, 0.33400560024068476, 1, 0, 0.6515810997896074] },
+    ],
+  };
+  for (const [name, cases] of Object.entries(expect)) {
+    const M = await createAvdModule();
+    M.load(await readFile(new URL(`./dist/${name}.json`, import.meta.url), 'utf8'));
+    for (const want of cases) {
+      for (let rep = 0; rep < 2; ++rep) {
+        const t0 = performance.now();
+        M.avd_reset_air(...want.args);
+        const ms = performance.now() - t0;
+        const st = M.state(), got = [...st.slice(0, 19), ...st.slice(24, 28)];
+        const ok = got.every((v, k) => same(v, want.s[k])) && same(M.avd_trim_throttle(), want.thr);
+        // The first start at a speed below 1.25 Vs sweeps CLmax to the stall (once per flap): the repeat is cheap.
+        const fast = ms < 150 || (rep === 0 && want.s[10] > want.args[4] + 1);
+        check(ok && fast, `air start ${name} (${want.args.join(', ')})${rep ? ' again' : ''}: ${ms.toFixed(1)} ms, ${got[10].toFixed(2)} KIAS, the recorded trimmed state${ok ? '' : ' NOT'}`);
+      }
+    }
+  }
+  // A dense 1 km tile (6,000 buildings, the city's densest are ~7,000) on the city's hills.
+  const M = await createAvdModule();
+  M.load(await readFile(new URL('./dist/tupi_t180.json', import.meta.url), 'utf8'));
+  M.terrain(await readFile(new URL('../data/world/terrain_sp.avt', import.meta.url)));
+  M.terrainDetail(await readFile(new URL('../data/world/terrain_sp_city.avt', import.meta.url)));
+  const count = 6000, bytes = [65, 86, 66, 49, count & 0xff, count >> 8, 0, 0];
+  let seed = 7;
+  const rnd = (lo, hi) => { seed = (seed * 1664525 + 1013904223) >>> 0; return lo + (hi - lo) * seed / 4294967296; };
+  const u16 = (v) => bytes.push(v & 0xff, (v >> 8) & 0xff);
+  for (let b = 0; b < count; ++b) {
+    u16(Math.round(rnd(30, 600))); u16(0); bytes.push(1, 1); u16(5);
+    const cx = rnd(200, 9800), cy = rnd(200, 9800);
+    for (let k = 0; k < 5; ++k) { u16(Math.round(cx + 80 * Math.cos(k * 1.2566))); u16(Math.round(cy + 80 * Math.sin(k * 1.2566))); }
+  }
+  const blk = new Uint8Array(bytes);
+  M.buildingsTile(3, 3, blk);  // the first call compiles the code path
+  M.avd_buildings_drop(3, 3);
+  const times = [];
+  let n = 0;
+  for (const [i, j] of [[7, 7], [6, 7], [7, 6]]) { const t0 = performance.now(); n = M.buildingsTile(i, j, blk); times.push(performance.now() - t0); }
+  check(n === count && M.avd_buildings_count() === 3 * count && Math.max(...times) < 15,
+    `buildings: dense tiles of ${n} stood in ${times.map((t) => t.toFixed(1)).join(', ')} ms`);
+}
 process.exit(failures ? 1 : 0);

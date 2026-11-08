@@ -124,7 +124,7 @@ struct IcingStatus {
     std::array<SurfaceIce, kIcingMaxSurfaces> surfaces{};
     std::array<Real, kIcingMaxSurfaces> clMaxLoss{};       // fraction, at the surface's mean chord
     std::array<Real, kIcingMaxSurfaces> protectionHeat{};  // thermal anti-ice warm-up 0..1 (boots: 1 while inflated)
-    std::array<Real, kIcingMaxEngines> propellerIce{};     // m at 0.4 R
+    std::array<Real, kIcingMaxEngines> propellerIce{};     // m at 0.4 R (piston and turboprop propellers)
     std::array<Real, kIcingMaxEngines> propellerThrustLoss{};
     std::array<Real, kIcingMaxEngines> carburettorIce{};   // kg
     std::array<Real, kIcingMaxEngines> carburettorBlockage{};  // fraction of the throttle area the ice takes
@@ -169,6 +169,8 @@ public:
     const std::string& switchName(int i) const { return switches_[static_cast<std::size_t>(i)]; }
     // Thermal protection of switch i draws engine bleed.
     bool switchIsThermal(int i) const { return switchThermal_[static_cast<std::size_t>(i)]; }
+    // Switch i is the electric propeller de-ice ("prop"), -1 if none.
+    int propellerSwitch() const { return propSwitch_; }
 
     // Per surface (AeroInputs::ice), and whether any surface carries ice.
     const SurfaceIce* surfaces() const { return status_.surfaces.data(); }
@@ -206,6 +208,8 @@ private:
     std::array<Real, kIcingMaxEngines> propThrust_{1, 1, 1, 1}, propTorque_{1, 1, 1, 1};
     std::array<Real, kIcingMaxEngines> heatRise_{}, powerFactor_{1, 1, 1, 1};
     std::array<Real, kIcingMaxSwitches> bootTimer_{};
+    int propSwitch_ = -1;
+    Real propTimer_ = 0;
     Real detectorTimer_ = 0;
     IcingStatus status_;
 };

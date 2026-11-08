@@ -253,6 +253,7 @@ std::vector<std::string> AircraftDefinition::validate() const {
         c.range(p + ".selfSustainingNg", e.selfSustainingNg, e.lightOffNg, e.ngLowIdle);
         c.nonNegative(p + ".starterCurrent", e.starterCurrent);
         c.positive(p + ".sfcRated", e.sfcRated);
+        c.range(p + ".fuelPowerExponent", e.fuelPowerExponent, 0.3, 1.5);
         c.positive(p + ".idleFuelFlow", e.idleFuelFlow);
         c.nonNegative(p + ".oilPressureIdle", e.oilPressureIdle);
         c.nonNegative(p + ".oilPressureMax", e.oilPressureMax);
@@ -507,6 +508,7 @@ std::vector<std::string> AircraftDefinition::validate() const {
     c.range("iceProtection.minimumN2", iceProtection.minimumN2, 0.45, 1.0);
     c.positive("iceProtection.bootCycle", iceProtection.bootCycle);
     c.nonNegative("iceProtection.bootResidual", iceProtection.bootResidual);
+    c.positive("iceProtection.propellerDeiceCycle", iceProtection.propellerDeiceCycle);
     c.positive("vacuum.regulatedSuction", vacuum.regulatedSuction);
     c.positive("vacuum.rpmForRegulated", vacuum.rpmForRegulated);
     c.positive("vacuum.gyroSpinUpTime", vacuum.gyroSpinUpTime);
